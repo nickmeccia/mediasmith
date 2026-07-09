@@ -23,6 +23,10 @@ class MediasmithApp(App):
         Binding("ctrl+slash", "focus_path", "path", show=False, priority=True),
         Binding("ctrl+underscore", "focus_path", "path", show=False,
                 priority=True),
+        # ctrl+. plus the Finder chord cmd+shift+. — kitty protocol only.
+        Binding("ctrl+full_stop", "toggle_hidden", "hidden", show=False),
+        Binding("super+shift+full_stop", "toggle_hidden", "hidden",
+                show=False),
     ]
 
     CSS = """
@@ -30,8 +34,10 @@ class MediasmithApp(App):
     #left { width: 38%; min-width: 30; border: round $surface-lighten-2; }
     #left:focus-within { border: round $accent; }
     PathBar { border: none; height: 1; background: $surface; }
-    #hint { height: 1; color: $text-muted; padding-left: 1; }
     LibraryTree { height: 1fr; }
+    /* While the path bar edits, no node is "selected": hide the cursor. */
+    LibraryTree.-editing > .tree--cursor { background: transparent;
+                                           text-style: none; }
     DetailsPane { width: 1fr; border: round $surface-lighten-2; padding: 0 1; }
     DetailsPane:focus-within { border: round $accent; }
     .panel { height: auto; }
@@ -48,17 +54,17 @@ class MediasmithApp(App):
         super().__init__()
         self.start_dir = start_dir
         self.images = images
+        self.show_hidden = True
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="body"):
             with Vertical(id="left"):
                 yield PathBar(value=str(self.start_dir))
-                yield Static(id="hint")
                 yield LibraryTree(self.start_dir)
             yield DetailsPane(images=self.images)
         yield Static(
             " ⇥ pane · ^/ path · ↑↓ move · ←→ fold · type to jump"
-            " · ⏎ open · ^q quit",
+            " · ^. hidden · ⏎ open · ^q quit",
             id="strip")
 
     def on_mount(self) -> None:
@@ -66,6 +72,10 @@ class MediasmithApp(App):
 
     def action_focus_path(self) -> None:
         self.query_one(PathBar).focus()
+
+    def action_toggle_hidden(self) -> None:
+        self.show_hidden = not self.show_hidden
+        self.query_one(LibraryTree).reload()
 
     def action_focus_tree(self) -> None:
         self.query_one(LibraryTree).focus()

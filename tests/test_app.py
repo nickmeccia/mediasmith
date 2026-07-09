@@ -1,7 +1,9 @@
 """Interaction (Pilot) tests: keypresses in, observable state out."""
 
+from pathlib import Path
+
 from mediasmith.app import MediasmithApp
-from mediasmith.browser import LibraryTree, PathBar
+from mediasmith.browser import LibraryTree, PathBar, parse_view
 from mediasmith.details import DetailsPane
 
 
@@ -44,6 +46,7 @@ async def test_pathbar_tab_completes(media_tree):
         await pilot.pause()
         bar = app.query_one(PathBar)
         bar.focus()
+        await pilot.pause()          # let the Focus event land before typing
         bar.value = str(media_tree / "Mu")
         await pilot.pause(0.1)
         await pilot.press("tab")
@@ -200,6 +203,143 @@ async def test_opt_up_down_at_top_level(media_tree):
         assert str(tree.cursor_node.label) == "Books"
         await pilot.press("alt+down")
         assert str(tree.cursor_node.label) == "Pics"
+
+
+def test_parse_view(tmp_path):
+    (tmp_path / "alpha").mkdir()
+    d = str(tmp_path / "alpha")
+    assert parse_view(d) == (tmp_path / "alpha", None)
+    assert parse_view(d + "/") == (tmp_path / "alpha", None)   # slash: no-op
+    assert parse_view(d + "/m") == (tmp_path / "alpha", "m")
+    assert parse_view(str(tmp_path / "alp")) == (tmp_path, "alp")
+    assert parse_view("/nope/zzz") == (Path("/nope"), "zzz")
+
+
+async def test_typing_filters_tree(media_tree):
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await settle(pilot)
+        bar = app.query_one(PathBar)
+        tree = app.query_one(LibraryTree)
+        bar.focus()
+        await pilot.pause()          # let the Focus event land before typing
+        bar.value = str(media_tree / "M")
+        await settle(pilot)
+        names = [c.data.path.name for c in tree.root.children]
+        assert names == ["Movies", "Music"]
+        assert tree.has_class("-editing")      # no selection while editing
+
+
+async def test_slash_boundary_is_noop(media_tree):
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await settle(pilot)
+        bar = app.query_one(PathBar)
+        tree = app.query_one(LibraryTree)
+        bar.focus()
+        await pilot.pause()          # let the Focus event land before typing
+        bar.value = str(media_tree / "Music") + "/"
+        await settle(pilot)
+        songs = [c.data.path.name for c in tree.root.children]
+        assert str(tree.path) == str(media_tree / "Music")
+        assert songs == ["01 Song One.mp3", "02 Song Two.mp3"]
+        bar.value = str(media_tree / "Music")     # slash deleted: same view
+        await settle(pilot)
+        assert str(tree.path) == str(media_tree / "Music")
+        assert [c.data.path.name for c in tree.root.children] == songs
+        bar.value = str(media_tree / "Musi")      # now a filter on the parent
+        await settle(pilot)
+        assert str(tree.path) == str(media_tree)
+        assert [c.data.path.name for c in tree.root.children] == ["Music"]
+
+
+async def test_down_commits_filter_to_top_match(media_tree):
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await settle(pilot)
+        bar = app.query_one(PathBar)
+        tree = app.query_one(LibraryTree)
+        bar.focus()
+        await pilot.pause()          # let the Focus event land before typing
+        bar.value = str(media_tree / "Mo")
+        await settle(pilot)
+        await pilot.press("down")
+        await settle(pilot)
+        assert app.focused is tree
+        assert str(tree.cursor_node.label) == "Movies"
+        assert len(tree.root.children) == 6       # filter cleared
+        assert bar.value == str(media_tree / "Movies")
+
+
+async def test_enter_enters_top_match(media_tree):
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await settle(pilot)
+        bar = app.query_one(PathBar)
+        tree = app.query_one(LibraryTree)
+        bar.focus()
+        await pilot.pause()          # let the Focus event land before typing
+        bar.value = str(media_tree / "Mu")
+        await settle(pilot)
+        await pilot.press("enter")
+        await settle(pilot)
+        assert app.focused is tree
+        assert str(tree.path) == str(media_tree / "Music")
+        # watch_path re-cursors to the root row, whose highlight syncs value
+        assert bar.value == str(media_tree / "Music")
+
+
+async def test_no_matches_shows_empty_tree(media_tree):
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await settle(pilot)
+        bar = app.query_one(PathBar)
+        tree = app.query_one(LibraryTree)
+        bar.focus()
+        await pilot.pause()          # let the Focus event land before typing
+        bar.value = str(media_tree / "zzz")
+        await settle(pilot)
+        assert len(tree.root.children) == 0
+
+
+async def test_input_focus_clears_selection(media_tree):
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await settle(pilot)
+        await pilot.press("down")
+        await settle(pilot)
+        details = app.query_one(DetailsPane)
+        assert details.path is not None
+        await pilot.press("ctrl+slash")
+        tree = app.query_one(LibraryTree)
+        assert tree.has_class("-editing")
+        assert details.path is None
+
+
+async def test_ghost_suggestion_is_top_match(media_tree):
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await settle(pilot)
+        bar = app.query_one(PathBar)
+        bar.focus()
+        await pilot.pause()          # let the Focus event land before typing
+        bar.value = str(media_tree / "Mu")
+        await settle(pilot)
+        assert bar._suggestion == str(media_tree / "Music") + "/"
+
+
+async def test_hidden_files_shown_and_toggleable(media_tree):
+    (media_tree / ".config").write_text("x")
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await settle(pilot)
+        tree = app.query_one(LibraryTree)
+        names = [c.data.path.name for c in tree.root.children]
+        assert names[0] == ".config"              # visible by default
+        await pilot.press("ctrl+full_stop")
+        await settle(pilot)
+        names = [c.data.path.name for c in tree.root.children]
+        assert ".config" not in names
 
 
 async def test_down_from_pathbar_focuses_tree_top(media_tree):

@@ -111,6 +111,18 @@ class DetailsPane(VerticalScroll, can_focus=True):
 
     # -- selection → panels --------------------------------------------------------
 
+    def clear(self) -> None:
+        """No selection: empty title, every panel hidden."""
+        self._pending = None
+        if self._debounce is not None:
+            self._debounce.stop()
+            self._debounce = None
+        self.path = None
+        self.kind = None
+        self.query_one("#dtitle", Label).update("")
+        for panel in PANELS:
+            self.query_one(f"#panel-{panel}").display = False
+
     def preview(self, path: Path, immediate: bool = False) -> None:
         """Debounced: browsing quickly must not read every file passed over."""
         self._pending = path
