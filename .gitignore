@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# MacOS Finder
+.DS_Store
+
+# Vim Swap Files
+*.swp
+
+# Emacs
+#*#
+.#*
+emacs/.emacs.d/backups/
+emacs/.emacs.d/auto-save-list/

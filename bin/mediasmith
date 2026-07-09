@@ -1,0 +1,8 @@
+#!/bin/sh
+# mediasmith launcher — run from any directory.
+# Resolves the repo through this file's symlink, then hands off to uv, which
+# keeps dependencies in sync with pyproject.toml on every launch (no build
+# step; editing the source takes effect on the next run). The working
+# directory is preserved, so `mediasmith .` means where you are.
+REPO="$(dirname "$(dirname "$(readlink -f "$0")")")"
+exec uv run --project "$REPO" mediasmith "$@"

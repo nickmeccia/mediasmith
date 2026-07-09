@@ -1,0 +1,28 @@
+[project]
+name = "mediasmith"
+version = "0.1.0"
+description = "A media-library browser and toolbench for the terminal."
+requires-python = ">=3.12"
+dependencies = [
+    "textual>=8",
+    "textual-image",
+    "mutagen",
+    "pillow",
+]
+
+[project.scripts]
+mediasmith = "mediasmith.app:main"
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
