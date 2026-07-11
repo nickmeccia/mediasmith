@@ -36,8 +36,23 @@
 -[ ] Deezer search*
      This is a really useful tool, but I'm not sure how to fit it in. The best idea I have right now is a global keybinding to open a modal, but I would like to hear any ideas you have, too. Also, I understand that the `dzr-srt` command doesn't work on my computer right now; just implement assuming it does and I will fix later.
 
--[ ] Folderize
+-[x] Folderize
      Aha, an action which the user can perform on a folder! If you put a button for "folderize audio files" on every folder I wouldn't hate it; however, it would be cool if the button only appeared when this action was possible. This button should appear on folders no matter how high up in the tree the action is possible (barring technical limitations, of course). So, for example, this button would appear on /Users/nick/Music and all subfolders (except for /Users/nick/Music/Album Art).
+     (Claude, 2026-07-11: shipped, the cool way — the `fo^lderize`
+     button appears only when a background probe finds a file that
+     would actually move (budgeted at ~200 tag reads so a huge NAS tree
+     can't melt; past the budget it assumes organized — the one
+     "technical limitation"). Pressing it shows the planned
+     Artist/Album structure in the details pane; ^a applies, esc or
+     cancel backs out. Files with missing tags go to "* Skipped/",
+     empty folders get pruned. Differences from v1 worth knowing:
+     [1] v1 would rebuild an already-organized library into
+     "Artist (1)/" — v2 reuses existing folders and treats a file
+     already at Artist/Album (per its own tags) as in place, anywhere
+     in the tree, so folderizing an album folder is a no-op instead of
+     a nesting accident; [2] v1's "rename to NN Title.ext" toggle isn't
+     ported yet — say the word; [3] the button also appears on
+     album-like folders that open as a bulk-edit form, next to save.)
 
 -[ ] Fix multi-artist
      Even with visual editing, this would still be a cool feature to have. It would be initiated in the same way as folderize above: button present on folders.

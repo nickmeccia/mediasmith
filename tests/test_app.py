@@ -760,6 +760,97 @@ async def test_convert_never_overwrites(media_tree, monkeypatch):
         assert existing.read_bytes() == b"precious"
 
 
+# -- folderize --------------------------------------------------------------------
+
+
+def _make_inbox(media_tree):
+    """A messy dumping-ground folder: two tagged strays, one untagged."""
+    from tests.mediafactory import make_mp3
+    inbox = media_tree / "Inbox"
+    inbox.mkdir()
+    make_mp3(inbox / "strayA.mp3",
+             tags={"title": "A", "artist": "The Band", "album": "Alpha"})
+    make_mp3(inbox / "strayB.mp3",
+             tags={"title": "B", "artist": "The Band", "album": "Alpha"})
+    make_mp3(inbox / "mystery.mp3", tags={"title": "?"})
+    return inbox
+
+
+async def _goto_folder(app, pilot, name):
+    await settle(pilot)
+    await pilot.press("down")                    # into the anchor's children
+    await pilot.press(*name.lower()[:3])         # type-to-select
+    await settle(pilot)
+    await pilot.pause(0.6)                       # probe worker fills in late
+    node = app.query_one(LibraryTree).cursor_node
+    assert name in str(node.label)
+
+
+def _bar_names(app):
+    from mediasmith.actions import ActionBar
+    return [b.spec.name for b in app.query_one("#pane-bar", ActionBar).buttons()]
+
+
+async def test_folderize_appears_only_where_useful(media_tree):
+    _make_inbox(media_tree)
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _goto_folder(app, pilot, "Inbox")
+        assert "folderize" in _bar_names(app)
+        await _goto_folder(app, pilot, "Books")  # no audio below
+        assert "folderize" not in _bar_names(app)
+
+
+async def test_folderize_preview_apply_flow(media_tree):
+    inbox = _make_inbox(media_tree)
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _goto_folder(app, pilot, "Inbox")
+        await pilot.press("ctrl+l")              # fo^lderize → plan preview
+        await pilot.pause(0.6)
+        details = app.query_one(DetailsPane)
+        assert details.folderize_preview_open()
+        assert app.query_one("#folderize-preview").display
+        assert set(_bar_names(app)) == {"folderize_apply", "folderize_cancel"}
+        await pilot.press("ctrl+a")              # apply
+        await pilot.pause(0.8)
+        assert (inbox / "The Band" / "Alpha" / "strayA.mp3").exists()
+        assert (inbox / "* Skipped" / "mystery.mp3").exists()
+        assert not details.folderize_preview_open()
+        tree = app.query_one(LibraryTree)
+        assert tree._node_for(inbox / "The Band") is not None
+        await pilot.pause(0.6)                   # re-probe: nothing left
+        assert "folderize" not in _bar_names(app)
+
+
+async def test_folderize_escape_cancels_preview(media_tree):
+    inbox = _make_inbox(media_tree)
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _goto_folder(app, pilot, "Inbox")
+        await pilot.press("ctrl+l")
+        await pilot.pause(0.6)
+        details = app.query_one(DetailsPane)
+        assert details.folderize_preview_open()
+        await pilot.press("escape")              # tree keeps focus: esc = cancel
+        await settle(pilot)
+        assert not details.folderize_preview_open()
+        assert not app.query_one("#folderize-preview").display
+        assert (inbox / "strayA.mp3").exists()   # nothing moved
+        assert "folderize" in _bar_names(app)    # back to the offer
+
+
+async def test_folderize_offered_on_album_bulk_view(media_tree):
+    # Music is an album-like leaf (bulk form), but its loose files are
+    # unorganized — the folder action must still be reachable
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _goto_folder(app, pilot, "Music")
+        await pilot.pause(0.4)                   # bulk read + probe
+        names = _bar_names(app)
+        assert "save" in names and "folderize" in names
+
+
 async def test_contextual_strips_follow_focus(media_tree):
     app = MediasmithApp(media_tree)
     async with app.run_test(size=(120, 40)) as pilot:

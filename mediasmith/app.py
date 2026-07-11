@@ -148,6 +148,8 @@ class MediasmithApp(App):
     #row-art-path { height: 1; margin-top: 1; }
     #art-path { background: transparent; }
     #pane-bar { margin-top: 1; }
+    #folderize-preview { height: auto; margin-top: 1; }
+    #folderize-tree { height: auto; }
     #ctxrow { height: 1; background: $surface; color: $text-muted; }
     #strip-left { width: 38%; min-width: 30; padding-left: 1; }
     #strip-right { width: 1fr; padding-left: 1; }
@@ -309,6 +311,13 @@ class MediasmithApp(App):
         parent = tree._node_for(ev.path.parent)
         if parent is not None:
             await tree.reload_node(parent)
+
+    async def on_details_pane_folder_changed(
+            self, ev: DetailsPane.FolderChanged) -> None:
+        tree = self.query_one(LibraryTree)
+        node = tree._node_for(ev.path)
+        if node is not None:
+            await tree.reload_node(node)
 
 
 def main() -> None:

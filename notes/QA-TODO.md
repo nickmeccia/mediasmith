@@ -29,6 +29,20 @@ Everything below passed pytest + the fuzz harness; human pass pending.
 - [ ] Convert keys are placeholders (^p/^b/^y) — rename/rebind at will
 - [ ] A long conversion over SMB: UI stays live? Start two at once?
 
+## Folderize (button on folders)
+
+- [ ] `fo^lderize` appears on a messy folder shortly after highlight
+      (probe fills in late — watch the delay on NAS folders), stays
+      absent on organized folders, Books, Empty, Album Art
+- [ ] Press: plan preview in the details pane (new Artist/Album tree,
+      skips listed with reasons); bar becomes `^apply` / `cancel`
+- [ ] ^a applies: files move, "* Skipped/" collects untagged, empty
+      dirs pruned, tree refreshes, toast summarizes counts
+- [ ] esc backs out of the preview without touching anything
+- [ ] Album-like folder (bulk form view) also offers folderize
+- [ ] * Probe cost on the real NAS Music Library root: is highlight
+      still snappy? (budget is folderize.PROBE_BUDGET = 200 tag reads)
+
 ## Book extract-cover + create-opf
 
 - [ ] `ex^tract cover` appears only on epubs that have a cover; writes

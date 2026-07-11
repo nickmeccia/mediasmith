@@ -81,12 +81,16 @@ def read_tags(path: Path) -> dict[str, str]:
             for name in ("artist", "album") if (value := first(name))}
 
 
-def find_audio(root: Path) -> list[Path]:
-    """Every audio file under ``root``, hidden dirs skipped, sorted."""
-    found: list[Path] = []
+def iter_audio(root: Path, max_dirs: int | None = None):
+    """Lazily yield audio files under ``root``, hidden dirs skipped.
+    ``max_dirs`` bounds the walk (probes must not crawl a whole NAS)."""
     stack = [root]
+    visited = 0
     while stack:
         folder = stack.pop()
+        visited += 1
+        if max_dirs is not None and visited > max_dirs:
+            return
         try:
             entries = list(os.scandir(folder))
         except OSError:
@@ -97,8 +101,12 @@ def find_audio(root: Path) -> list[Path]:
             if entry.is_dir(follow_symlinks=False):
                 stack.append(Path(entry.path))
             elif Path(entry.name).suffix.lower() in kinds.AUDIO_EXTENSIONS:
-                found.append(Path(entry.path))
-    return sorted(found)
+                yield Path(entry.path)
+
+
+def find_audio(root: Path) -> list[Path]:
+    """Every audio file under ``root``, sorted."""
+    return sorted(iter_audio(root))
 
 
 def _placement(file: Path, tags: dict[str, str],
@@ -160,7 +168,7 @@ def probe(root: Path, budget: int = PROBE_BUDGET) -> bool:
     budget is spent, so an organized 3,000-file NAS tree costs a bounded
     number of tag reads."""
     spent = 0
-    for file in find_audio(root):
+    for file in iter_audio(root, max_dirs=max(budget, 50)):
         if spent >= budget:
             return False
         spent += 1

@@ -64,6 +64,40 @@ def human_size(n: float) -> str:
         n /= 1024
 
 
+def _mk(text: str) -> str:
+    """Escape a filename for Textual content markup."""
+    return text.replace("[", r"\[")
+
+
+PLAN_PREVIEW_LINES = 40
+
+
+def render_plan(plan) -> str:
+    """The folderize preview: the structure the apply button will build."""
+    n = len(plan.moves)
+    lines = [f"{n} file{'s' if n != 1 else ''} to organize:", ""]
+    structure = plan.structure()
+    for artist in sorted(structure, key=str.lower):
+        albums = structure[artist]
+        lines.append(f"  [bold]{_mk(artist)}/[/]")
+        for album in sorted(albums, key=str.lower):
+            count = albums[album]
+            lines.append(f"    {_mk(album)}/  [dim]({count} "
+                         f"file{'s' if count != 1 else ''})[/]")
+    if plan.skips:
+        lines.append("")
+        lines.append(f"  [bold]{_mk(folderize.SKIPPED_DIR_NAME)}/[/]  "
+                     f"[dim]({len(plan.skips)} missing tags)[/]")
+        for skip in plan.skips[:8]:
+            lines.append(f"    {_mk(skip.source.name)}  [dim]{skip.reason}[/]")
+        if len(plan.skips) > 8:
+            lines.append(f"    [dim]…and {len(plan.skips) - 8} more[/]")
+    if len(lines) > PLAN_PREVIEW_LINES:
+        hidden = len(lines) - PLAN_PREVIEW_LINES
+        lines = lines[:PLAN_PREVIEW_LINES] + [f"[dim]…and {hidden} more lines[/]"]
+    return "\n".join(lines)
+
+
 WORD_BINDINGS = [
     # Input only binds ctrl+arrow word combos; macOS option arrives as alt
     # under the kitty protocol, so bind those names too (opt+shift = select
@@ -307,6 +341,14 @@ class DetailsPane(VerticalScroll, can_focus=True):
             super().__init__()
             self.path = path
 
+    class FolderChanged(Message):
+        """An action rearranged a folder's subtree (folderize, …); the
+        tree should re-list that node."""
+
+        def __init__(self, path: Path) -> None:
+            super().__init__()
+            self.path = path
+
     def can_edit(self) -> bool:
         """Focus may enter this pane only when the shown kind is editable."""
         return self.kind in EDITABLE_KINDS and self._readable
@@ -327,6 +369,8 @@ class DetailsPane(VerticalScroll, can_focus=True):
         self._art_candidates: list[artfetch.CoverCandidate] = []
         self._art_index = 0
         self._book_cover = False    # shown book has an extractable cover
+        self._folderize_ready = False   # probe: this folder has work to do
+        self._folderize_plan: folderize.FolderizePlan | None = None
 
     # -- static layout ---------------------------------------------------------
 
@@ -381,6 +425,8 @@ class DetailsPane(VerticalScroll, can_focus=True):
 
         with Vertical(id="panel-folder", classes="panel"):
             yield self._row("contains", "folder-counts", 8 + LABEL_GUTTER)
+            with Vertical(id="folderize-preview"):
+                yield Static("", id="folderize-tree")
 
         with Vertical(id="panel-other", classes="panel"):
             width = 4 + LABEL_GUTTER
@@ -399,6 +445,7 @@ class DetailsPane(VerticalScroll, can_focus=True):
         self.query_one("#row-fname").display = False
         self.query_one("#row-audio-info").display = False
         self.query_one("#row-art-path").display = False
+        self.query_one("#folderize-preview").display = False
         self._sync_pane_bar()
 
     # -- value plumbing ----------------------------------------------------------
@@ -469,6 +516,9 @@ class DetailsPane(VerticalScroll, can_focus=True):
         self._art_candidates = []
         self._art_index = 0
         self._book_cover = False
+        self._folderize_ready = False
+        self._folderize_plan = None
+        self.query_one("#folderize-preview").display = False
         self._hide_art_path()
 
     def _apply_pending(self) -> None:
@@ -577,6 +627,8 @@ class DetailsPane(VerticalScroll, can_focus=True):
             self._set_cover("cover-book", bulk.cover)
         self._baseline = self._current_state()
         self._refresh_marks()
+        if self.path is not None:               # album-folder origin: the
+            self._probe_folderize(self.path)    # folder actions still apply
         if self._focus_after_load:
             self._focus_after_load = False
             self.focus()
@@ -642,6 +694,7 @@ class DetailsPane(VerticalScroll, can_focus=True):
                       kinds.BOOK, kinds.IMAGE, kinds.OTHER)
             if d.counts.get(k)) or "empty"
         self._set("folder-counts", summary)
+        self._probe_folderize(path)
 
     def _fill_other(self, path: Path, d: adapters.OtherDetails) -> None:
         self._set("other-size", human_size(d.size))
@@ -740,17 +793,23 @@ class DetailsPane(VerticalScroll, can_focus=True):
     def _sync_pane_bar(self) -> None:
         """Show the pane-bar buttons the current selection has earned."""
         names: set[str] = set()
-        if self.can_edit():
-            names.add("save")
-            if (self.kind == kinds.BOOK and self.paths is None
-                    and self.path is not None):
-                suffix = self.path.suffix.lower()
-                names |= {f"convert_{fmt}" for fmt in calibre.EBOOK_FORMATS
-                          if fmt != suffix.lstrip(".")}
-                if suffix == ".epub":           # the only kind we can read
-                    names.add("create_opf")
-                    if self._book_cover:        # only when there is one
-                        names.add("extract_cover")
+        if self._folderize_plan is not None:    # a preview owns the bar
+            names = {"folderize_apply", "folderize_cancel"}
+        else:
+            if self.can_edit():
+                names.add("save")
+                if (self.kind == kinds.BOOK and self.paths is None
+                        and self.path is not None):
+                    suffix = self.path.suffix.lower()
+                    names |= {f"convert_{fmt}"
+                              for fmt in calibre.EBOOK_FORMATS
+                              if fmt != suffix.lstrip(".")}
+                    if suffix == ".epub":       # the only kind we can read
+                        names.add("create_opf")
+                        if self._book_cover:    # only when there is one
+                            names.add("extract_cover")
+            if self._folderize_ready:           # probe: work to do below
+                names.add("folderize")
         self.query_one("#pane-bar", ActionBar).set_visible(names)
 
     def action_for_key(self, key: str) -> Action | None:
@@ -1083,3 +1142,97 @@ class DetailsPane(VerticalScroll, can_focus=True):
     def _produced(self, title: str, target: Path) -> None:
         self.notify(f"{target.name} created", title=title)
         self.post_message(self.FileCreated(target))
+
+    # -- folderize: a folder action with a plan preview ---------------------------
+    # The probe fills in late (NAS rule); the button appears only when the
+    # subtree has work to do. Pressing it plans in a worker and swaps the
+    # folder panel to a preview; apply/cancel own the bar until resolved.
+
+    @work(thread=True, exclusive=True, group="folderize-probe")
+    def _probe_folderize(self, root: Path) -> None:
+        ready = folderize.probe(root)
+        if ready:
+            self.app.call_from_thread(self._folderize_probed, root)
+
+    def _folderize_probed(self, root: Path) -> None:
+        if self.path == root and self._folderize_plan is None:
+            self._folderize_ready = True
+            self._sync_pane_bar()
+
+    def folderize_preview_open(self) -> bool:
+        return self._folderize_plan is not None
+
+    def _folderize_root(self) -> Path | None:
+        if self.path is None:
+            return None
+        if self.kind == kinds.FOLDER or self.paths is not None:
+            return self.path if self.path.is_dir() else None
+        return None
+
+    def action_folderize(self) -> None:
+        root = self._folderize_root()
+        if root is None or not self._folderize_ready:
+            return
+        self.notify("scanning…", title="folderize")
+        self._folderize_plan_worker(root)
+
+    @work(thread=True, exclusive=True, group="folderize-plan")
+    def _folderize_plan_worker(self, root: Path) -> None:
+        plan = folderize.build_plan(root)
+        self.app.call_from_thread(self._folderize_planned, root, plan)
+
+    def _folderize_planned(self, root: Path,
+                           plan: folderize.FolderizePlan) -> None:
+        if self.path != root:                   # selection moved on
+            return
+        if plan.empty:
+            self.notify("already organized", title="folderize")
+            self._folderize_ready = False
+            self._sync_pane_bar()
+            return
+        self._folderize_plan = plan
+        for panel in PANELS:
+            self.query_one(f"#panel-{panel}").display = (panel == kinds.FOLDER)
+        self.query_one("#dtitle", Label).update(f"folderize {root.name}/")
+        self.query_one("#dtitle").display = True
+        self.query_one("#row-fname").display = False
+        self.query_one("#row-audio-info").display = False
+        self.query_one("#folderize-tree", Static).update(render_plan(plan))
+        self.query_one("#folderize-preview").display = True
+        self._sync_pane_bar()
+
+    def action_folderize_apply(self) -> None:
+        plan = self._folderize_plan
+        if plan is None:
+            return
+        self._folderize_plan = None
+        self.notify("organizing…", title="folderize")
+        self._folderize_exec_worker(plan)
+
+    @work(thread=True, exclusive=True, group="folderize-exec")
+    def _folderize_exec_worker(self, plan: folderize.FolderizePlan) -> None:
+        moved, skipped, errors = folderize.execute(plan)
+        self.app.call_from_thread(
+            self._folderize_done, plan.root, moved, skipped, errors)
+
+    def _folderize_done(self, root: Path, moved: int, skipped: int,
+                        errors: list[tuple[Path, str]]) -> None:
+        parts = [f"{moved} moved"]
+        if skipped:
+            parts.append(f"{skipped} skipped (missing tags)")
+        if errors:
+            path, reason = errors[0]
+            parts.append(f"{len(errors)} failed — {path.name}: {reason}")
+        self.notify(" · ".join(parts), title="folderize", timeout=8,
+                    severity="warning" if errors else "information")
+        fs.clear_cache()                        # the subtree just changed
+        self.post_message(self.FolderChanged(root))
+        if self.path == root:
+            self.preview(root, immediate=True)  # fresh counts, fresh probe
+
+    def action_folderize_cancel(self) -> None:
+        if self._folderize_plan is None:
+            return
+        self._folderize_plan = None
+        if self.path is not None:               # restore the normal view
+            self.preview(self.path, immediate=True)
