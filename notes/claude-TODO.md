@@ -1,3 +1,11 @@
+> (Claude, 2026-07-11: Fable's credits ran out mid-queue. For whoever
+> continues: **read CLAUDE.md's "action pattern cookbook", then
+> notes/claude-HANDOFF.md** — per-feature briefs with locked
+> decisions. The engines for multi-artist (#5), subtitles clean/shift
+> (#7), and image convert/resize/rotate (#9) are already built and
+> tested in mediasmith/{multiartist,srt,imageops}.py — those features
+> need UI wiring only.)
+
 ### Preliminary notes:
 
 - Button pattern

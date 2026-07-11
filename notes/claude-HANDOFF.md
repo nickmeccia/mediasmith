@@ -1,0 +1,252 @@
+# Handoff briefs — remaining claude-TODO features
+
+Written by Fable 5 (2026-07-11) for the model finishing the queue.
+Read CLAUDE.md first — especially "The action pattern cookbook", which
+this file assumes. Each brief below maps one feature onto a pattern
+that already ships in this repo, sketches the engine API, and lists
+the tests to write. The UI wiring is deliberately formulaic; the
+judgment has been spent here so you don't have to re-derive it.
+
+**Definition of done, per feature (no exceptions):**
+
+1. Engine logic in its own IO-free-ish module + pure pytest coverage.
+2. UI wiring per the cookbook; Pilot tests for the new interactions.
+3. Full suite green, then the snapshot fuzz gate (see cookbook) — zero
+   deaths. Add any new chords to `tests/fuzz.py` KEYS.
+4. A checklist section in notes/QA-TODO.md (what Nick should try).
+5. An inline `(Claude, date: …)` reply under the feature's entry in
+   notes/claude-TODO.md recording what shipped and what was decided.
+6. One commit, message explaining decisions, ending with the gate note.
+
+**Worked examples to copy from (commit 830bad9 + 5591410):**
+
+- Plain button that produces a file → `extract_cover` / `create_opf`
+  (details.py "produce-a-sibling" section).
+- Folder action, smart visibility, plan preview → folderize
+  (folderize.py + details.py "folderize" section).
+- Long-running external tool in a worker → `_convert_worker`.
+- Options-before-action ("wizard") → the art-path input row
+  (`ArtPathInput`): an inline row/div toggled visible under the
+  buttons. Nick hates modals; never add one beyond ConfirmSave.
+
+
+## #5 Fix multi-artist (folder action)
+
+- **Engine DONE (Fable, 2026-07-11): `mediasmith/multiartist.py` +
+  `tests/test_multiartist.py` (7 tests green). Only the UI wiring
+  remains.** The engine API: `probe(root)`, `build_plan(root) ->
+  MultiArtistPlan(groups)`, `execute(plan) -> (fixed, errors)`.
+- Pattern: folderize exactly — probe → button → plan preview →
+  apply/cancel. Reuse the same preview Static (or add a sibling) and
+  the same bar-ownership trick in `_sync_pane_bar`. Preview shows,
+  per album: `album → main` then each file's old artists (see v1's
+  preview text for tone).
+- Decisions already inside the engine (don't relitigate):
+  - **The AC/DC guard:** a slash-joined artist string is NOT tangled
+    when the unsplit string, sanitized, equals the artist-folder name
+    two levels up. v1 would have retagged AC/DC as "AC".
+  - v1's per-album include/exclude checkboxes are dropped; scoping is
+    the substitute (invoke on less to exclude). If Nick wants
+    checkboxes, that's a new interaction pattern — flag it first.
+- Pilot tests: button appears on a tangled folder, absent on clean;
+  preview → apply rewrites tags (assert via mutagen).
+- Key suggestion: none of "fix multi artist"'s letters are free — use
+  `Action("fix_multi_artist", "fix multi-artist", "x")`? ctrl+x is
+  Input cut, but no inputs are focusable on folder views, so it's
+  safe there. Nick renames keys at will; note it in QA-TODO.
+
+## #6 Video: container field + download posters
+
+- Container: `adapters._read_video` gains
+  `container: str` — just the suffix name ("mkv") is what Nick asked
+  for ("satisfied if merely viewable"); add a `container` row to
+  `panel-video`. If you want the real demuxer name, ffprobe
+  `format_name` is already probed in `probe_video_title`'s style —
+  fold both into one ffprobe call in `_probe_title` (one process, two
+  fields; keep the selection-moved check).
+- Download posters: port `mediasmith-v1 tools/videosmith/
+  download-posters/download-posters.py` into
+  `mediasmith/posters.py`. Keep: TMDB key resolution (env var, then
+  ~/.config/mediasmith/tmdb_api_key), guessit → filename → folder
+  title resolution, dhash near-duplicate dropping. Replace `requests`
+  with urllib (artfetch.py shows the house style) to avoid a new dep;
+  guessit IS worth adding to pyproject (release-name parsing is not
+  worth rewriting).
+- Nick's local/network split: file on a local volume → posters into
+  the file's folder; on a network volume → the v1 staging folder
+  (~/Downloads/Videosmith/<Film (Year)>/). Detect network with
+  `path.parts[:2] == ("/", "Volumes")` — document in QA-TODO that
+  this heuristic is up for review.
+- Button on video files: `download posters` — needs no can_edit;
+  chords already fire from the tree (that's why App.on_key exists).
+  Progress via notify at start/end; it downloads N images, so this is
+  the longest worker yet — consider notify per ~5 posters.
+- Honor `MEDIASMITH_OFFLINE` (artfetch.py pattern) — the fuzz gate
+  presses every chord.
+- Tests: engine with a fake fetcher (inject a `fetch(url)->bytes`
+  callable, don't hit TMDB); dhash dedup on generated images; the
+  local/network target rule. Pilot: button present on video, absent
+  elsewhere; a monkeypatched download lands files + FileCreated.
+
+## #7 Subtitles (roadmap slice 3 — the big one)
+
+- Read `mediasmith-v1/lib/engines/subtitle_sync.py` AND its
+  DEBUG_NOTES.md before anything. CLAUDE.md rule: that engine's
+  policy is empirically tuned — **port, don't rewrite.** It already
+  follows the events-from-generators pattern this repo wants.
+- **`mediasmith/srt.py` is DONE (Fable, 2026-07-11) +
+  `tests/test_srt.py` (9 tests green):** Entry/parse/read/render/
+  write, `clean()` (v1 regexes verbatim), `shift()` (clamp at 0,
+  recompute-from-original nudge model), `format_shift()` for the
+  shift div's display. The dl+sync engine port and all UI remain.
+- Buttons on a video file (visibility):
+  - `clean subs` — only when a sibling .srt exists
+    (`VideoDetails.subtitle_name` already knows). Runs clean() on it,
+    in place; notify what was stripped.
+  - `get subs` — the v1 dl+sync engine port; worker streams events →
+    notify. `dzr-srt`-style external tools may be broken on Nick's
+    machine; implement assuming they work (his instruction).
+  - `shift subs` — a toggleable inline div under the video fields
+    (react-style, exactly Nick's spec): total-shift display,
+    ←/→ ±0.1s, ⇧←/→ ±1s, ⇞/⇟ ±10s (steal v1's _ShiftState: target vs
+    applied, recompute from ORIGINAL every write so nudging never
+    loses cues). Pending shift ties into the pane's dirty/✓ flow —
+    the div refuses to close while pending (ConfirmSave applies).
+    This is the one feature where focus enters a non-editable kind's
+    pane — model it on ArtPathInput's cancel/blur behavior rather
+    than widening EDITABLE_KINDS.
+  - `watch` — launch the video + subs in the player to check
+    alignment: `open -a` on macOS… IINA/VLC take `--sub-file`-style
+    args; plain `open` can't pass them, so use
+    `subprocess.Popen(["open", video])` as the safe default and note
+    in QA-TODO that wiring the sub file needs Nick to name his player.
+- Fuzz: add the new chords; the shift div's arrow keys ride existing
+  KEYS already.
+
+## #8 + #9 Images: rename, convert, resize, rotate
+
+- Rename (do first, it's small): add `kinds.IMAGE` to
+  `EDITABLE_KINDS`, give `_fill_image` a `_show_editable` path like
+  audio/book but with an empty field form (filename only). Check
+  `_field_inputs`/save flow — `save_details` already handles
+  fields={} + rename. Pilot: enter on an image focuses fname; rename
+  on disk works (copy test_book rename assertions).
+- **Engine DONE (Fable, 2026-07-11): `mediasmith/imageops.py` +
+  `tests/test_imageops.py` (7 tests green). Only the UI wiring
+  remains.** API and locked decisions:
+  - `convert(path, fmt)` — offer `CONVERT_FORMATS` minus current
+    (heic excluded: Pillow can't write it; avif needs a plugin —
+    revisit only if Nick asks). RGBA→JPEG flattens; EXIF preserved
+    where the format allows. Beside source, refuse-overwrite.
+  - `resize(path, w, h)` — writes `name (WxH).ext` beside the source
+    (files are precious; metadata is edit-in-place, pixels are not).
+    `fit_dimensions()` is the aspect-link math for the resize div.
+  - `rotate(path, quarter_turns)` — the one in-place op; returns
+    `(path, lossy)`, lossy=True for re-encoded JPEGs → notify
+    "re-encoded". No jpegtran dep without asking Nick.
+- Convert buttons: pane bar, own format hidden — copy the book
+  convert visibility code verbatim.
+- Resize div: Nick specified it — button toggles an inline div with
+  two numeric inputs and a "link" checkbox (aspect ratio). Textual
+  `Checkbox` widget exists; inputs are `FieldInput` with `type=
+  "integer"`. Editing aspect-linked: changing one field recomputes
+  the other on change when linked. Apply button in the div. This div
+  + the shift-subs div together define the wizard pattern — keep them
+  visually identical.
+- Tests: engine (every fmt round-trip via tiny PIL images, RGBA→jpg,
+  refuse-overwrite, aspect math), Pilot (toggle div, linked fields
+  recompute, apply creates file).
+
+## #10 Folders: rename / new / delete
+
+- Rename: add `kinds.FOLDER` to EDITABLE_KINDS *carefully* — the
+  folder panel currently descends into bulk-edit for album-like
+  folders (`bulk_paths_for_folder`); plain folders should now show a
+  fname-only form like images. `adapters.rename` already works on
+  dirs (`path.rename`); the tree's Saved handler already reloads.
+  Watch: renaming an EXPANDED folder — reload the parent node and
+  re-expand via `_pending_restore` (see `anchor`).
+- New folder: keybinding on the tree (strip: `^n new`), creates
+  "untitled folder" in the highlighted dir (or its parent when a file
+  is highlighted), then puts the cursor on it and descends into the
+  rename field — Finder's flow. `fs.clear_cache()` + reload first.
+- Delete: button on the folder view AND a tree keybinding; use
+  ConfirmSave-style modal? No — Nick hates modals, but delete is
+  destructive: send to macOS Trash via `subprocess.run(["osascript",
+  "-e", 'tell app "Finder" to delete POSIX file "…"])` or
+  `send2trash` dep (prefer send2trash: 0 deps of its own, testable).
+  Trash means no confirm needed — that's the design out of the modal
+  trap. Notify "moved to Trash".
+- Tests: engine none needed beyond adapters.rename (covered); Pilot
+  for new-folder flow, delete-to-trash (monkeypatch send2trash),
+  rename with expansion restore.
+
+## #11 Omnibus splitter
+
+- v1 `tools/booksmith/omnibus-splitter/omnibus-splitter.py` (571
+  lines) is regex/ET-based NCX parsing + epub slicing. Port the
+  detection + split into `mediasmith/omnibus.py`; it has NO deps and
+  its logic looked sound on skim — port faithfully, consolidate its
+  epub writing onto `epub.rewrite_epub` where it fits.
+- Button `split omnibus` on epubs, visible only when
+  `detect_books(navpoints)` finds >1 book (run detection in the same
+  fill-late probe slot as the folderize probe — cheap: one zip read).
+  Output: one epub per book beside the source ("Author Sort -
+  Title.epub", v1 convention), refuse-overwrite, FileCreated per
+  book.
+- Tests: build a tiny omnibus epub in mediafactory (two navpoint
+  trees) — detection, split round-trip (each output opens, has its
+  chapters), non-omnibus → no button.
+
+## #12 Standardize formatting + "sort" folders
+
+- Read `tools/booksmith/standardize-formatting/standardize-formatting.py`
+  (436 lines, unread by me — evaluate before porting).
+- Nick's decisions from the TODO: works on single book AND folder →
+  two buttons, same engine. "Sort folders" = the folder-scoped
+  normalize; his parked question (normalize-metadata-as-folder-
+  action) leans no — build "sort" first, leave normalize out, note it.
+- Follow folderize's preview pattern for anything that renames or
+  moves; plain in-place cleanups can act directly with a notify.
+
+## #13 Video → GIF
+
+- `mediasmith/gif.py`: ffmpeg two-pass palette
+  (`palettegen`/`paletteuse`), options: fps (default 12), width
+  (default 480), start/duration optional. Output beside source,
+  refuse-overwrite.
+- UI: the wizard div again (fps/width inputs + make button). ffmpeg
+  presence check like calibre. Worker + FileCreated. Low priority —
+  do it last of the builds; it's Nick's treat, make the defaults tasty.
+
+## #15 Search design + folder Move (write-ups only, then stop)
+
+- Nick wants proposals before code: a unified search (Deezer, Anna's
+  Archive, future serial scraping) and a Move interaction. Write
+  notes/claude-PROPOSALS.md with 2–3 options each and one
+  recommendation each. Constraints he's stated: global keybinding is
+  his straw man; he hates modals; phone-width must work. Consider: a
+  search *panel* that swaps into the details column (like narrow
+  "view") with a query input + result list, kind-aware (audio results
+  on audio contexts); Move as "mark destination" two-step in the tree
+  (cut/paste with visible pending state on the strip) — precedent:
+  every dual-pane file manager. Do not implement without his pick.
+
+## Gate discipline (why snapshots)
+
+Run the fuzz gate from a snapshot copy, not the working tree — the
+children re-import the package every seed, so live edits during a
+run produce false deaths (or mask real ones):
+
+    rsync -a --exclude .git --exclude .venv --exclude __pycache__ \
+        ~/code/mediasmith/ /tmp/ms-snap/
+    cd /tmp/ms-snap && ~/code/mediasmith/.venv/bin/python tests/fuzz.py
+
+If a seed dies: re-run that seed alone before assuming regression
+(seed 7 @ 60x40 died once under heavy load on 2026-07-11 and then
+survived 17 re-runs, bare and loaded). A death with no crash.log and
+no wedge message = the app exited silently — Textual swallows
+CancelledError in the message pump (see details.py module docstring).
+Keep any dying run's pty output; a debug harness that captures it
+lives in this session's scratchpad (`fuzz_debug.py`) — recreate it
+from the description above if the scratchpad is gone.

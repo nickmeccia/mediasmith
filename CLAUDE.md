@@ -115,6 +115,53 @@ Consequences that follow from the model (don't break them):
      worker and fills in late; verify the selection hasn't moved before
      applying the result.
 
+## The action pattern cookbook (2026-07-11)
+
+Contextual actions are standardized; **do not invent a new shape for a
+new feature — copy one of these.** Worked examples live in commits
+830bad9 and 5591410; per-feature briefs in `notes/claude-HANDOFF.md`.
+
+Adding any action, end to end:
+
+1. `Action("name", "word", "k")` appended to `PANE_ACTIONS`
+   (details.py). The label prints `^k` in the accent color, spliced
+   into the word when the char is in it (`actions.action_markup`).
+   Keys are placeholders — Nick renames them; note new ones in
+   QA-TODO. Never use `actions.RESERVED_KEYS`; avoid Input's chords
+   (a/c/k/u/v/w/x) when the panel has focusable fields.
+2. A visibility rule in `_sync_pane_bar` — the bar is composed ONCE
+   with the full palette; context only shows/hides. Expensive
+   detection (folderize probe) runs in a worker and fills in late.
+3. An `action_<name>` handler. Chords fire app-wide while the button
+   is on show (`App.on_key` → `DetailsPane.action_for_key`) — that is
+   how read-only kinds (video, folder) get working keys without
+   focus. Guard the handler by kind/state, not by focus.
+4. Slow work in `@work(thread=True)` + `call_from_thread`; check the
+   selection hasn't moved before applying results.
+5. Filesystem products: refuse-overwrite everywhere (no silent
+   clobbering, no prompts); post `FileCreated(path)` /
+   `FolderChanged(path)` so the tree re-lists in place.
+6. Options-before-action ("wizard"): an inline div toggled under the
+   fields (art-path row is the exemplar; image-resize and subtitle-
+   shift follow it). **Never a modal** — ConfirmSave is the only one.
+7. Multi-file plans (folderize, multi-artist): engine builds a
+   dataclass plan → pane previews it → `apply`/`cancel` own the bar;
+   esc from the tree cancels.
+8. New chords go into `tests/fuzz.py` KEYS; network code honors
+   `MEDIASMITH_OFFLINE` (the fuzz gate presses everything).
+
+Run the fuzz gate **from a snapshot copy** of the repo (children
+re-import the package each seed; live edits corrupt the run):
+
+    rsync -a --exclude .git --exclude .venv --exclude __pycache__ \
+        ~/code/mediasmith/ /tmp/ms-snap/ &&
+    cd /tmp/ms-snap && ~/code/mediasmith/.venv/bin/python tests/fuzz.py
+
+A death with no crash.log and no "wedged" line = silent exit; re-run
+that seed alone before assuming regression (seed 7 died once under
+load, 2026-07-11, then survived 17 re-runs), and keep the pty output
+of any dying run.
+
 ## Testing policy
 
 Test-driven, calibrated by layer — this replaces Nick-as-only-QA:
@@ -140,7 +187,10 @@ Test-driven, calibrated by layer — this replaces Nick-as-only-QA:
 2. **Editing** — ✅ audio tags + epub metadata + rename + album art
    (path entry and iTunes-API fetch, in `artfetch.py`); ✓-mark write
    manifest; ConfirmSave modal.
-3. **Engine actions** — subtitles first (port the v1 engine). ⬅ next
+3. **Engine actions** — in progress via notes/claude-TODO.md (the
+   active queue) + notes/claude-HANDOFF.md (briefs). Shipped
+   2026-07-11: the action-button pattern, book convert/extract-cover/
+   create-opf, folderize. Subtitles remain the flagship port. ⬅ next
 4. **Batch operations.** Partially done ahead of schedule: shift-range
    and album-folder bulk editing shipped (2026-07-10); space-marking +
    batch bar still to come as a third gesture over the same selection
