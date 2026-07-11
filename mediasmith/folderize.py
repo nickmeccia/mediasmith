@@ -98,7 +98,14 @@ def iter_audio(root: Path, max_dirs: int | None = None):
         for entry in entries:
             if entry.name.startswith("."):
                 continue
-            if entry.is_dir(follow_symlinks=False):
+            try:
+                is_dir = entry.is_dir(follow_symlinks=False)
+            except OSError:
+                # /dev/fd/N and friends raise EBADF from a stat; an
+                # entry we can't classify can't hold music — skip it
+                # (fuzz-caught: the probe worker died browsing /dev)
+                continue
+            if is_dir:
                 stack.append(Path(entry.path))
             elif Path(entry.name).suffix.lower() in kinds.AUDIO_EXTENSIONS:
                 yield Path(entry.path)

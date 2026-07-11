@@ -111,3 +111,30 @@ def test_probe_finds_action_and_respects_budget(tmp_path):
     assert folderize.probe(root) is True
     assert folderize.probe(root, budget=0) is False   # budget exhausted
     assert folderize.probe(tmp_path / "nowhere") is False
+
+
+def test_iter_audio_skips_unstattable_entries(tmp_path, monkeypatch):
+    # fuzz-caught: browsing into /dev crashed the probe worker —
+    # /dev/fd entries raise EBADF from DirEntry.is_dir()
+    import os as _os
+
+    root = tmp_path / "m"
+    root.mkdir()
+    make_mp3(root / "good.mp3", tags={"title": "G", "artist": "A",
+                                      "album": "B"})
+    real_scandir = _os.scandir
+
+    class BadEntry:
+        name = "3"
+        path = str(root / "3")
+
+        def is_dir(self, follow_symlinks=True):
+            raise OSError(9, "Bad file descriptor")
+
+    def scandir_with_bad(path):
+        entries = list(real_scandir(path))
+        return iter([BadEntry()] + entries)
+
+    monkeypatch.setattr(folderize.os, "scandir", scandir_with_bad)
+    names = [p.name for p in folderize.iter_audio(root)]
+    assert names == ["good.mp3"]              # bad entry skipped, walk lives
