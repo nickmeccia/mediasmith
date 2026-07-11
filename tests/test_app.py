@@ -1405,3 +1405,231 @@ async def test_artist_folder_does_not_bulk(media_tree):
         assert details.paths is None
         assert details.kind == "folder"              # plain counts view
         assert app.query_one("#panel-folder").display
+
+
+# -- subtitles (get / clean / shift / watch on video files) ---------------------
+
+
+SRT_DIRTY = (
+    "1\n00:00:01,000 --> 00:00:02,000\nSubs by CoolGuy - www.example.com\n\n"
+    '2\n00:00:05,000 --> 00:00:06,000\n<font color="#fff">hello</font>\n\n'
+    "3\n00:00:08,000 --> 00:00:09,000\nplain line\n"
+)
+
+
+async def _goto_alien(app, pilot):
+    """Cursor onto Movies/Alien (1979)/Alien.1979.mkv, details settled."""
+    await settle(pilot)
+    await pilot.press("down")
+    await pilot.press("m", "o", "right")             # Movies, expanded
+    await settle(pilot)
+    await pilot.press("down", "right")               # Alien (1979), expanded
+    await settle(pilot)
+    await pilot.press("down")                        # Alien.1979.mkv
+    await settle(pilot)
+    assert app.query_one(DetailsPane).kind == "video"
+
+
+async def test_video_offers_subtitle_actions(media_tree):
+    (media_tree / "Movies" / "Alien (1979)" / "zz nosub.mkv").write_bytes(b"x")
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _goto_alien(app, pilot)
+        assert _bar_names(app) == ["get_subs", "clean_subs",
+                                   "shift_subs", "watch"]
+        await pilot.press("z")                       # the srt-less video
+        await settle(pilot)
+        names = _bar_names(app)
+        assert "get_subs" in names and "watch" in names
+        assert "clean_subs" not in names             # nothing to clean/shift
+        assert "shift_subs" not in names
+
+
+async def test_clean_subs_strips_credits_and_markup(media_tree):
+    srt_path = media_tree / "Movies" / "Alien (1979)" / "Alien.1979.srt"
+    srt_path.write_text(SRT_DIRTY)
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _goto_alien(app, pilot)
+        await pilot.press("ctrl+u")                  # clean s^ubs, from the tree
+        await pilot.pause(0.5)
+        text = srt_path.read_text()
+        assert "www.example.com" not in text         # credit cue dropped
+        assert "<font" not in text                   # markup stripped
+        assert "hello" in text and "plain line" in text
+
+
+async def test_shift_div_nudge_and_save(media_tree):
+    srt_path = media_tree / "Movies" / "Alien (1979)" / "Alien.1979.srt"
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _goto_alien(app, pilot)
+        await pilot.press("ctrl+v")                  # open the shift div
+        await pilot.pause(0.5)                       # load worker
+        details = app.query_one(DetailsPane)
+        assert details._shift_open
+        assert app.query_one("#shift-div").display
+        assert app.focused.id == "shift-control"
+        assert "save" in _bar_names(app)             # ^s joins the bar
+        await pilot.press("right", "right", "right")
+        assert details._shift_target_ms == 300
+        assert details._shift_pending                # ✓ shown
+        await pilot.press("ctrl+s")
+        await pilot.pause(0.5)
+        assert "00:00:01,300" in srt_path.read_text()
+        assert not details._shift_pending            # applied == target
+        assert details._shift_open                   # ^s keeps the div open
+        # nudging back recomputes from the ORIGINAL parse, not the file
+        await pilot.press("left", "left", "left")
+        await pilot.press("ctrl+s")
+        await pilot.pause(0.5)
+        assert "00:00:01,000" in srt_path.read_text()
+
+
+async def test_shift_arrow_steps(media_tree):
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _goto_alien(app, pilot)
+        await pilot.press("ctrl+v")
+        await pilot.pause(0.5)
+        details = app.query_one(DetailsPane)
+        await pilot.press("shift+right")             # ±1s
+        assert details._shift_target_ms == 1000
+        await pilot.press("pageup")                  # ±10s
+        assert details._shift_target_ms == 11000
+        await pilot.press("pagedown", "shift+left", "left")
+        assert details._shift_target_ms == -100      # display clamps on write
+
+
+async def test_shift_esc_pending_confirms(media_tree):
+    srt_path = media_tree / "Movies" / "Alien (1979)" / "Alien.1979.srt"
+    original = srt_path.read_text()
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _goto_alien(app, pilot)
+        await pilot.press("ctrl+v")
+        await pilot.pause(0.5)
+        await pilot.press("right", "escape")         # pending: modal
+        assert isinstance(app.screen, ConfirmSave)
+        await pilot.press("d")                       # discard
+        await pilot.pause()
+        details = app.query_one(DetailsPane)
+        assert not details._shift_open               # div closed
+        assert srt_path.read_text() == original      # nothing written
+        assert app.focused is app.query_one(LibraryTree)
+
+
+async def test_shift_esc_pending_save_writes(media_tree):
+    srt_path = media_tree / "Movies" / "Alien (1979)" / "Alien.1979.srt"
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _goto_alien(app, pilot)
+        await pilot.press("ctrl+v")
+        await pilot.pause(0.5)
+        await pilot.press("right", "escape", "s")    # modal → save
+        await pilot.pause(0.6)
+        assert "00:00:01,100" in srt_path.read_text()
+        details = app.query_one(DetailsPane)
+        assert not details._shift_open               # released: closed out
+        assert app.focused is app.query_one(LibraryTree)
+
+
+async def test_shift_toggle_pinned_while_pending(media_tree):
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _goto_alien(app, pilot)
+        await pilot.press("ctrl+v")
+        await pilot.pause(0.5)
+        await pilot.press("right", "ctrl+v")         # toggle off refused
+        details = app.query_one(DetailsPane)
+        assert details._shift_open
+        assert app.focused.id == "shift-control"
+        await pilot.press("left", "ctrl+v")          # clean again: closes
+        await pilot.pause()
+        assert not details._shift_open
+        assert app.focused is app.query_one(LibraryTree)
+
+
+async def test_shift_esc_clean_closes(media_tree):
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _goto_alien(app, pilot)
+        await pilot.press("ctrl+v")
+        await pilot.pause(0.5)
+        await pilot.press("escape")
+        await pilot.pause()
+        details = app.query_one(DetailsPane)
+        assert not details._shift_open
+        assert not app.query_one("#shift-div").display
+        assert app.focused is app.query_one(LibraryTree)
+
+
+async def test_shift_down_reaches_bar_buttons(media_tree):
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _goto_alien(app, pilot)
+        await pilot.press("ctrl+v")
+        await pilot.pause(0.5)
+        await pilot.press("down")                    # control → first button
+        assert app.focused.id == "save-btn"
+        await pilot.press("up")                      # and back
+        assert app.focused.id == "shift-control"
+
+
+async def test_get_subs_installs_and_tree_follows(media_tree, monkeypatch):
+    from mediasmith import subsync
+    movie = media_tree / "Movies" / "Alien (1979)"
+    (movie / "Alien.1979.srt").unlink()              # start subless
+
+    def fake_run(targets, force=False, safe=False):
+        target = Path(targets[0])
+        dest = target.with_suffix(".srt")
+        dest.write_text("1\n00:00:01,000 --> 00:00:02,000\nhi\n")
+        result = subsync.FileResult(target, Path(target.name), "ok",
+                                    "synced (+56ms)", dest.name)
+        yield subsync.FileDone(result)
+        yield subsync.RunDone(subsync.Counts(installed=1),
+                              ((target.parent, (result,)),))
+
+    monkeypatch.setattr(subsync, "check_requirements", lambda: [])
+    monkeypatch.setattr(subsync, "run", fake_run)
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _goto_alien(app, pilot)
+        assert "clean_subs" not in _bar_names(app)   # no srt yet
+        await pilot.press("ctrl+k")                  # get subs
+        await pilot.pause(0.8)
+        dest = movie / "Alien.1979.srt"
+        assert dest.exists()
+        tree = app.query_one(LibraryTree)
+        assert tree._node_for(dest) is not None      # tree picked it up
+        assert "clean_subs" in _bar_names(app)       # details refreshed
+
+
+async def test_get_subs_honors_offline(media_tree, monkeypatch):
+    from mediasmith import subsync
+
+    def must_not_run(*a, **kw):                      # pragma: no cover
+        raise AssertionError("engine ran while offline")
+
+    monkeypatch.setattr(subsync, "run", must_not_run)
+    monkeypatch.setenv("MEDIASMITH_OFFLINE", "1")
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _goto_alien(app, pilot)
+        await pilot.press("ctrl+k")
+        await pilot.pause(0.5)
+        assert app.is_running
+
+
+async def test_watch_launches_player(media_tree, monkeypatch):
+    calls = []
+    monkeypatch.setattr("mediasmith.details.launch",
+                        lambda path: calls.append(path))
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _goto_alien(app, pilot)
+        await pilot.press("ctrl+w")
+        await pilot.pause()
+        video = media_tree / "Movies" / "Alien (1979)" / "Alien.1979.mkv"
+        assert calls == [video]

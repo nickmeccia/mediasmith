@@ -88,7 +88,30 @@ judgment has been spent here so you don't have to re-derive it.
   local/network target rule. Pilot: button present on video, absent
   elsewhere; a monkeypatched download lands files + FileCreated.
 
-## #7 Subtitles (roadmap slice 3 — the big one)
+## #7 Subtitles — DONE (Fable, 2026-07-11, second session)
+
+Shipped whole: `mediasmith/subsync.py` (faithful v1 port +
+tests/test_subsync.py, 14 policy tests), four buttons (`get subs ^k`,
+`clean subs ^u`, `shift subs ^v`, `watch ^w`), and the shift div.
+What the next model needs to know:
+
+- **The shift div is the wizard-pattern exemplar** (an inline div,
+  focusable readout, ^s ties into the pane's dirty/ConfirmSave flow,
+  save button joins the bar while open). Image-resize (#9) and
+  video→gif (#13) should copy it: same CSS block (`#shift-div` in
+  app.py), same `_shift_*` state-machine shape in details.py.
+- ShiftControl is the first focusable widget inside a non-editable
+  kind's panel; `_nav_items` special-cases it. A second such widget
+  (resize inputs) should generalize that branch, not add another
+  special case.
+- get subs passes `force=True` when a sub exists (explicit press =
+  re-fetch) — flagged for Nick's veto in QA-TODO.
+- `watch` uses a `launch()` seam (details.py) — monkeypatch that, not
+  subprocess.Popen: `subprocess.run` calls Popen internally, so a
+  global patch breaks the ffprobe title probe (learned the hard way).
+- The original brief is kept below for reference.
+
+## #7 original brief (superseded)
 
 - Read `mediasmith-v1/lib/engines/subtitle_sync.py` AND its
   DEBUG_NOTES.md before anything. CLAUDE.md rule: that engine's
@@ -219,7 +242,14 @@ judgment has been spent here so you don't have to re-derive it.
   presence check like calibre. Worker + FileCreated. Low priority —
   do it last of the builds; it's Nick's treat, make the defaults tasty.
 
-## #15 Search design + folder Move (write-ups only, then stop)
+## #15 Search design + folder Move — DONE (write-ups only)
+
+**notes/claude-PROPOSALS.md exists (Fable, 2026-07-11): search panel
+in the details column (S1) and cut/paste Move with strip state (M1),
+each with the rejected alternatives and open questions. Do not build
+either without Nick's pick.** Original brief below.
+
+## #15 original brief (superseded)
 
 - Nick wants proposals before code: a unified search (Deezer, Anna's
   Archive, future serial scraping) and a Move interaction. Write
@@ -242,11 +272,19 @@ run produce false deaths (or mask real ones):
         ~/code/mediasmith/ /tmp/ms-snap/
     cd /tmp/ms-snap && ~/code/mediasmith/.venv/bin/python tests/fuzz.py
 
-If a seed dies: re-run that seed alone before assuming regression
-(seed 7 @ 60x40 died once under heavy load on 2026-07-11 and then
-survived 17 re-runs, bare and loaded). A death with no crash.log and
-no wedge message = the app exited silently — Textual swallows
-CancelledError in the message pump (see details.py module docstring).
-Keep any dying run's pty output; a debug harness that captures it
-lives in this session's scratchpad (`fuzz_debug.py`) — recreate it
-from the description above if the scratchpad is gone.
+If a seed dies: re-run that seed alone WITH pty capture before
+concluding anything. The 2026-07-11 seed-7 "load flake" turned out to
+be real: when the subtitle chords joined KEYS, every seed's random
+walk re-dealt, and seeds 7+11 reproducibly climbed the parent ladder
+into /dev, where the folderize probe worker crashed on
+DirEntry.is_dir() over /dev/fd (EBADF) — an unhandled worker
+exception is app death, and it looked "silent" because nobody kept
+the pty output. Fixed in folderize.iter_audio (+ regression test).
+Standing lessons: any KEYS change re-deals every walk, so previously
+clean seeds prove nothing; engine walkers must survive hostile
+filesystems (/dev, dead symlinks) because the browser can reach /;
+and a death with no crash.log and no wedge message can be EITHER a
+swallowed CancelledError (details.py docstring) or a worker crash —
+only the pty tail tells them apart. A capture harness (fuzz_debug.py:
+one seed, tees pty to a file, prints the last keys) is trivial to
+rebuild from tests/fuzz.py's attempt().

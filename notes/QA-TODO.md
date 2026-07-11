@@ -1,3 +1,81 @@
+# QA to-do — 2026-07-11 session 2 (subtitles: the flagship port)
+
+Everything below passed pytest + the fuzz harness; human pass pending.
+Keys are placeholders as usual: ^k get subs · ^u clean subs · ^v shift
+subs · ^w watch — rename at will (avoid `actions.RESERVED_KEYS`).
+
+## get subs (^k, on any single video)
+
+- [ ] Press on a subless video: notifications walk the phases
+      (searching OpenSubtitles… → syncing with alass…), then a final
+      verdict; the .srt/.ass appears in the tree without ^r and the
+      subtitles row updates
+- [ ] Press on a video that HAS a sub: it re-fetches and **overwrites**
+      the sibling sub — the one deliberate exception to
+      refuse-overwrite (an explicit press means "replace this bad
+      sub"). Veto this if it feels dangerous.
+- [ ] Missing alass/subliminal → an error toast with the brew install
+      lines, nothing else happens
+- [ ] Verdict severities: "synced (+56ms)" reads as info; "large
+      shift, verify" / "couldn't sync" read as warnings — eyeball
+      those files (the v1 ground-truth policy is unchanged)
+- [ ] * Run it over one real film folder and spot-check playback —
+      new environment (v2), same engine; confirm nothing regressed
+
+## clean subs (^u, only when a sibling .srt exists)
+
+- [ ] Strips font/color markup and drops credit cues near the file's
+      edges, in place; toast reports what went ("2 credit cues
+      removed · markup stripped from 14 cues")
+- [ ] Already-clean file → "already clean", no write (mtime unchanged)
+- [ ] .ass/.vtt sibling: button absent (SRT-only engine)
+
+## shift subs (^v — the wizard-div pattern debut)
+
+- [ ] ^v opens an inline div under the video rows: shift readout +
+      hint line; focus lands on the readout (reverse-video highlight)
+- [ ] ←→ ±0.1s · ⇧←→ ±1s · ⇞⇟ ±10s; ✓ appears while the shift is
+      unwritten; ^save button joins the bar while the div is open
+- [ ] ^s writes (cues shifted, clamped at 0), ✓ clears, div stays
+      open for further nudging; every write recomputes from the
+      original parse — nudge forward, save, nudge back, save = the
+      original file, byte-for-byte timing
+- [ ] esc with a pending shift → ConfirmSave (save/discard/keep);
+      esc clean closes straight back to the tree
+- [ ] ^v again while pending refuses to close (toast); while clean,
+      toggles the div away — react-style, per your spec
+- [ ] ↓ from the readout walks into the action bar; ↑ walks back
+- [ ] KNOWN GAP: browsing to another file while a shift is pending
+      silently drops it (same as folderize's preview). Acceptable?
+- [ ] The div's look = the template for image-resize and video→gif
+      wizards — bless or adjust the visual before those get built
+
+## watch (^w, on any single video)
+
+- [ ] Launches the video in the default player; a get-subs install is
+      named exactly like the video, so VLC/IINA auto-load it
+- [ ] Wiring the sub file explicitly (--sub-file) needs your player's
+      name — tell Claude which app and it becomes `open -a X args`
+
+## Also fixed this session (no QA needed, FYI)
+
+- The folderize probe crashed the app when browsing /dev (DirEntry
+  stat raises EBADF there) — fuzz-caught once the new chords
+  reshuffled the walks; this was almost certainly the old "seed 7
+  died once" ghost. Walker now skips unstattable entries.
+- A details-pane worker result landing during app teardown could
+  raise NoMatches on #pane-bar (suite flake) — now guarded.
+
+## Parked decisions from this session
+
+- [ ] get subs currently always fetches+syncs (force). Alternatives:
+      a second "resync" button, or skip-if-present + a long-press
+      semantics. Current pick = simplest.
+- [ ] The `safe` engine flag (reject large shifts) is not surfaced in
+      the UI — wanted as a toggle somewhere?
+- [ ] Shift div arrow steps (0.1s/1s/10s) are v1's — still right?
+
+
 # QA to-do — 2026-07-11 weekend session (action buttons + book convert)
 
 Everything below passed pytest + the fuzz harness; human pass pending.

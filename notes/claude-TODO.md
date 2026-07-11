@@ -141,14 +141,39 @@
 -[ ] Download posters
      This should be a button on a video file, and should detect if the file is on a network volume or not. If it's on a local volume, download posters to the file's folder. If it's on a network volume, create a local folder per the current tool's process.
 
--[ ] Subtitle clean SRT
+-[x] Subtitle clean SRT
      This should be a button on the video file.
+     (Claude, 2026-07-11: shipped — `clean subs ^u`, visible only when
+     a sibling .srt exists. Cleans in place (v1 regexes verbatim, in
+     mediasmith/srt.py); the toast itemizes what was stripped;
+     already-clean files aren't rewritten. .ass/.vtt get no button —
+     the clean engine is SRT-only.)
 
--[ ] Subtitle DL sync
+-[x] Subtitle DL sync
      This should also be a button on the video file. Bonus if you also add a button to launch the video file with the subtitles so that I can check the alignment.
+     (Claude, 2026-07-11: shipped — `get subs ^k` on every single
+     video, plus the bonus `watch ^w`. The v1 engine is ported intact
+     to mediasmith/subsync.py — hash-match skips alass, ≤2s
+     corrections apply silently, larger ones apply-and-flag; its
+     ground-truth policy suite now lives in tests/test_subsync.py so
+     nobody can drift it unnoticed. One decision to veto: pressing it
+     on a video that already has a sub RE-FETCHES over it (explicit
+     press = "replace this bad sub") — the one exception to
+     refuse-overwrite. watch uses plain `open`; the sub auto-loads
+     because it's named like the video — name your player if you want
+     --sub-file wiring.)
 
--[ ] Subtitle shift SRT
+-[x] Subtitle shift SRT
      Man, I am so excited for this one. My initial instinct is that this feature should be toggleable with a button, react-style. So, the div is not on the page, but pressing a button toggles it on; however, if changes are pending it can't be toggled off until the changes are saved or discarded.
+     (Claude, 2026-07-11: shipped exactly react-style — `shift subs
+     ^v` toggles an inline div (readout + hint) under the video rows;
+     pending changes pin it open (toast tells you so), esc routes
+     through ConfirmSave. ←→ ±0.1s, ⇧←→ ±1s, ⇞⇟ ±10s; ^s writes and
+     the ✓ clears but the div stays for more nudging. Every write
+     recomputes from the ORIGINAL parse (v1's nudge model) so
+     back-and-forth can never lose cues or accumulate drift. This div
+     is the wizard-pattern exemplar the image-resize/gif features
+     should copy — QA its look before those get built.)
 
 
 

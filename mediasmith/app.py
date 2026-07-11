@@ -148,6 +148,11 @@ class MediasmithApp(App):
     #row-art-path { height: 1; margin-top: 1; }
     #art-path { background: transparent; }
     #pane-bar { margin-top: 1; }
+    #shift-div { height: auto; margin-top: 1; }
+    #shift-row { height: 1; }
+    #shift-control { width: auto; }
+    ShiftControl:focus { text-style: reverse; }
+    #shift-hint { height: 1; color: $text-muted; }
     #folderize-preview { height: auto; margin-top: 1; }
     #folderize-tree { height: auto; }
     #ctxrow { height: 1; background: $surface; color: $text-muted; }

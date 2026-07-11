@@ -18,16 +18,18 @@ from __future__ import annotations
 
 import io
 import os
+import subprocess
 from pathlib import Path
 
 from textual import work
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.css.query import NoMatches
 from textual.message import Message
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Label, Static
 
-from . import adapters, artfetch, calibre, folderize, fs, kinds
+from . import adapters, artfetch, calibre, folderize, fs, kinds, srt, subsync
 from .actions import Action, ActionBar, ActionButton
 from .images import image_widget
 
@@ -47,6 +49,11 @@ PANE_ACTIONS = [
     # while a folderize preview is up, these two own the bar
     Action("folderize_apply", "apply", "a"),
     Action("folderize_cancel", "cancel"),       # esc cancels too
+    # video: the subtitle suite (keys are placeholders — Nick renames)
+    Action("get_subs", "get subs", "k"),
+    Action("clean_subs", "clean subs", "u"),
+    Action("shift_subs", "shift subs", "v"),
+    Action("watch", "watch", "w"),
 ]
 
 EDITABLE_KINDS: frozenset[str] = frozenset({kinds.AUDIO, kinds.BOOK})
@@ -182,6 +189,39 @@ class ArtPathInput(FieldInput):
         # focus moved on (any reason): the method is no longer active
         if self.parent is not None:
             self.parent.display = False
+
+
+SHIFT_HINT = "←→ 0.1s · ⇧←→ 1s · ⇞⇟ 10s · ^s write · esc close"
+
+
+def launch(path: Path) -> None:
+    """Open a file in its default app (the watch action's seam —
+    monkeypatch this in tests, subprocess.run shares Popen)."""
+    subprocess.Popen(["open", str(path)])
+
+
+class ShiftControl(Static, can_focus=True):
+    """The shift-subs wizard: a focusable readout of the pending total
+    shift. Arrow keys nudge; every write recomputes from the ORIGINAL
+    parse (v1's nudge model) so back-and-forth never loses cues. The
+    inline-div wizard pattern (art path is the other exemplar): toggled
+    under the fields, never a modal."""
+
+    BINDINGS = [
+        Binding("left", "nudge(-100)", show=False),
+        Binding("right", "nudge(100)", show=False),
+        Binding("shift+left", "nudge(-1000)", show=False),
+        Binding("shift+right", "nudge(1000)", show=False),
+        Binding("pageup", "nudge(10000)", show=False),
+        Binding("pagedown", "nudge(-10000)", show=False),
+        Binding("escape", "close", show=False),
+    ]
+
+    def action_nudge(self, delta_ms: int) -> None:
+        self.screen.query_one(DetailsPane)._shift_nudge(delta_ms)
+
+    def action_close(self) -> None:
+        self.screen.query_one(DetailsPane)._shift_close()
 
 
 class EditForm(Vertical):
@@ -371,6 +411,11 @@ class DetailsPane(VerticalScroll, can_focus=True):
         self._book_cover = False    # shown book has an extractable cover
         self._folderize_ready = False   # probe: this folder has work to do
         self._folderize_plan: folderize.FolderizePlan | None = None
+        self._video_srt: Path | None = None     # cleanable/shiftable sibling
+        self._shift_open = False
+        self._shift_entries: list[srt.Entry] | None = None  # ORIGINAL parse
+        self._shift_target_ms = 0   # pending total shift (the display)
+        self._shift_applied_ms = 0  # total already written this session
 
     # -- static layout ---------------------------------------------------------
 
@@ -413,6 +458,12 @@ class DetailsPane(VerticalScroll, can_focus=True):
             yield self._row("embedded title", "video-title", width)
             yield self._row("subtitles", "video-subs", width)
             yield self._row("posters", "video-posters", width)
+            with Vertical(id="shift-div"):
+                with Horizontal(id="shift-row"):
+                    yield Label(f"{'shift':<{width}}", classes="fkey")
+                    yield ShiftControl(" 0:00.0", id="shift-control")
+                    yield Static("", id="shift-mark", classes="fmark")
+                yield Static(SHIFT_HINT, id="shift-hint")
             yield image_widget(self.images, id="cover-video")
 
         with Vertical(id="panel-book", classes="panel"):
@@ -446,6 +497,7 @@ class DetailsPane(VerticalScroll, can_focus=True):
         self.query_one("#row-audio-info").display = False
         self.query_one("#row-art-path").display = False
         self.query_one("#folderize-preview").display = False
+        self.query_one("#shift-div").display = False
         self._sync_pane_bar()
 
     # -- value plumbing ----------------------------------------------------------
@@ -520,6 +572,8 @@ class DetailsPane(VerticalScroll, can_focus=True):
         self._folderize_plan = None
         self.query_one("#folderize-preview").display = False
         self._hide_art_path()
+        self._video_srt = None
+        self._shift_hide()      # browsing away drops a pending shift
 
     def _apply_pending(self) -> None:
         if self._pending is None:
@@ -669,6 +723,12 @@ class DetailsPane(VerticalScroll, can_focus=True):
         self._set("video-subs", d.subtitle_name or "none")
         self._set("video-posters", d.poster_name or "none")
         self._set_cover("cover-video", d.poster_bytes)
+        # clean/shift work on SRT only (the engine's format); .ass/.vtt
+        # siblings still show in the row but get no buttons
+        self._video_srt = (path.parent / d.subtitle_name
+                           if d.subtitle_name
+                           and d.subtitle_name.endswith(".srt") else None)
+        self._sync_pane_bar()       # subtitle buttons appear with the file
         self._probe_title(path)
 
     @work(thread=True, exclusive=True, group="probe")
@@ -734,6 +794,8 @@ class DetailsPane(VerticalScroll, can_focus=True):
     @property
     def dirty(self) -> bool:
         if self._pending_art is not None:
+            return True
+        if self._shift_pending:
             return True
         return (self._baseline is not None
                 and self._current_state() != self._baseline)
@@ -810,7 +872,20 @@ class DetailsPane(VerticalScroll, can_focus=True):
                             names.add("extract_cover")
             if self._folderize_ready:           # probe: work to do below
                 names.add("folderize")
-        self.query_one("#pane-bar", ActionBar).set_visible(names)
+            if self._video_target() is not None:
+                names |= {"get_subs", "watch"}
+                if self._video_srt is not None:
+                    names |= {"clean_subs", "shift_subs"}
+                if self._shift_open:            # the write manifest: ^s
+                    names.add("save")           # writes the pending shift
+        try:
+            bar = self.query_one("#pane-bar", ActionBar)
+        except NoMatches:
+            # a probe worker's call_from_thread can land mid-teardown,
+            # after the pane's children are gone — a late result is
+            # meaningless then, not an error (flaked the suite twice)
+            return
+        bar.set_visible(names)
 
     def action_for_key(self, key: str) -> Action | None:
         """The action a key chord should fire: its button is on show."""
@@ -832,6 +907,11 @@ class DetailsPane(VerticalScroll, can_focus=True):
     def _nav_items(self) -> list:
         """Everything ↑↓ walks, top to bottom: the fields, then every
         visible action button in reading order."""
+        if self._shift_open and not self.can_edit():
+            # the one focusable thing in a non-editable pane, plus the bar
+            items: list = [self.query_one("#shift-control", ShiftControl)]
+            items.extend(self.query_one("#pane-bar", ActionBar).buttons())
+            return items
         items = self._field_inputs()
         if self.can_edit():
             for bar in self._active_bars():
@@ -888,11 +968,15 @@ class DetailsPane(VerticalScroll, can_focus=True):
                 self.app.action_focus_tree()
             # cancel: keep editing
 
-        subject = (self._count_label() if self.paths is not None
+        subject = (self._video_srt.name if self._shift_pending
+                   and self._video_srt is not None
+                   else self._count_label() if self.paths is not None
                    else self.path.name if self.path is not None else "?")
         self.app.push_screen(ConfirmSave(subject), decided)
 
     def _restore_baseline(self) -> None:
+        if self._shift_pending:         # discard a pending shift: close the div
+            self._shift_hide()
         if self._baseline is None:
             return
         name, fields = self._baseline
@@ -998,6 +1082,13 @@ class DetailsPane(VerticalScroll, can_focus=True):
         self._start_save(release=False)
 
     def _start_save(self, release: bool) -> None:
+        if self._shift_pending:         # video: ^s writes the pending shift
+            assert (self.path is not None and self._video_srt is not None
+                    and self._shift_entries is not None)
+            self._shift_save_worker(self.path, self._video_srt,
+                                    list(self._shift_entries),
+                                    self._shift_target_ms, release)
+            return
         state = self._current_state()
         if state is None:
             return
@@ -1236,3 +1327,221 @@ class DetailsPane(VerticalScroll, can_focus=True):
         self._folderize_plan = None
         if self.path is not None:               # restore the normal view
             self.preview(self.path, immediate=True)
+
+    # -- subtitles: get / clean / shift / watch on a video file --------------------
+    # The engine work lives in subsync.py (dl+sync, the tuned v1 policy)
+    # and srt.py (clean/shift). Chords fire from the tree — video never
+    # takes focus — except the shift div, the one focusable thing in a
+    # non-editable pane (modeled on ArtPathInput, not EDITABLE_KINDS).
+
+    def _video_target(self) -> Path | None:
+        """The single video file the subtitle actions apply to, or None."""
+        if (self.kind == kinds.VIDEO and self.paths is None
+                and self.path is not None and self._readable):
+            return self.path
+        return None
+
+    def action_get_subs(self) -> None:
+        video = self._video_target()
+        if video is None:
+            return
+        if os.environ.get(artfetch.OFFLINE_ENV):
+            self.notify("offline (MEDIASMITH_OFFLINE set)",
+                        title="get subs", severity="warning")
+            return
+        self.notify(f"{video.name}: fetching subtitles…", title="get subs")
+        self._get_subs_worker(video)
+
+    @work(thread=True, group="get-subs", exclusive=False)
+    def _get_subs_worker(self, video: Path) -> None:
+        # like conversions: several fetches may run side by side, and a
+        # clean on another file must not cancel one
+        problems = subsync.check_requirements()
+        if problems:
+            self.app.call_from_thread(
+                self.notify, "\n".join(problems), title="get subs",
+                severity="error", timeout=10)
+            return
+        # an explicit press on a file that already has a sub means
+        # "re-fetch" — the one deliberate exception to refuse-overwrite
+        force = subsync.find_subtitle(video) is not None
+        try:
+            for event in subsync.run([video], force=force):
+                if isinstance(event, subsync.PhaseStarted):
+                    self.app.call_from_thread(
+                        self.notify, event.label, title="get subs", timeout=3)
+                elif isinstance(event, subsync.Note):
+                    self.app.call_from_thread(
+                        self.notify, event.text, title="get subs", timeout=5)
+                elif isinstance(event, subsync.FileDone):
+                    self.app.call_from_thread(self._got_subs, video,
+                                              event.result)
+        except Exception as error:
+            self.app.call_from_thread(
+                self.notify, str(error), title="get subs", severity="error")
+
+    def _got_subs(self, video: Path, result: subsync.FileResult) -> None:
+        self.notify(result.status, title=f"subtitles — {video.name}",
+                    severity=("information" if result.category == "ok"
+                              else "warning"), timeout=8)
+        if result.installed:
+            self.post_message(self.FileCreated(video.parent / result.installed))
+            if self.path == video:
+                self.preview(video, immediate=True)  # fresh subtitles row
+
+    def action_clean_subs(self) -> None:
+        video = self._video_target()
+        if video is None or self._video_srt is None:
+            return
+        if self._shift_pending:     # clean rewrites the file under the shift
+            self.notify("save or discard the pending shift first",
+                        title="clean subs", severity="warning")
+            return
+        if self._shift_open:        # shift's ORIGINAL parse would go stale
+            self._shift_hide()
+        self._clean_subs_worker(video, self._video_srt)
+
+    @work(thread=True, group="clean-subs", exclusive=False)
+    def _clean_subs_worker(self, video: Path, srt_path: Path) -> None:
+        # read + rewrite: NAS rule, off the UI thread
+        try:
+            result = srt.clean(srt.read(srt_path))
+            if not result.unchanged:
+                srt.write(result.kept, srt_path)
+        except Exception as error:
+            self.app.call_from_thread(
+                self.notify, str(error), title="clean subs", severity="error")
+            return
+        self.app.call_from_thread(self._cleaned_subs, srt_path, result)
+
+    def _cleaned_subs(self, srt_path: Path, result: srt.CleanResult) -> None:
+        if result.unchanged:
+            self.notify(f"{srt_path.name}: already clean", title="clean subs")
+            return
+        parts = []
+        if result.removed:
+            n = len(result.removed)
+            parts.append(f"{n} credit cue{'s' if n != 1 else ''} removed")
+        if result.color_stripped:
+            n = result.color_stripped
+            parts.append(f"markup stripped from {n} cue{'s' if n != 1 else ''}")
+        self.notify(" · ".join(parts), title=f"clean subs — {srt_path.name}")
+
+    def action_watch(self) -> None:
+        """Launch the video in the default player (subs auto-load when
+        named like the video, which get-subs guarantees)."""
+        video = self._video_target()
+        if video is None:
+            return
+        if os.environ.get(artfetch.OFFLINE_ENV):
+            # the fuzz gate presses everything; don't open 100 players
+            self.notify("watch disabled (MEDIASMITH_OFFLINE set)",
+                        title="watch")
+            return
+        try:
+            launch(video)
+        except OSError as error:
+            self.notify(str(error), title="watch", severity="error")
+
+    # -- shift subs: the inline wizard div ----------------------------------------
+
+    @property
+    def _shift_pending(self) -> bool:
+        return self._shift_open and self._shift_target_ms != self._shift_applied_ms
+
+    def action_shift_subs(self) -> None:
+        video = self._video_target()
+        if video is None or self._video_srt is None:
+            return
+        if self._shift_open:        # react-style toggle…
+            if self._shift_pending:     # …but pending edits pin it open
+                self.notify("unsaved shift — ^s to write, esc to discard",
+                            title="shift subs", severity="warning")
+                self.query_one("#shift-control", ShiftControl).focus()
+            else:
+                self._shift_hide()
+                self.app.action_focus_tree()
+            return
+        self._shift_load_worker(video, self._video_srt)
+
+    @work(thread=True, exclusive=True, group="shift-load")
+    def _shift_load_worker(self, video: Path, srt_path: Path) -> None:
+        try:
+            entries = srt.read(srt_path)
+        except Exception as error:
+            self.app.call_from_thread(
+                self.notify, str(error), title="shift subs", severity="error")
+            return
+        self.app.call_from_thread(self._shift_loaded, video, entries)
+
+    def _shift_loaded(self, video: Path, entries: list[srt.Entry]) -> None:
+        if self.path != video:                  # selection moved on: drop it
+            return
+        if not entries:
+            self.notify("no cues found", title="shift subs",
+                        severity="warning")
+            return
+        self._shift_entries = entries
+        self._shift_target_ms = 0
+        self._shift_applied_ms = 0
+        self._shift_open = True
+        self.query_one("#shift-div").display = True
+        self._shift_refresh()
+        self._sync_pane_bar()                   # save joins the bar
+        self.app.reveal_details()               # narrow: display, then focus
+        self.query_one("#shift-control", ShiftControl).focus()
+
+    def _shift_nudge(self, delta_ms: int) -> None:
+        if not self._shift_open:
+            return
+        self._shift_target_ms += delta_ms
+        self._shift_refresh()
+
+    def _shift_refresh(self) -> None:
+        self.query_one("#shift-control", ShiftControl).update(
+            srt.format_shift(self._shift_target_ms))
+        self.query_one("#shift-mark", Static).update(
+            "✓" if self._shift_pending else "")
+
+    def _shift_close(self) -> None:
+        """esc on the control: pending goes through ConfirmSave (the
+        div refuses to close silently), clean just closes."""
+        if self._shift_pending:
+            self.action_release()
+        else:
+            self._shift_hide()
+            self.app.action_focus_tree()
+
+    def _shift_hide(self) -> None:
+        self._shift_open = False
+        self._shift_entries = None
+        self._shift_target_ms = 0
+        self._shift_applied_ms = 0
+        self.query_one("#shift-div").display = False
+        self._sync_pane_bar()
+
+    @work(thread=True, exclusive=True, group="save")
+    def _shift_save_worker(self, video: Path, srt_path: Path,
+                           entries: list[srt.Entry], target_ms: int,
+                           release: bool) -> None:
+        # recompute from the ORIGINAL parse, write the total (nudge model)
+        try:
+            srt.write(srt.shift(entries, target_ms), srt_path)
+        except Exception as error:
+            self.app.call_from_thread(self._save_failed, error)
+            return
+        self.app.call_from_thread(self._shift_saved, video, srt_path,
+                                  target_ms, release)
+
+    def _shift_saved(self, video: Path, srt_path: Path, target_ms: int,
+                     release: bool) -> None:
+        self.notify(f"{srt_path.name} written "
+                    f"({srt.format_shift(target_ms).strip()})",
+                    title="shift subs")
+        if self.path == video:
+            self._shift_applied_ms = target_ms  # ✓ clears, div stays open
+            self._shift_refresh()
+        if release:                             # via ConfirmSave: close out
+            if self.path == video:
+                self._shift_hide()
+            self.app.action_focus_tree()
