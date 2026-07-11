@@ -657,6 +657,109 @@ async def test_book_panel_is_editable(media_tree):
         assert adapters.read_details(path).fields["title"] == "Dune Messiah"
 
 
+async def _goto_dune(app, pilot):
+    """Cursor onto Books/Dune.epub with the details settled."""
+    await settle(pilot)
+    await pilot.press("down", "right")           # Books, expanded
+    await settle(pilot)
+    await pilot.press("down")                    # Dune.epub
+    await settle(pilot)
+    assert app.query_one(DetailsPane).kind == "book"
+
+
+async def test_book_offers_conversions_minus_own_format(media_tree):
+    from mediasmith.actions import ActionBar
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _goto_dune(app, pilot)
+        bar = app.query_one("#pane-bar", ActionBar)
+        names = [b.spec.name for b in bar.buttons()]
+        assert names == ["save", "convert_mobi", "convert_azw3",
+                         "extract_cover", "create_opf"]
+
+
+async def test_plain_book_hides_extract_cover(media_tree):
+    from mediasmith.actions import ActionBar
+    from tests.mediafactory import make_epub
+    make_epub(media_tree / "Books" / "Plain.epub", cover=None)
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _goto_dune(app, pilot)
+        await pilot.press("down")                    # Plain.epub (D < P)
+        await settle(pilot)
+        bar = app.query_one("#pane-bar", ActionBar)
+        names = [b.spec.name for b in bar.buttons()]
+        assert "extract_cover" not in names          # nothing to extract
+        assert "create_opf" in names
+
+
+async def test_extract_cover_creates_sibling(media_tree):
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _goto_dune(app, pilot)
+        await pilot.press("ctrl+t")                  # ex^tract cover
+        await pilot.pause(0.5)
+        target = media_tree / "Books" / "cover.png"  # factory cover is png
+        assert target.exists()
+        tree = app.query_one(LibraryTree)
+        assert tree._node_for(target) is not None
+
+
+async def test_create_opf_creates_sidecar(media_tree):
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _goto_dune(app, pilot)
+        await pilot.press("ctrl+g")                  # create opf
+        await pilot.pause(0.5)
+        target = media_tree / "Books" / "metadata.opf"
+        assert target.exists()
+        assert "<dc:title>Dune</dc:title>" in target.read_text()
+
+
+async def test_audio_offers_save_only(media_tree):
+    from mediasmith.actions import ActionBar
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _goto_first_song(app, pilot)
+        bar = app.query_one("#pane-bar", ActionBar)
+        assert [b.spec.name for b in bar.buttons()] == ["save"]
+
+
+async def test_convert_creates_sibling_and_tree_follows(media_tree, monkeypatch):
+    from mediasmith import calibre
+
+    def fake_convert(src, dst):
+        dst.write_bytes(b"mobi bytes")
+
+    monkeypatch.setattr(calibre, "convert", fake_convert)
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _goto_dune(app, pilot)
+        await pilot.press("ctrl+b")                  # convert to mo^bi
+        await pilot.pause(0.5)
+        target = media_tree / "Books" / "Dune.mobi"
+        assert target.exists()
+        tree = app.query_one(LibraryTree)
+        assert tree._node_for(target) is not None    # tree picked it up
+
+
+async def test_convert_never_overwrites(media_tree, monkeypatch):
+    from mediasmith import calibre
+    existing = media_tree / "Books" / "Dune.mobi"
+    existing.write_bytes(b"precious")
+
+    def fake_convert(src, dst):                      # must not be reached
+        raise AssertionError("convert ran over an existing file")
+
+    monkeypatch.setattr(calibre, "convert", fake_convert)
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _goto_dune(app, pilot)
+        await pilot.press("ctrl+b")
+        await pilot.pause(0.5)
+        assert existing.read_bytes() == b"precious"
+
+
 async def test_contextual_strips_follow_focus(media_tree):
     app = MediasmithApp(media_tree)
     async with app.run_test(size=(120, 40)) as pilot:
@@ -785,20 +888,21 @@ async def test_opt_shift_arrows_select_words(media_tree):
 
 
 async def test_art_buttons_reachable_by_arrows(media_tree):
-    from textual.widgets import Button
     from mediasmith.details import ArtField
     app = MediasmithApp(media_tree)
     async with app.run_test(size=(120, 40)) as pilot:
         await _goto_first_song(app, pilot)
         await pilot.press("enter")
-        for _ in range(20):                          # ↓ walks clean through:
+        for _ in range(30):                          # ↓ walks clean through:
             await pilot.press("down")                # fields → art → buttons
-        assert app.focused.id == "art-btn-path"
-        await pilot.press("down")                    # bottom row: clamp
+        assert app.focused.id == "save-btn"          # …and clamps at the end
+        await pilot.press("down")                    # bottom: clamp
+        assert app.focused.id == "save-btn"
+        await pilot.press("up", "up")                # ↑ = left through buttons
         assert app.focused.id == "art-btn-path"
         await pilot.press("right")
         assert app.focused.id == "art-btn-fetch"
-        await pilot.press("right")                   # rightmost: clamp
+        await pilot.press("right")                   # rightmost of its bar: clamp
         assert app.focused.id == "art-btn-fetch"
         await pilot.press("left")
         assert app.focused.id == "art-btn-path"
@@ -806,6 +910,28 @@ async def test_art_buttons_reachable_by_arrows(media_tree):
         assert isinstance(app.focused, ArtField)
         await pilot.press("down", "left")            # ← at leftmost = esc
         assert app.focused is app.query_one(LibraryTree)
+
+
+async def test_action_key_fires_from_the_tree(media_tree):
+    # the chord printed on a visible button works app-wide: no need to
+    # descend into the details pane first
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _goto_first_song(app, pilot)
+        assert app.focused is app.query_one(LibraryTree)
+        await pilot.press("ctrl+o")                  # art path, from the tree
+        assert app.focused.id == "art-path"
+        assert app.query_one("#row-art-path").display
+
+
+async def test_action_key_inert_when_bar_hidden(media_tree):
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await settle(pilot)                          # cursor on a folder
+        assert app.query_one(DetailsPane).kind == "folder"
+        await pilot.press("ctrl+o")                  # no audio bar on show
+        assert app.focused is app.query_one(LibraryTree)
+        assert not app.query_one("#row-art-path").display
 
 
 async def test_art_path_method(media_tree):

@@ -9,11 +9,15 @@ applying the result.
 from __future__ import annotations
 
 import json
+import os
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 
 USER_AGENT = "mediasmith/0.1"
+
+OFFLINE_ENV = "MEDIASMITH_OFFLINE"
+"""Set to disable all network lookups (the fuzz harness mashes ^f)."""
 
 SEARCH_URL = ("https://itunes.apple.com/search"
               "?term={term}&media=music&entity=album&limit={limit}")
@@ -27,6 +31,8 @@ class CoverCandidate:
 
 def search_covers(artist: str, album: str, limit: int = 5) -> list[CoverCandidate]:
     """Cover candidates for an artist/album pair. May raise OSError."""
+    if os.environ.get(OFFLINE_ENV):
+        return []
     term = urllib.parse.quote_plus(f"{artist} {album}".strip())
     url = SEARCH_URL.format(term=term, limit=limit)
     request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})

@@ -236,3 +236,77 @@ def test_bulk_paths_rejects_mixed_kinds(media_tree):
     import mediasmith.fs as fs
     fs.clear_cache()
     assert adapters.bulk_paths_for_folder(music) is None
+
+
+# -- cover extraction + metadata.opf ------------------------------------------
+
+
+def _jpeg_bytes() -> bytes:
+    import io
+    from PIL import Image
+    buf = io.BytesIO()
+    Image.new("RGB", (4, 4), (10, 20, 30)).save(buf, format="JPEG")
+    return buf.getvalue()
+
+
+def test_extract_cover_writes_png_sibling(tmp_path):
+    from .mediafactory import make_png
+    cover = make_png()
+    book = make_epub(tmp_path / "Dune.epub", cover=cover)
+    target = adapters.extract_cover(book)
+    assert target == tmp_path / "cover.png"          # named for its real format
+    assert target.read_bytes() == cover
+
+
+def test_extract_cover_names_jpeg_jpg(tmp_path):
+    cover = _jpeg_bytes()
+    book = make_epub(tmp_path / "Dune.epub", cover=cover)
+    assert adapters.extract_cover(book) == tmp_path / "cover.jpg"
+
+
+def test_extract_cover_without_cover_raises(tmp_path):
+    book = make_epub(tmp_path / "Plain.epub", cover=None)
+    with pytest.raises(ValueError, match="no embedded cover"):
+        adapters.extract_cover(book)
+
+
+def test_extract_cover_never_overwrites(tmp_path):
+    from .mediafactory import make_png
+    book = make_epub(tmp_path / "Dune.epub", cover=make_png())
+    existing = tmp_path / "cover.png"
+    existing.write_bytes(b"precious")
+    with pytest.raises(FileExistsError):
+        adapters.extract_cover(book)
+    assert existing.read_bytes() == b"precious"
+
+
+def test_create_opf_from_book_metadata(tmp_path):
+    book = make_epub(tmp_path / "Dune.epub")
+    target = adapters.create_opf(book)
+    assert target == tmp_path / "metadata.opf"
+    text = target.read_text()
+    assert "<dc:title>Dune</dc:title>" in text
+    assert 'opf:file-as="Herbert, Frank"' in text
+    assert ">Frank Herbert</dc:creator>" in text
+    assert 'name="calibre:series" content="Dune"' in text
+    assert "<dc:publisher>Chilton Books</dc:publisher>" in text
+    # the spurious-index bug fix-series-meta existed to clean up:
+    # no series → no series meta at all, and never an index of 0
+    assert 'series_index" content="0"' not in text
+
+
+def test_create_opf_without_series(tmp_path):
+    book = make_epub(tmp_path / "Solo.epub", title="Solo",
+                     author="Plainname", series=None)
+    text = adapters.create_opf(book).read_text()
+    assert "calibre:series" not in text
+    assert 'opf:file-as="Plainname"' in text         # single word: unchanged
+
+
+def test_create_opf_never_overwrites(tmp_path):
+    book = make_epub(tmp_path / "Dune.epub")
+    existing = tmp_path / "metadata.opf"
+    existing.write_text("precious")
+    with pytest.raises(FileExistsError):
+        adapters.create_opf(book)
+    assert existing.read_text() == "precious"

@@ -187,6 +187,46 @@ def write_metadata(path: Path, fields: dict[str, str]) -> None:
         tmp.unlink(missing_ok=True)
 
 
+def make_metadata_opf(fields: dict[str, str], has_cover: bool = False) -> str:
+    """A Calibre-style ``metadata.opf`` sidecar from the standard book
+    fields (title/author/series/publisher/language/date). Ported from v1
+    standardize-metadata; series never gets the spurious index="0" that
+    fix-series-meta existed to clean up."""
+    import uuid
+    from datetime import datetime, timezone
+
+    from .text import infer_author_sort
+
+    title = fields.get("title", "")
+    author = fields.get("author", "")
+    series = fields.get("series", "")
+    uid = str(uuid.uuid4())
+    timestamp = datetime.now(timezone.utc).isoformat()
+    cover_guide = (
+        '\n    <guide>\n'
+        '        <reference type="cover" title="Cover" href="cover.jpg"/>\n'
+        '    </guide>'
+    ) if has_cover else ''
+    series_meta = (f'\n        <meta name="calibre:series" '
+                   f'content="{escape(series, quote=True)}"/>'
+                   if series else '')
+    return f"""\
+<?xml version='1.0' encoding='utf-8'?>
+<package xmlns="http://www.idpf.org/2007/opf" unique-identifier="uuid_id" version="2.0">
+    <metadata xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf">
+        <dc:identifier opf:scheme="uuid" id="uuid_id">{uid}</dc:identifier>
+        <dc:title>{escape(title)}</dc:title>
+        <dc:creator opf:file-as="{escape(infer_author_sort(author), quote=True)}" opf:role="aut">{escape(author)}</dc:creator>
+        <dc:date>{escape(fields.get("date", ""))}</dc:date>
+        <dc:publisher>{escape(fields.get("publisher", ""))}</dc:publisher>
+        <dc:language>{escape(fields.get("language", "") or "eng")}</dc:language>{series_meta}
+        <meta name="calibre:title_sort" content="{escape(title, quote=True)}"/>
+        <meta name="calibre:timestamp" content="{timestamp}"/>
+    </metadata>{cover_guide}
+</package>
+"""
+
+
 def extract_cover_bytes(path: Path) -> bytes | None:
     """Return the cover image bytes embedded in an epub, or None."""
     try:

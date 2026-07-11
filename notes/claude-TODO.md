@@ -10,6 +10,14 @@
   - example: ^save <-- `^s` is a different color from `ave`
   - if the keybinding can't be a character in the word, just choose any character, make a keybinding somehow, and I'll revise the language & keybinding later
   - can you make buttons wrap, like flexbox? That would be weet 
+    (Claude, 2026-07-11: yes — Textual has no wrap layout built in, so
+    mediasmith/actions.py adds a small FlowLayout (a custom Layout
+    registered with Textual's factory) and every ActionBar uses it.
+    Buttons wrap at the pane edge and restart at the left, flexbox
+    style. One nuance on "navigable with up/down": ↑↓ now walk straight
+    through every field *and* button — on a button row ↓ means "next
+    button to the right". ←→ also move within a row, ← on the leftmost
+    button still ascends, per the pane hierarchy.)
 
 - Please evaluate mediasmith-v1 instead of blindly porting features. If a feature was written well enough in v1 that you can port it unchanged, great! Just, don't assume. Remember, you are Fable 5, and lesser models wrote v1.
 
@@ -40,14 +48,31 @@
 -[ ] Anna search*
      Like Deezer search, this is a really useful tool, and I'm not sure how to fit it in. The best idea I have right now is a global keybinding to open a modal, but I would like to hear any ideas you have, too.
 
--[ ] Convert
+-[x] Convert
      Add buttons to the bottom of ebook views from this palette of buttons:
      save, convert to epub, convert to mobi, convert to azw3
      Whichever file format the ebook is, remove that button from the list. So, if viewing an epub, buttons should read:
      save, convert to mobi, convert to azw3
+     (Claude, 2026-07-11: shipped. Exactly this palette, own format
+     hidden. Decisions you may want to revise: [1] the converted file
+     lands *next to the source* — edit-in-place pattern, no output-dir
+     question, the tree refreshes itself; [2] existing target = refuse
+     with a warning, never overwrite; [3] conversions run in threads,
+     several can run at once; [4] keys are ^p/^b/^y until you pick
+     better ones. Not done: bulk convert of a folder (v1 supported it) —
+     say the word if you want it on folder views too.)
 
 -[ ] Fix series metadata
      I'm not sure what this does. :(
+     (Claude, 2026-07-11: mystery solved — it's a one-shot repair tool,
+     not a feature. An old version of standardize-metadata wrote
+     `calibre:series content=""` + `series_index="0"` into non-series
+     books; this scans a library and strips that signature from epubs
+     and metadata.opf files. Recommend: don't port it. If you like, run
+     the v1 tool once over BOOKS with --dry-run to confirm nothing
+     still carries the bug, then retire it. mediasmith's own epub
+     writer already removes the series meta when the field is emptied,
+     so the app can't reintroduce the problem.)
 
 -[x] Metadata editor
      Ebook metadata should be editable in the details pane, just like mp3 tags. I haven't tested it yet; check this off if it exists.
@@ -75,8 +100,16 @@
      - Folderize: the old tool assumed that converting preserved the old file; so, I wanted the new files to be organized all in the same flow so that I didn't have to go back and forth between terminal and finder (that's the reason why this tool did so many things). Now with edit-in-place as the pattern, I think that a feature like this would be confusing, instantaneous magic that would confuse the user unless they knew in advance what it would do.
 
      **Ideas to Implement**
-     -[ ] Create opf file: I wouldn't mind a button to do this
-     -[ ] Extract cover: There is a silly feature of the old tool that I would use: a button to eject the cover and save it as "cover.jpg" in the same directory.
+     -[x] Create opf file: I wouldn't mind a button to do this
+          (Claude, 2026-07-11: shipped — `create opf ^g` on epub views
+          writes a Calibre-style metadata.opf beside the book from its
+          embedded metadata. Refuses to overwrite an existing one.
+          epub-only: mobi/azw3 have no metadata reader yet.)
+     -[x] Extract cover: There is a silly feature of the old tool that I would use: a button to eject the cover and save it as "cover.jpg" in the same directory.
+          (Claude, 2026-07-11: shipped — `extract cover ^t`, and the
+          button only appears when the book has a cover. One liberty
+          taken: a PNG cover saves as cover.png, not cover.jpg with png
+          bytes inside — flag me if you want literal cover.jpg always.)
      -[ ] "Sort" folders: "normalize metadata" and "add my converted ebook to a new folder" are two features which are silly to make buttons for on a single book view. However, at this point in the long list of features, having buttons on folders to sort their contents sounds increasingly appealing. A "sort" feature which standardizes folders would be as useful for books as it is for mp3s--let's start with this
      -[ ] Normalize metadata as an action on a folder: I'm on the fence, currently thinking "no," but...I'm leaving this item for myself to read later (or you to weigh in on now)
 

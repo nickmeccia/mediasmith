@@ -353,6 +353,35 @@ def save_details(path: Path, new_name: str, fields: dict[str, str],
     return rename(path, new_name)
 
 
+def extract_cover(path: Path) -> Path:
+    """Write the book's embedded cover next to it as cover.jpg/.png
+    (named for its actual format). Raises when there is no cover or the
+    target already exists."""
+    data = cover_bytes(path)
+    if not data:
+        raise ValueError(f"{path.name}: no embedded cover")
+    ext = ".png" if data[:8] == b"\x89PNG\r\n\x1a\n" else ".jpg"
+    target = path.parent / f"cover{ext}"
+    if target.exists():
+        raise FileExistsError(f"{target.name} already exists")
+    target.write_bytes(data)
+    return target
+
+
+def create_opf(path: Path) -> Path:
+    """Write a Calibre-style metadata.opf beside the book, from its
+    embedded metadata. Raises when the target already exists."""
+    target = path.parent / "metadata.opf"
+    if target.exists():
+        raise FileExistsError("metadata.opf already exists")
+    details = read_details(path)
+    assert isinstance(details, BookDetails)
+    has_cover = (path.parent / "cover.jpg").exists()
+    target.write_text(epublib.make_metadata_opf(details.fields, has_cover),
+                      encoding="utf-8")
+    return target
+
+
 def probe_video_title(path: Path) -> str | None:
     """The container's embedded title tag (what VLC shows), or None.
 

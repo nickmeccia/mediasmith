@@ -27,11 +27,27 @@ from textual.message import Message
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Label, Static
 
-from . import adapters, artfetch, fs, kinds
+from . import adapters, artfetch, calibre, folderize, fs, kinds
+from .actions import Action, ActionBar, ActionButton
 from .images import image_widget
 
 PANELS = [kinds.AUDIO, kinds.VIDEO, kinds.BOOK, kinds.IMAGE,
           kinds.FOLDER, kinds.OTHER]
+
+PANE_ACTIONS = [
+    # the one bar at the pane's foot, composed once with the full palette;
+    # selection changes only show/hide buttons (_sync_pane_bar)
+    Action("save", "save", "s", button_id="save-btn"),
+    Action("convert_epub", "convert to epub", "p"),
+    Action("convert_mobi", "convert to mobi", "b"),
+    Action("convert_azw3", "convert to azw3", "y"),
+    Action("extract_cover", "extract cover", "t"),
+    Action("create_opf", "create opf", "g"),
+    Action("folderize", "folderize", "l"),
+    # while a folderize preview is up, these two own the bar
+    Action("folderize_apply", "apply", "a"),
+    Action("folderize_cancel", "cancel"),       # esc cancels too
+]
 
 EDITABLE_KINDS: frozenset[str] = frozenset({kinds.AUDIO, kinds.BOOK})
 """Kinds whose details can take focus for editing."""
@@ -259,13 +275,13 @@ class DetailsPane(VerticalScroll, can_focus=True):
 
     BINDINGS = [
         Binding("escape", "release", "back", show=False),
-        # ←/→ : between the art-method buttons when one is focused;
+        # ←/→ : between the buttons of an action bar when one is focused;
         # otherwise ← duplicates esc (inside a field, FieldInput owns ←)
         Binding("left", "pane_left", "back", show=False),
         Binding("right", "pane_right", show=False),
-        Binding("ctrl+s", "save", "save", show=False),
-        Binding("ctrl+o", "art_path", "art path", show=False),
-        Binding("ctrl+f", "art_fetch", "art fetch", show=False),
+        # action keys (^s, ^o, …) are not bound here: the app dispatches
+        # any ctrl chord printed on a visible action button, so they work
+        # from the tree too (read-only kinds never focus this pane)
         Binding("up", "field_prev", show=False),
         Binding("down", "field_next", show=False),
         # form-style cycling; also shadows the Screen's focus cycling so
@@ -282,6 +298,14 @@ class DetailsPane(VerticalScroll, can_focus=True):
             self.old = old
             self.new = new
             self.renamed = old != new
+
+    class FileCreated(Message):
+        """An action produced a new file (conversion, cover export, …);
+        the tree should pick it up without losing its place."""
+
+        def __init__(self, path: Path) -> None:
+            super().__init__()
+            self.path = path
 
     def can_edit(self) -> bool:
         """Focus may enter this pane only when the shown kind is editable."""
@@ -302,6 +326,7 @@ class DetailsPane(VerticalScroll, can_focus=True):
         self._baseline_art: bytes | None = None  # what discard restores
         self._art_candidates: list[artfetch.CoverCandidate] = []
         self._art_index = 0
+        self._book_cover = False    # shown book has an extractable cover
 
     # -- static layout ---------------------------------------------------------
 
@@ -329,8 +354,11 @@ class DetailsPane(VerticalScroll, can_focus=True):
                 yield Static("", id="art-mark", classes="fmark")
             with Horizontal(id="row-art-buttons"):
                 yield Label("", id="art-buttons-pad", classes="fkey")
-                yield Button("path  ^o", id="art-btn-path", compact=True)
-                yield Button("fetch  ^f", id="art-btn-fetch", compact=True)
+                yield ActionBar(
+                    Action("art_path", "path", "o", button_id="art-btn-path"),
+                    Action("art_fetch", "fetch", "f",
+                           button_id="art-btn-fetch"),
+                    id="art-bar")
             with Horizontal(id="row-art-path"):
                 yield Label("", id="art-path-pad", classes="fkey")
                 yield ArtPathInput(id="art-path", compact=True)
@@ -359,7 +387,7 @@ class DetailsPane(VerticalScroll, can_focus=True):
             yield self._row("size", "other-size", width)
             yield self._row("type", "other-type", width)
 
-        yield Button("save  ^s", id="save-btn", compact=True)
+        yield ActionBar(*PANE_ACTIONS, id="pane-bar")
         # parked below save while its final home is decided (audio only);
         # width matches the standard audio field labels (tracknumber)
         yield self._row("info", "audio-info", 11 + LABEL_GUTTER,
@@ -369,9 +397,9 @@ class DetailsPane(VerticalScroll, can_focus=True):
         for panel in PANELS:
             self.query_one(f"#panel-{panel}").display = False
         self.query_one("#row-fname").display = False
-        self.query_one("#save-btn").display = False
         self.query_one("#row-audio-info").display = False
         self.query_one("#row-art-path").display = False
+        self._sync_pane_bar()
 
     # -- value plumbing ----------------------------------------------------------
 
@@ -408,10 +436,10 @@ class DetailsPane(VerticalScroll, can_focus=True):
         self.query_one("#dtitle", Label).update("")
         self.query_one("#dtitle").display = True
         self.query_one("#row-fname").display = False
-        self.query_one("#save-btn").display = False
         self.query_one("#row-audio-info").display = False
         for panel in PANELS:
             self.query_one(f"#panel-{panel}").display = False
+        self._sync_pane_bar()
 
     def preview(self, path: Path, immediate: bool = False) -> None:
         """Debounced: browsing quickly must not read every file passed over."""
@@ -440,6 +468,7 @@ class DetailsPane(VerticalScroll, can_focus=True):
         self._art_mixed = False
         self._art_candidates = []
         self._art_index = 0
+        self._book_cover = False
         self._hide_art_path()
 
     def _apply_pending(self) -> None:
@@ -501,8 +530,8 @@ class DetailsPane(VerticalScroll, can_focus=True):
             f"reading {self._count_label()}…")
         self.query_one("#dtitle").display = True
         self.query_one("#row-fname").display = False
-        self.query_one("#save-btn").display = False
         self.query_one("#row-audio-info").display = False
+        self._sync_pane_bar()
         self._bulk_read_worker(list(paths))
 
     @work(thread=True, exclusive=True, group="bulkread")
@@ -528,7 +557,7 @@ class DetailsPane(VerticalScroll, can_focus=True):
         self.query_one(f"#panel-{bulk.kind}").display = True
         self.query_one("#dtitle", Label).update(
             f"{self._count_label()} selected")
-        self.query_one("#save-btn").display = True
+        self._sync_pane_bar()
         form = self._active_form()
         assert form is not None
         form.set_fields(bulk.fields, bulk.mixed)
@@ -556,7 +585,7 @@ class DetailsPane(VerticalScroll, can_focus=True):
         """Editable selections show the filename input; others the title."""
         self.query_one("#dtitle").display = not editable
         self.query_one("#row-fname").display = editable
-        self.query_one("#save-btn").display = editable
+        self._sync_pane_bar()
         if editable and self.path is not None:
             self.query_one("#fname", Input).value = self.path.name
 
@@ -599,6 +628,8 @@ class DetailsPane(VerticalScroll, can_focus=True):
     def _fill_book(self, path: Path, d: adapters.BookDetails) -> None:
         self.query_one("#form-book", EditForm).set_fields(d.fields)
         self._set_cover("cover-book", d.cover)
+        self._book_cover = d.cover is not None
+        self._sync_pane_bar()       # extract-cover appears with the cover
 
     def _fill_image(self, path: Path, d: adapters.ImageDetails) -> None:
         self._set("image-size", human_size(d.size))
@@ -684,60 +715,106 @@ class DetailsPane(VerticalScroll, can_focus=True):
             return self
         return super().focus(scroll_visible)
 
-    def _move_field(self, delta: int) -> None:
-        inputs = self._field_inputs()
-        if not inputs:
-            return
-        focused = self.app.focused
-        if focused in inputs:
-            index = max(0, min(len(inputs) - 1, inputs.index(focused) + delta))
-        else:
-            index = 0
-        inputs[index].focus()
+    # -- action bars: contextual buttons below the fields. ↑↓ walk straight
+    # through them (inline buttons: ↓ moves right), ←→ move within one bar,
+    # and any printed ^x chord fires app-wide while its bar is on show ----------
 
-    # -- art method buttons: one more row below the fields, laid out
-    # left-to-right; ↓ from the art slot reaches them, ↑ returns ------------------
+    def _active_bars(self) -> list[ActionBar]:
+        """Bars on show: every ancestor up to the pane is displayed."""
+        bars = []
+        for bar in self.query(ActionBar):
+            node = bar
+            while node is not None and node is not self:
+                if not node.display:
+                    break
+                node = node.parent
+            else:
+                bars.append(bar)
+        return bars
 
-    def _art_buttons(self) -> list[Button]:
+    def _art_buttons(self) -> list[ActionButton]:
         if self.kind != kinds.AUDIO or not self.can_edit():
             return []
-        return [self.query_one("#art-btn-path", Button),
-                self.query_one("#art-btn-fetch", Button)]
+        return self.query_one("#art-bar", ActionBar).buttons()
+
+    def _sync_pane_bar(self) -> None:
+        """Show the pane-bar buttons the current selection has earned."""
+        names: set[str] = set()
+        if self.can_edit():
+            names.add("save")
+            if (self.kind == kinds.BOOK and self.paths is None
+                    and self.path is not None):
+                suffix = self.path.suffix.lower()
+                names |= {f"convert_{fmt}" for fmt in calibre.EBOOK_FORMATS
+                          if fmt != suffix.lstrip(".")}
+                if suffix == ".epub":           # the only kind we can read
+                    names.add("create_opf")
+                    if self._book_cover:        # only when there is one
+                        names.add("extract_cover")
+        self.query_one("#pane-bar", ActionBar).set_visible(names)
+
+    def action_for_key(self, key: str) -> Action | None:
+        """The action a key chord should fire: its button is on show."""
+        for bar in self._active_bars():
+            action = bar.action_for_key(key)
+            if action is not None:
+                return action
+        return None
+
+    def trigger(self, action: Action) -> None:
+        handler = getattr(self, f"action_{action.name}", None)
+        if handler is not None:
+            handler()
+
+    def on_action_bar_triggered(self, ev: ActionBar.Triggered) -> None:
+        ev.stop()
+        self.trigger(ev.action)
+
+    def _nav_items(self) -> list:
+        """Everything ↑↓ walks, top to bottom: the fields, then every
+        visible action button in reading order."""
+        items = self._field_inputs()
+        if self.can_edit():
+            for bar in self._active_bars():
+                items.extend(bar.buttons())
+        return items
+
+    def _move_nav(self, delta: int) -> None:
+        items = self._nav_items()
+        if not items:
+            return
+        focused = self.app.focused
+        if focused in items:
+            index = max(0, min(len(items) - 1, items.index(focused) + delta))
+        else:
+            index = 0
+        items[index].focus()
 
     def action_field_next(self) -> None:
-        focused = self.app.focused
-        buttons = self._art_buttons()
-        if focused in buttons:
-            return                              # bottom row: clamp
-        if isinstance(focused, ArtField) and buttons:
-            buttons[0].focus()
-            return
-        self._move_field(+1)
+        self._move_nav(+1)
 
     def action_field_prev(self) -> None:
-        focused = self.app.focused
-        if focused in self._art_buttons():
-            self.query_one("#art-field", ArtField).focus()
-            return
-        self._move_field(-1)
+        self._move_nav(-1)
 
     def action_pane_left(self) -> None:
         focused = self.app.focused
-        buttons = self._art_buttons()
-        if focused in buttons:
-            index = buttons.index(focused)
+        if (isinstance(focused, ActionButton)
+                and isinstance(focused.parent, ActionBar)):
+            row = focused.parent.buttons()
+            index = row.index(focused)
             if index > 0:
-                buttons[index - 1].focus()
+                row[index - 1].focus()
                 return                          # leftmost falls through: release
         self.action_release()
 
     def action_pane_right(self) -> None:
         focused = self.app.focused
-        buttons = self._art_buttons()
-        if focused in buttons:
-            index = buttons.index(focused)
-            if index < len(buttons) - 1:
-                buttons[index + 1].focus()
+        if (isinstance(focused, ActionButton)
+                and isinstance(focused.parent, ActionBar)):
+            row = focused.parent.buttons()
+            index = row.index(focused)
+            if index < len(row) - 1:
+                row[index + 1].focus()
 
     def action_release(self) -> None:
         if not self.dirty:
@@ -768,15 +845,6 @@ class DetailsPane(VerticalScroll, can_focus=True):
             self._pending_art = None
             self._show_art(self._baseline_art, mixed=self._art_mixed)
         self._refresh_marks()
-
-    def on_button_pressed(self, ev: Button.Pressed) -> None:
-        actions = {"save-btn": self.action_save,
-                   "art-btn-path": self.action_art_path,
-                   "art-btn-fetch": self.action_art_fetch}
-        action = actions.get(ev.button.id or "")
-        if action is not None:
-            ev.stop()
-            action()
 
     # -- art method 1: path entry ---------------------------------------------------
 
@@ -941,3 +1009,77 @@ class DetailsPane(VerticalScroll, can_focus=True):
         self.post_message(self.Saved(old, new))
         if release:
             self.app.action_focus_tree()
+
+    # -- book conversion --------------------------------------------------------
+
+    def action_convert_epub(self) -> None:
+        self._convert("epub")
+
+    def action_convert_mobi(self) -> None:
+        self._convert("mobi")
+
+    def action_convert_azw3(self) -> None:
+        self._convert("azw3")
+
+    def _convert(self, fmt: str) -> None:
+        if self.kind != kinds.BOOK or self.path is None or self.paths is not None:
+            return
+        source = self.path
+        target = source.with_suffix("." + fmt)
+        if target.exists():
+            self.notify(f"{target.name} already exists — not overwriting",
+                        severity="warning", title="convert")
+            return
+        if calibre.find_ebook_convert() is None:
+            self.notify("Calibre not found — install it from "
+                        "https://calibre-ebook.com",
+                        severity="error", title="convert")
+            return
+        self.notify(f"{source.name} → .{fmt}…", title="converting")
+        self._convert_worker(source, target)
+
+    @work(thread=True, group="convert", exclusive=False)
+    def _convert_worker(self, source: Path, target: Path) -> None:
+        # conversions take seconds to minutes: never block the UI, and
+        # let several queue up side by side
+        try:
+            calibre.convert(source, target)
+        except Exception as error:
+            self.app.call_from_thread(
+                self.notify, str(error), title="convert failed",
+                severity="error")
+            return
+        self.app.call_from_thread(self._convert_done, target)
+
+    def _convert_done(self, target: Path) -> None:
+        self.notify(f"{target.name} created", title="convert")
+        self.post_message(self.FileCreated(target))
+
+    # -- produce-a-sibling actions (cover export, metadata.opf) -------------------
+
+    def action_extract_cover(self) -> None:
+        self._produce("extract cover", adapters.extract_cover)
+
+    def action_create_opf(self) -> None:
+        self._produce("create opf", adapters.create_opf)
+
+    def _produce(self, title: str, producer) -> None:
+        if (self.kind != kinds.BOOK or self.path is None
+                or self.paths is not None):
+            return
+        self._produce_worker(title, producer, self.path)
+
+    @work(thread=True, group="produce", exclusive=False)
+    def _produce_worker(self, title: str, producer, path: Path) -> None:
+        # a zip read + a write: quick, but not NAS-quick — off the UI thread
+        try:
+            target = producer(path)
+        except Exception as error:
+            self.app.call_from_thread(self.notify, str(error), title=title,
+                                      severity="warning")
+            return
+        self.app.call_from_thread(self._produced, title, target)
+
+    def _produced(self, title: str, target: Path) -> None:
+        self.notify(f"{target.name} created", title=title)
+        self.post_message(self.FileCreated(target))

@@ -49,6 +49,11 @@ def make_epub(path: Path, title="Dune", author="Frank Herbert",
                    if series else "")
     cover_manifest = ('<item id="cover-image" href="cover.png" '
                       'media-type="image/png"/>' if cover is not None else "")
+    # one real chapter: keeps the epub convertible (ebook-convert rejects
+    # an empty spine)
+    chapter = ('<?xml version="1.0"?><html xmlns="http://www.w3.org/1999/'
+               'xhtml"><head><title>1</title></head>'
+               '<body><p>It was a dark and stormy night.</p></body></html>')
     cover_meta = '<meta name="cover" content="cover-image"/>' if cover is not None else ""
     opf = f"""<?xml version="1.0"?>
 <package xmlns="http://www.idpf.org/2007/opf" version="2.0">
@@ -61,8 +66,10 @@ def make_epub(path: Path, title="Dune", author="Frank Herbert",
     {series_meta}
     {cover_meta}
   </metadata>
-  <manifest>{cover_manifest}</manifest>
-  <spine/>
+  <manifest>{cover_manifest}
+    <item id="chap1" href="chap1.xhtml" media-type="application/xhtml+xml"/>
+  </manifest>
+  <spine><itemref idref="chap1"/></spine>
 </package>"""
     container = """<?xml version="1.0"?>
 <container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
@@ -74,6 +81,7 @@ def make_epub(path: Path, title="Dune", author="Frank Herbert",
                    compress_type=zipfile.ZIP_STORED)
         z.writestr("META-INF/container.xml", container)
         z.writestr("content.opf", opf)
+        z.writestr("chap1.xhtml", chapter)
         if cover is not None:
             z.writestr("cover.png", cover)
     return path

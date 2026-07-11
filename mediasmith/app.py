@@ -8,6 +8,7 @@ from pathlib import Path
 from rich.color import Color
 from rich.segment import Segment, Segments
 from rich.style import Style
+from textual import events
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
@@ -143,11 +144,10 @@ class MediasmithApp(App):
     ArtField { width: 1fr; height: auto; }
     ArtField:focus { outline: round $accent; }
     #cover-audio { margin: 0; }
-    #row-art-buttons { height: 1; margin-top: 1; }
-    #row-art-buttons Button { margin-right: 2; }
+    #row-art-buttons { height: auto; margin-top: 1; }
     #row-art-path { height: 1; margin-top: 1; }
     #art-path { background: transparent; }
-    #save-btn { margin: 1 0 0 0; }
+    #pane-bar { margin-top: 1; }
     #ctxrow { height: 1; background: $surface; color: $text-muted; }
     #strip-left { width: 38%; min-width: 30; padding-left: 1; }
     #strip-right { width: 1fr; padding-left: 1; }
@@ -268,6 +268,18 @@ class MediasmithApp(App):
     def action_focus_tree(self) -> None:
         self.query_one(LibraryTree).focus()
 
+    def on_key(self, event: events.Key) -> None:
+        # Any ^x chord printed on a visible action button fires it, no
+        # matter where focus sits — read-only kinds (video, folder…) keep
+        # the tree focused, yet their buttons still need their keys.
+        if len(self.screen_stack) > 1:          # a modal owns the keys
+            return
+        details = self.query_one(DetailsPane)
+        action = details.action_for_key(event.key)
+        if action is not None:
+            event.stop()
+            details.trigger(action)
+
     def on_library_tree_focused(self, ev: LibraryTree.Focused) -> None:
         self.query_one(PathBar).value = str(ev.path)
         self.query_one(DetailsPane).preview(ev.path)
@@ -288,6 +300,15 @@ class MediasmithApp(App):
         target = tree._node_for(ev.new)
         if target is not None:
             tree._move_cursor(target.line)
+
+    async def on_details_pane_file_created(self,
+                                           ev: DetailsPane.FileCreated) -> None:
+        # a new sibling appeared (conversion, cover export…): re-list its
+        # folder in place; cursor and expansion are untouched
+        tree = self.query_one(LibraryTree)
+        parent = tree._node_for(ev.path.parent)
+        if parent is not None:
+            await tree.reload_node(parent)
 
 
 def main() -> None:

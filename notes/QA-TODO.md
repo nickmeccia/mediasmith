@@ -1,3 +1,43 @@
+# QA to-do — 2026-07-11 weekend session (action buttons + book convert)
+
+Everything below passed pytest + the fuzz harness; human pass pending.
+
+## The button pattern (new, app-wide)
+
+- [ ] Button labels: the ^ splices in front of its char when the char is
+      in the word (`^save`, `^fetch`, `convert to e^pub`, `convert to
+      mo^bi`); otherwise it prefixes (`^o path`, `^y convert to azw3`).
+      Wording/keys all revisable — shout at whatever reads wrong.
+- [ ] Key char + its ^ render in the accent color, rest of the word plain
+- [ ] ↑↓ now walk *through* the buttons (↓ on a button row = move right);
+      ←→ still move within a row; ← on the leftmost button ascends
+- [ ] Buttons wrap flexbox-style: shrink the window until the book row
+      (save · convert to epub · convert to mobi · convert to azw3)
+      breaks onto two lines; nothing clips
+- [ ] Action chords fire from the tree: highlight a song, press ^o —
+      the art path input opens without entering the pane first. Feel OK,
+      or should chords require the pane to be focused?
+
+## Book convert (buttons on every ebook)
+
+- [ ] An epub offers: save · convert to mobi (^b) · convert to azw3 (^y);
+      a .mobi offers epub/azw3, etc. — own format absent
+- [ ] Converting notifies start ("Dune.epub → .mobi…") and completion;
+      the new file appears in the tree without ^r, cursor stays put
+- [ ] Existing target: refuses with a warning, never overwrites
+- [ ] No Calibre → error notification pointing at calibre-ebook.com
+- [ ] Convert keys are placeholders (^p/^b/^y) — rename/rebind at will
+- [ ] A long conversion over SMB: UI stays live? Start two at once?
+
+## Book extract-cover + create-opf
+
+- [ ] `ex^tract cover` appears only on epubs that have a cover; writes
+      cover.png/.jpg (named for the real format) beside the book
+- [ ] `^g create opf` writes a Calibre-style metadata.opf from the
+      book's metadata; check it looks right to Calibre if you import
+- [ ] Both refuse to overwrite an existing target (warning toast)
+- [ ] Both appear on epubs only — .mobi/.azw3 hide them (no reader)
+
 # QA to-do — 2026-07-10 session (editing slice + bulk)
 
 Everything below passed pytest + the fuzz harness; this list is the

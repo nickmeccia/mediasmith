@@ -32,7 +32,8 @@ from mediafactory import make_media_tree  # noqa: E402
 KEYS = ([b"\x1b[B"] * 5 + [b"\x1b[A"] * 3
         + [b"\x1b[C", b"\x1b[D", b" ", b"\t", b"\r", b"c",
            b"\x1b[1;2B", b"\x1b[1;2A",   # shift+↓/↑: selection stress
-           b"\x1b", b"\x1b", b"\x1f"])   # esc (narrow view close), ctrl+/
+           b"\x1b", b"\x1b", b"\x1f",    # esc (narrow view close), ctrl+/
+           b"\x13", b"\x0f", b"\x06"])   # ^s ^o ^f: action-bar chords
 
 # seeds alternate through these; narrow exercises the phone column swap
 SIZES = [(120, 40), (60, 40)]
@@ -45,6 +46,7 @@ def attempt(seed: int, seconds: float, media: Path,
     if pid == 0:
         os.environ["TERM"] = "xterm-256color"
         os.environ["PYTHONFAULTHANDLER"] = "1"
+        os.environ["MEDIASMITH_OFFLINE"] = "1"   # ^f must not hit the API
         os.execvp(sys.executable, [sys.executable, "-m", "mediasmith", str(media)])
 
     cols, rows = size
