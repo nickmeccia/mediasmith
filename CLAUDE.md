@@ -33,6 +33,54 @@ implementation to consult, not code to import.
 - `^S`-style shortcuts are contextual (save tags / download subs / batch
   apply — batch wins when marks exist).
 
+## Interaction model: the pane hierarchy
+
+Nick's core mental model — every navigation or focus decision must stay
+consistent with it. The views form a chain of command; **each view
+controls the view beneath it**, and the details view controls the file
+itself. Focus only ever moves one link at a time: descending is always
+deliberate, ascending is always esc-shaped.
+
+```
+        ┌──────────────┐
+        │  path input  │   what it controls: which directory/filter
+        └──────┬───────┘   the browser shows (live while typing)
+   descend: ⏎ / esc (commit / cancel — the input never keeps focus)
+   ascend:  ^/ from anywhere
+        ┌──────▼───────┐
+        │ file browser │   what it controls: which file (or selection)
+        └──────┬───────┘   the details view shows — HOME BASE: never
+   descend: ⏎ ⇥ →          gives up focus implicitly, ↑ at top stays put
+     · only when the shown selection is editable (EDITABLE_KINDS)
+     · → doubles as fold-open on folders; ⏎ never toggles folds
+   ascend:  esc · ← when ← has no other job (text cursor at start,
+            leftmost method button, pane itself focused)
+        ┌──────▼───────┐
+        │ details view │   what it controls: the file's name, tags,
+        └──────┬───────┘   and art — all edits PENDING until saved
+   descend: nothing to focus below — the "descent" is the write:
+     · ^s (or the save button) commits; esc with pending edits asks
+       (ConfirmSave modal: save / discard / keep editing)
+     · ✓ after a field = the write manifest: exactly what ^s will touch
+        ┌──────▼───────┐
+        │   the file   │
+        └──────────────┘
+```
+
+Consequences that follow from the model (don't break them):
+
+- Within details: filename field first, ↑↓/⇥ move between fields, inputs
+  are immediately editable on focus (cursor at end, nothing selected).
+- Action methods (album art today, more later): compact buttons under
+  the target, left→right, each printing its shortcut ("path  ^o"); ↓
+  from the field above reaches them, ←→ moves within the row, ⏎ or the
+  shortcut activates. Their results feed the same pending/✓/save flow.
+- Bulk editing rides the same chain: the browser's *selection* (shift
+  range, or an album-like leaf folder ≡ its writable children) is what
+  descends into details; the bulk form writes only ✓-marked fields, to
+  every file. Divergent values show a `(mixed)` placeholder; a mixed
+  field emptied back out returns to "leave every file alone."
+
 ## Architecture rules
 
 1. **Engine/frontend split.** All logic that isn't rendering lives in
@@ -87,15 +135,22 @@ Test-driven, calibrated by layer — this replaces Nick-as-only-QA:
 
 ## Roadmap (thin slices, Nick QAs each pass)
 
-1. **File browser + read-only details.** Includes the NAS cache/debounce
-   work (browsing IS the slice; acceptance = smooth Music Library
-   browsing) and the metadata-read adapter layer with tests — read-only
-   scope, full-depth seams.
-2. **Editing** — audio tags first (the iTunes get-info form).
-3. **Engine actions** — subtitles first (port the v1 engine).
-4. **Batch operations.**
+1. **File browser + read-only details.** ✅ Includes the NAS
+   cache/debounce work and the metadata-read adapter layer.
+2. **Editing** — ✅ audio tags + epub metadata + rename + album art
+   (path entry and iTunes-API fetch, in `artfetch.py`); ✓-mark write
+   manifest; ConfirmSave modal.
+3. **Engine actions** — subtitles first (port the v1 engine). ⬅ next
+4. **Batch operations.** Partially done ahead of schedule: shift-range
+   and album-folder bulk editing shipped (2026-07-10); space-marking +
+   batch bar still to come as a third gesture over the same selection
+   set (`LibraryTree._selection_paths` / `DetailsPane.preview_bulk`).
 5. **Responsive/mobile** — narrow-width breakpoints for tmux-from-phone;
    tree-first two-step flow on narrow screens.
+
+Session notes: `notes/QA-TODO.md` tracks what awaits Nick's manual QA
+pass, plus small parked UX decisions (save-button/info-row placement,
+strip wording, per-field ✓ revert).
 
 ## Environment facts
 

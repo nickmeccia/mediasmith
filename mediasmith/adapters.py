@@ -1,8 +1,8 @@
-"""Metadata read adapters: filesystem in, plain dataclasses out.
+"""Metadata adapters: filesystem in, plain dataclasses out — and back.
 
-This is the read half of the engine/frontend seam. Nothing here knows about
-widgets; everything returns data the UI can render or a later engine can
-consume. The write half arrives with the editing slice.
+This is the engine/frontend seam. Nothing here knows about widgets;
+everything returns data the UI can render or a later engine can consume,
+and the write half takes plain field dicts back.
 """
 
 from __future__ import annotations
@@ -74,10 +74,15 @@ def _read_audio(path: Path) -> AudioDetails:
     from mutagen import File as MutagenFile
     audio = MutagenFile(str(path), easy=True)
     tags = (audio.tags or {}) if audio is not None else {}
-    fields = {}
-    for name in AUDIO_FIELDS:
-        values = tags.get(name, [])
-        fields[name] = str(values[0]) if values else ""
+
+    def joined(values) -> str:
+        return "; ".join(str(v) for v in values)
+
+    # The standard fields always show (empty when absent, so they can be
+    # filled in); whatever else the file carries follows.
+    fields = {name: joined(tags.get(name, [])) for name in AUDIO_FIELDS}
+    for name in sorted(set(tags.keys()) - set(AUDIO_FIELDS)):
+        fields[name] = joined(tags.get(name, []))
     length = float(getattr(getattr(audio, "info", None), "length", 0) or 0)
     return AudioDetails(fields=fields, length_seconds=length,
                         size=path.stat().st_size, cover=cover_bytes(path))
@@ -164,6 +169,188 @@ def cover_bytes(path: Path) -> bytes | None:
     except Exception:
         return None
     return None
+
+
+# -- bulk (multi-file) details --------------------------------------------------
+
+
+@dataclass(frozen=True)
+class BulkDetails:
+    kind: str
+    fields: dict[str, str]      # union of every file's tags; "" where mixed
+    mixed: frozenset[str]       # field names whose values diverge
+    cover: bytes | None         # the common cover, when unanimous
+    cover_mixed: bool
+    length_seconds: float       # totals across the selection
+    size: int
+
+
+def read_bulk(paths: list[Path]) -> BulkDetails:
+    """Merge ``read_details`` over same-kind ``paths``. May raise."""
+    kind = kinds.kind_of(paths[0])
+    standard = AUDIO_FIELDS if kind == kinds.AUDIO else BOOK_FIELDS
+    all_details = [read_details(p) for p in paths]
+    names = list(standard) + sorted(
+        {n for d in all_details for n in d.fields} - set(standard))
+    fields: dict[str, str] = {}
+    mixed: set[str] = set()
+    for name in names:
+        values = {d.fields.get(name, "") for d in all_details}
+        if len(values) == 1:
+            fields[name] = values.pop()
+        else:
+            fields[name] = ""
+            mixed.add(name)
+    covers = [getattr(d, "cover", None) for d in all_details]
+    cover_mixed = any(c != covers[0] for c in covers)
+    return BulkDetails(
+        kind=kind, fields=fields, mixed=frozenset(mixed),
+        cover=None if cover_mixed else covers[0], cover_mixed=cover_mixed,
+        length_seconds=sum(getattr(d, "length_seconds", 0.0)
+                           for d in all_details),
+        size=sum(getattr(d, "size", 0) for d in all_details))
+
+
+def save_bulk(paths: list[Path], fields: dict[str, str],
+              art: bytes | None = None) -> list[tuple[Path, Exception]]:
+    """Write ``fields`` (and ``art``) to every path; carries on past
+    failures and returns them as (path, error) pairs."""
+    errors: list[tuple[Path, Exception]] = []
+    for path in paths:
+        try:
+            if art is not None:
+                write_cover(path, art)
+            if fields:
+                write_details(path, fields)
+        except Exception as error:
+            errors.append((path, error))
+    return errors
+
+
+def bulk_paths_for_folder(path: Path) -> list[Path] | None:
+    """The folder's bulk-editable children, or None when the folder
+    doesn't qualify. Rules (Nick's artist/album/track layout): leaf
+    folders only — any subfolder disqualifies ("album" yes, "artist" no) —
+    and the writable children must all share one kind; unwritable files
+    (cover.jpg, .nfo, …) are ignored."""
+    try:
+        entries = fs.list_dir(path)
+    except OSError:
+        return None
+    by_kind: dict[str, list[Path]] = {}
+    for entry in entries:
+        if entry.is_dir:
+            return None
+        if entry.name.startswith("."):
+            continue
+        child = path / entry.name
+        if can_write(child):
+            by_kind.setdefault(kinds.kind_of(child, is_dir=False),
+                               []).append(child)
+    if len(by_kind) != 1:
+        return None
+    return next(iter(by_kind.values()))
+
+
+# -- write half ---------------------------------------------------------------
+
+
+def can_write(path: Path) -> bool:
+    """True when ``write_details`` has a writer for this path."""
+    kind = kinds.kind_of(path)
+    if kind == kinds.AUDIO:
+        return True
+    if kind == kinds.BOOK:
+        return path.suffix.lower() == ".epub"
+    return False
+
+
+def write_details(path: Path, fields: dict[str, str]) -> None:
+    """Write metadata ``fields`` back to ``path``. May raise."""
+    kind = kinds.kind_of(path)
+    if kind == kinds.AUDIO:
+        _write_audio(path, fields)
+    elif kind == kinds.BOOK and path.suffix.lower() == ".epub":
+        epublib.write_metadata(path, fields)
+    else:
+        raise ValueError(f"{path.name}: no metadata writer for this kind")
+
+
+def _write_audio(path: Path, fields: dict[str, str]) -> None:
+    from mutagen import File as MutagenFile
+    audio = MutagenFile(str(path), easy=True)
+    if audio is None:
+        raise ValueError(f"{path.name}: unrecognized audio file")
+    if audio.tags is None:
+        audio.add_tags()
+    for name, value in fields.items():
+        if value:
+            audio[name] = [value]
+        elif name in audio:
+            del audio[name]
+    audio.save()
+
+
+def write_cover(path: Path, data: bytes) -> None:
+    """Embed ``data`` as the (only) cover art. May raise."""
+    ext = path.suffix.lower()
+    mime = ("image/png" if data[:8] == b"\x89PNG\r\n\x1a\n"
+            else "image/jpeg")
+    if ext == ".mp3":
+        from mutagen.id3 import APIC, ID3, ID3NoHeaderError
+        try:
+            id3 = ID3(str(path))
+        except ID3NoHeaderError:
+            id3 = ID3()
+        id3.delall("APIC")
+        id3.add(APIC(encoding=3, mime=mime, type=3, desc="cover", data=data))
+        id3.save(str(path))
+    elif ext == ".flac":
+        from mutagen.flac import FLAC, Picture
+        flac = FLAC(str(path))
+        flac.clear_pictures()
+        picture = Picture()
+        picture.type = 3
+        picture.mime = mime
+        picture.data = data
+        flac.add_picture(picture)
+        flac.save()
+    elif ext in (".m4a", ".mp4"):
+        from mutagen.mp4 import MP4, MP4Cover
+        fmt = (MP4Cover.FORMAT_PNG if mime == "image/png"
+               else MP4Cover.FORMAT_JPEG)
+        mp4 = MP4(str(path))
+        mp4["covr"] = [MP4Cover(data, imageformat=fmt)]
+        mp4.save()
+    else:
+        raise ValueError(f"no album-art writer for {ext or path.name}")
+
+
+def rename(path: Path, new_name: str) -> Path:
+    """Rename ``path`` within its directory; returns the new path."""
+    new_name = new_name.strip()
+    if not new_name or "/" in new_name or new_name in (".", ".."):
+        raise ValueError(f"invalid filename: {new_name!r}")
+    if new_name == path.name:
+        return path
+    target = path.with_name(new_name)
+    if target.exists():
+        raise FileExistsError(f"{new_name} already exists")
+    path.rename(target)
+    return target
+
+
+def save_details(path: Path, new_name: str, fields: dict[str, str],
+                 art: bytes | None = None) -> Path:
+    """The pane's save: write ``art`` and ``fields`` (when writable), then
+    rename. Writes go to the original path, so the rename comes last;
+    returns the (possibly new) path.
+    """
+    if art is not None:
+        write_cover(path, art)
+    if fields and can_write(path):
+        write_details(path, fields)
+    return rename(path, new_name)
 
 
 def probe_video_title(path: Path) -> str | None:

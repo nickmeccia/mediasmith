@@ -1,8 +1,7 @@
-"""EPUB/OPF read primitives.
+"""EPUB/OPF read and write primitives.
 
-Ported from mediasmith-v1 ``smithkit.epub`` (the write half stays there
-until the editing slice needs it). Regex-based on purpose: OPFs are small
-and this must not depend on lxml just to read metadata.
+Ported from mediasmith-v1 ``smithkit.epub``. Regex-based on purpose: OPFs
+are small and this must not depend on lxml just to read metadata.
 """
 
 from __future__ import annotations
@@ -10,7 +9,7 @@ from __future__ import annotations
 import os
 import re
 import zipfile
-from html import unescape
+from html import escape, unescape
 from pathlib import Path
 
 
@@ -81,6 +80,111 @@ def find_cover_href(opf: str, opf_name: str) -> str | None:
             if href:
                 return resolve(href)
     return None
+
+
+# -- write half ---------------------------------------------------------------
+
+FIELD_TAGS = {"title": "dc:title", "author": "dc:creator",
+              "publisher": "dc:publisher", "language": "dc:language",
+              "date": "dc:date"}
+"""Editable book fields that map to a Dublin Core element ("series" is the
+odd one out: a calibre <meta> tag)."""
+
+
+def _insert_into_metadata(opf: str, element: str) -> str:
+    m = re.search(r"[ \t]*</(?:\w+:)?metadata>", opf)
+    if m is None:
+        return opf
+    return opf[:m.start()] + f"    {element}\n" + opf[m.start():]
+
+
+def set_dc_field(opf: str, tag: str, value: str) -> str:
+    """Set, insert, or (for an empty value) remove a Dublin Core element."""
+    pattern = rf"(<{tag}\b[^>]*>)[^<]*(</{tag}>)"
+    if not value:
+        return re.sub(rf"[ \t]*<{tag}\b[^>]*>[^<]*</{tag}>\n?", "", opf, count=1)
+    replacement = escape(value)
+    if re.search(pattern, opf):
+        return re.sub(pattern,
+                      lambda m: m.group(1) + replacement + m.group(2),
+                      opf, count=1)
+    return _insert_into_metadata(opf, f"<{tag}>{replacement}</{tag}>")
+
+
+def set_calibre_meta(opf: str, key: str, value: str) -> str:
+    """Set, insert, or (for an empty value) remove a calibre <meta> value."""
+    esc_key = re.escape(key)
+    if not value:
+        return re.sub(rf'[ \t]*<meta\b[^>]+(?:name="{esc_key}"[^>]*|'
+                      rf'content="[^"]*"[^>]+name="{esc_key}"[^>]*)/?>\n?',
+                      "", opf, count=1)
+    replacement = escape(value, quote=True)
+    pat_nc = rf'(<meta\b[^>]+name="{esc_key}"[^>]+content=")[^"]*(")'
+    pat_cn = rf'(<meta\b[^>]+content=")[^"]*("[^>]+name="{esc_key}")'
+    for pattern in (pat_nc, pat_cn):
+        if re.search(pattern, opf):
+            return re.sub(pattern,
+                          lambda m: m.group(1) + replacement + m.group(2),
+                          opf, count=1)
+    return _insert_into_metadata(
+        opf, f'<meta name="{key}" content="{replacement}"/>')
+
+
+def rewrite_epub(src: Path, dst: Path, overrides: dict[str, bytes]) -> None:
+    """Copy ``src`` → ``dst`` writing ``mimetype`` first and uncompressed,
+    applying ``overrides`` (zip-path → bytes). Keys matching existing entries
+    replace them; new keys are appended. Use this for any in-place-style OPF
+    or asset edit so the EPUB stays valid. (Ported from v1 ``smithkit.epub``.)
+    """
+    with zipfile.ZipFile(src, "r") as zin, \
+         zipfile.ZipFile(dst, "w", compression=zipfile.ZIP_DEFLATED) as zout:
+        mimetype = overrides.get("mimetype")
+        if mimetype is None:
+            try:
+                mimetype = zin.read("mimetype")
+            except KeyError:
+                mimetype = b"application/epub+zip"
+        zout.writestr(zipfile.ZipInfo("mimetype"), mimetype,
+                      compress_type=zipfile.ZIP_STORED)
+
+        written: set[str] = {"mimetype"}
+        for info in zin.infolist():
+            name = info.filename
+            if name in written:
+                continue
+            written.add(name)
+            if name in overrides:
+                zout.writestr(info, overrides[name])
+            else:
+                zout.writestr(info, zin.read(name))
+
+        for name, data in overrides.items():
+            if name not in written:
+                zout.writestr(name, data, compress_type=zipfile.ZIP_DEFLATED)
+
+
+def write_metadata(path: Path, fields: dict[str, str]) -> None:
+    """Write ``fields`` (a subset of the editable book fields) into the OPF.
+
+    The epub is rewritten next to itself and swapped in with ``os.replace``,
+    so a failure mid-write never corrupts the original.
+    """
+    name, opf = read_opf(path)
+    if not name or opf is None:
+        raise ValueError(f"{path.name}: no OPF metadata found")
+    for key, value in fields.items():
+        if key == "series":
+            opf = set_calibre_meta(opf, "calibre:series", value)
+        elif key in FIELD_TAGS:
+            opf = set_dc_field(opf, FIELD_TAGS[key], value)
+        else:
+            raise ValueError(f"unknown book field: {key}")
+    tmp = path.with_name(path.name + ".tmp")
+    try:
+        rewrite_epub(path, tmp, {name: opf.encode("utf-8")})
+        os.replace(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 def extract_cover_bytes(path: Path) -> bytes | None:

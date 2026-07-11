@@ -14,13 +14,15 @@ Exit code 0 = no deaths.
 from __future__ import annotations
 
 import argparse
+import fcntl
 import os
 import pty
 import random
-import select
 import shutil
+import struct
 import sys
 import tempfile
+import termios
 import time
 from pathlib import Path
 
@@ -28,10 +30,16 @@ sys.path.insert(0, str(Path(__file__).parent))
 from mediafactory import make_media_tree  # noqa: E402
 
 KEYS = ([b"\x1b[B"] * 5 + [b"\x1b[A"] * 3
-        + [b"\x1b[C", b"\x1b[D", b" ", b"\t", b"\r", b"c"])
+        + [b"\x1b[C", b"\x1b[D", b" ", b"\t", b"\r", b"c",
+           b"\x1b[1;2B", b"\x1b[1;2A",   # shift+↓/↑: selection stress
+           b"\x1b", b"\x1b", b"\x1f"])   # esc (narrow view close), ctrl+/
+
+# seeds alternate through these; narrow exercises the phone column swap
+SIZES = [(120, 40), (60, 40)]
 
 
-def attempt(seed: int, seconds: float, media: Path) -> bool:
+def attempt(seed: int, seconds: float, media: Path,
+            size: tuple[int, int]) -> bool:
     """Returns True if the app died mid-stress."""
     pid, fd = pty.fork()
     if pid == 0:
@@ -39,22 +47,45 @@ def attempt(seed: int, seconds: float, media: Path) -> bool:
         os.environ["PYTHONFAULTHANDLER"] = "1"
         os.execvp(sys.executable, [sys.executable, "-m", "mediasmith", str(media)])
 
+    cols, rows = size
+    fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
+    os.set_blocking(fd, False)   # a blocking write can hang the gate forever
+
+    def drain() -> bool:
+        """Read everything buffered; False when the child hung up. A lazy
+        drain builds output backpressure that can deadlock the app's writer
+        thread against our own (formerly blocking) key writes."""
+        while True:
+            try:
+                chunk = os.read(fd, 65536)
+            except BlockingIOError:
+                return True
+            except OSError:
+                return False
+            if not chunk:
+                return False
+
     random.seed(seed)
     start = time.time()
     dead = False
+    stalled: float | None = None
     while time.time() - start < seconds:
-        readable, _, _ = select.select([fd], [], [], 0.02)
-        if readable:
-            try:
-                chunk = os.read(fd, 65536)
-                if not chunk:
-                    dead = True
-                    break
-            except OSError:
-                dead = True
-                break
+        if not drain():
+            dead = True
+            break
         try:
             os.write(fd, random.choice(KEYS))
+            stalled = None
+        except BlockingIOError:
+            # input buffer full: the app stopped reading stdin. A wedged
+            # app is as dead as a crashed one — fail the seed, don't hang.
+            if stalled is None:
+                stalled = time.time()
+            elif time.time() - stalled > 5:
+                print(f"seed {seed}: app stopped reading stdin (wedged)",
+                      flush=True)
+                dead = True
+                break
         except OSError:
             dead = True
             break
@@ -85,9 +116,11 @@ def main() -> int:
     deaths = 0
     try:
         for seed in range(7, 7 + args.seeds):
-            died = attempt(seed, args.seconds, media)
+            size = SIZES[seed % len(SIZES)]
+            died = attempt(seed, args.seconds, media, size)
             deaths += died
-            print(f"seed {seed}: {'DIED' if died else f'survived {args.seconds:.0f}s'}",
+            print(f"seed {seed} @ {size[0]}x{size[1]}: "
+                  f"{'DIED' if died else f'survived {args.seconds:.0f}s'}",
                   flush=True)
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
