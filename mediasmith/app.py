@@ -153,8 +153,8 @@ class MediasmithApp(App):
     #shift-control { width: auto; }
     ShiftControl:focus { text-style: reverse; }
     #shift-hint { height: 1; color: $text-muted; }
-    #folderize-preview { height: auto; margin-top: 1; }
-    #folderize-tree { height: auto; }
+    #plan-preview { height: auto; margin-top: 1; }
+    #plan-tree { height: auto; }
     #ctxrow { height: 1; background: $surface; color: $text-muted; }
     #strip-left { width: 38%; min-width: 30; padding-left: 1; }
     #strip-right { width: 1fr; padding-left: 1; }

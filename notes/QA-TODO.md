@@ -57,6 +57,22 @@ subs · ^w watch — rename at will (avoid `actions.RESERVED_KEYS`).
 - [ ] Wiring the sub file explicitly (--sub-file) needs your player's
       name — tell Claude which app and it becomes `open -a X args`
 
+## fix multi-artist (^x, folder action — folderize's twin)
+
+- [ ] `fi^x multi-artist` appears on folders (and album bulk views)
+      whose subtree has slash-tangled artist/albumartist tags; absent
+      on clean libraries (same late-probe fill as folderize)
+- [ ] Press: preview lists each album as "Album → Main Artist" with
+      the tangled files' old values; ^a applies, esc/cancel backs out
+- [ ] AC/DC guard: an album under an artist folder literally named
+      "AC-DC" (sanitized slash) must NOT be offered — the slash is
+      the band's name. Try it on real AC/DC rips if you have them.
+- [ ] v1's per-album include/exclude checkboxes are gone by design:
+      scope by invoking on a smaller folder. Veto if you miss them.
+- [ ] Note: folderize's apply/cancel buttons are now shared with this
+      feature (`^apply`/`cancel` label unchanged) — regression-check
+      folderize preview still applies/cancels correctly
+
 ## Also fixed this session (no QA needed, FYI)
 
 - The folderize probe crashed the app when browsing /dev (DirEntry

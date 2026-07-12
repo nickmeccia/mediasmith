@@ -809,14 +809,14 @@ async def test_folderize_preview_apply_flow(media_tree):
         await pilot.press("ctrl+l")              # fo^lderize → plan preview
         await pilot.pause(0.6)
         details = app.query_one(DetailsPane)
-        assert details.folderize_preview_open()
-        assert app.query_one("#folderize-preview").display
-        assert set(_bar_names(app)) == {"folderize_apply", "folderize_cancel"}
+        assert details.plan_preview_open()
+        assert app.query_one("#plan-preview").display
+        assert set(_bar_names(app)) == {"plan_apply", "plan_cancel"}
         await pilot.press("ctrl+a")              # apply
         await pilot.pause(0.8)
         assert (inbox / "The Band" / "Alpha" / "strayA.mp3").exists()
         assert (inbox / "* Skipped" / "mystery.mp3").exists()
-        assert not details.folderize_preview_open()
+        assert not details.plan_preview_open()
         tree = app.query_one(LibraryTree)
         assert tree._node_for(inbox / "The Band") is not None
         await pilot.pause(0.6)                   # re-probe: nothing left
@@ -831,11 +831,11 @@ async def test_folderize_escape_cancels_preview(media_tree):
         await pilot.press("ctrl+l")
         await pilot.pause(0.6)
         details = app.query_one(DetailsPane)
-        assert details.folderize_preview_open()
+        assert details.plan_preview_open()
         await pilot.press("escape")              # tree keeps focus: esc = cancel
         await settle(pilot)
-        assert not details.folderize_preview_open()
-        assert not app.query_one("#folderize-preview").display
+        assert not details.plan_preview_open()
+        assert not app.query_one("#plan-preview").display
         assert (inbox / "strayA.mp3").exists()   # nothing moved
         assert "folderize" in _bar_names(app)    # back to the offer
 
@@ -1405,6 +1405,71 @@ async def test_artist_folder_does_not_bulk(media_tree):
         assert details.paths is None
         assert details.kind == "folder"              # plain counts view
         assert app.query_one("#panel-folder").display
+
+
+# -- fix multi-artist (folder action, folderize's pattern) ----------------------
+
+
+def _make_tangled(media_tree):
+    """An artist/album layout where deemix-style slash tags crept in."""
+    from tests.mediafactory import make_mp3
+    album = media_tree / "Tangle" / "Jax Jones" / "Split EP"
+    album.mkdir(parents=True)
+    make_mp3(album / "01 t.mp3",
+             tags={"title": "t", "artist": "Jax Jones/Rebecca Black",
+                   "albumartist": "Jax Jones", "album": "Split EP"})
+    make_mp3(album / "02 u.mp3",
+             tags={"title": "u", "artist": "Jax Jones",
+                   "albumartist": "Jax Jones", "album": "Split EP"})
+    return album
+
+
+async def test_multiartist_button_only_where_tangled(media_tree):
+    _make_tangled(media_tree)
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _goto_folder(app, pilot, "Tangle")
+        assert "fix_multi_artist" in _bar_names(app)
+        await _goto_folder(app, pilot, "Music")  # untangled: no button
+        assert "fix_multi_artist" not in _bar_names(app)
+
+
+async def test_multiartist_preview_apply_rewrites_tags(media_tree):
+    album = _make_tangled(media_tree)
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _goto_folder(app, pilot, "Tangle")
+        await pilot.press("ctrl+x")              # fi^x multi-artist
+        await pilot.pause(0.6)
+        details = app.query_one(DetailsPane)
+        assert details.plan_preview_open()
+        assert set(_bar_names(app)) == {"plan_apply", "plan_cancel"}
+        preview = str(app.query_one("#plan-tree").render())
+        assert "Split EP" in preview and "Jax Jones" in preview
+        await pilot.press("ctrl+a")              # apply
+        await pilot.pause(0.8)
+        d = adapters.read_details(album / "01 t.mp3")
+        assert d.fields["artist"] == "Jax Jones"
+        assert d.fields["albumartist"] == "Jax Jones"
+        assert not details.plan_preview_open()
+        await pilot.pause(0.6)                   # re-probe: nothing left
+        assert "fix_multi_artist" not in _bar_names(app)
+
+
+async def test_multiartist_escape_cancels(media_tree):
+    album = _make_tangled(media_tree)
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _goto_folder(app, pilot, "Tangle")
+        await pilot.press("ctrl+x")
+        await pilot.pause(0.6)
+        details = app.query_one(DetailsPane)
+        assert details.plan_preview_open()
+        await pilot.press("escape")              # tree keeps focus: esc = cancel
+        await settle(pilot)
+        assert not details.plan_preview_open()
+        d = adapters.read_details(album / "01 t.mp3")
+        assert d.fields["artist"] == "Jax Jones/Rebecca Black"  # untouched
 
 
 # -- subtitles (get / clean / shift / watch on video files) ---------------------

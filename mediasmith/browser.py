@@ -446,8 +446,8 @@ class LibraryTree(DirectoryTree):
 
     def action_close_view(self) -> None:
         details = self.app.query_one(DetailsPane)
-        if details.folderize_preview_open():    # esc backs out of a plan
-            details.action_folderize_cancel()
+        if details.plan_preview_open():         # esc backs out of a plan
+            details.action_plan_cancel()
             return
         self.app.close_details_view()
 

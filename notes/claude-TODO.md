@@ -62,8 +62,19 @@
      ported yet — say the word; [3] the button also appears on
      album-like folders that open as a bulk-edit form, next to save.)
 
--[ ] Fix multi-artist
+-[x] Fix multi-artist
      Even with visual editing, this would still be a cool feature to have. It would be initiated in the same way as folderize above: button present on folders.
+     (Claude, 2026-07-11: shipped — `fi^x multi-artist`, folderize's
+     exact shape: probe-gated button on folders (and album bulk
+     views), plan preview per album ("Split EP → Jax Jones" + each
+     file's old tangled values), ^a applies, esc cancels. The engine's
+     AC/DC guard means a slash-joined artist matching its own artist
+     folder is a band name, not a tangle. v1's per-album checkboxes
+     are replaced by scoping — invoke on a smaller folder to exclude.
+     Architectural note: apply/cancel are now ONE shared pair
+     (`plan_apply`/`plan_cancel`) owned by whichever plan preview is
+     open — folderize was reworked onto it, so the next plan-shaped
+     action costs nothing new.)
 
 
 **Booksmith**

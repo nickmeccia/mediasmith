@@ -190,7 +190,13 @@ Test-driven, calibrated by layer — this replaces Nick-as-only-QA:
 3. **Engine actions** — in progress via notes/claude-TODO.md (the
    active queue) + notes/claude-HANDOFF.md (briefs). Shipped
    2026-07-11: the action-button pattern, book convert/extract-cover/
-   create-opf, folderize. Subtitles remain the flagship port. ⬅ next
+   create-opf, folderize; later that day the flagship subtitle port
+   (subsync.py + get/clean/shift/watch — the shift div is the wizard
+   exemplar) and fix-multi-artist (plan previews share one
+   apply/cancel pair now). notes/claude-PROPOSALS.md holds the
+   search + Move designs awaiting Nick's pick. Next: video
+   container/posters (#6), then image wiring (#8/#9 — engine
+   exists). ⬅ next
 4. **Batch operations.** Partially done ahead of schedule: shift-range
    and album-folder bulk editing shipped (2026-07-10); space-marking +
    batch bar still to come as a third gesture over the same selection

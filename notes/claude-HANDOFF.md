@@ -30,7 +30,19 @@ judgment has been spent here so you don't have to re-derive it.
   buttons. Nick hates modals; never add one beyond ConfirmSave.
 
 
-## #5 Fix multi-artist (folder action)
+## #5 Fix multi-artist — DONE (Fable, 2026-07-11, second session)
+
+Shipped per this brief (`fi^x multi-artist`, ^x as suggested). One
+structural change worth knowing: folderize's apply/cancel became the
+shared `plan_apply`/`plan_cancel` pair — `plan_preview_open()` /
+`_show_plan_preview()` / `_plan_root()` in details.py are the generic
+mechanism, and `action_plan_apply` dispatches to whichever plan is
+open. A future plan-shaped action (standardize-formatting's folder
+mode, #12) should add its `_<name>_plan` field and a dispatch branch,
+not new buttons. The preview container ids are now `#plan-preview` /
+`#plan-tree`. Original brief below.
+
+## #5 original brief (superseded)
 
 - **Engine DONE (Fable, 2026-07-11): `mediasmith/multiartist.py` +
   `tests/test_multiartist.py` (7 tests green). Only the UI wiring

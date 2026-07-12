@@ -29,7 +29,8 @@ from textual.message import Message
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Label, Static
 
-from . import adapters, artfetch, calibre, folderize, fs, kinds, srt, subsync
+from . import (adapters, artfetch, calibre, folderize, fs, kinds,
+               multiartist, srt, subsync)
 from .actions import Action, ActionBar, ActionButton
 from .images import image_widget
 
@@ -46,9 +47,10 @@ PANE_ACTIONS = [
     Action("extract_cover", "extract cover", "t"),
     Action("create_opf", "create opf", "g"),
     Action("folderize", "folderize", "l"),
-    # while a folderize preview is up, these two own the bar
-    Action("folderize_apply", "apply", "a"),
-    Action("folderize_cancel", "cancel"),       # esc cancels too
+    Action("fix_multi_artist", "fix multi-artist", "x"),
+    # while any plan preview is up, these two own the bar
+    Action("plan_apply", "apply", "a"),
+    Action("plan_cancel", "cancel"),            # esc cancels too
     # video: the subtitle suite (keys are placeholders — Nick renames)
     Action("get_subs", "get subs", "k"),
     Action("clean_subs", "clean subs", "u"),
@@ -99,6 +101,30 @@ def render_plan(plan) -> str:
             lines.append(f"    {_mk(skip.source.name)}  [dim]{skip.reason}[/]")
         if len(plan.skips) > 8:
             lines.append(f"    [dim]…and {len(plan.skips) - 8} more[/]")
+    if len(lines) > PLAN_PREVIEW_LINES:
+        hidden = len(lines) - PLAN_PREVIEW_LINES
+        lines = lines[:PLAN_PREVIEW_LINES] + [f"[dim]…and {hidden} more lines[/]"]
+    return "\n".join(lines)
+
+
+GROUP_PREVIEW_FILES = 6
+
+
+def render_multiartist_plan(plan: multiartist.MultiArtistPlan) -> str:
+    """The fix-multi-artist preview: per album, the main artist every
+    track will be set to, then each file's tangled values."""
+    n, g = plan.file_count, len(plan.groups)
+    lines = [f"{n} file{'s' if n != 1 else ''} across "
+             f"{g} album{'s' if g != 1 else ''}:", ""]
+    for group in plan.groups:
+        lines.append(f"  [bold]{_mk(group.album or group.folder.name)}[/]"
+                     f" → {_mk(group.main)}")
+        for change in group.changes[:GROUP_PREVIEW_FILES]:
+            old = " / ".join(change.artists or change.album_artists)
+            lines.append(f"    {_mk(change.path.name)}  [dim]{_mk(old)}[/]")
+        if len(group.changes) > GROUP_PREVIEW_FILES:
+            more = len(group.changes) - GROUP_PREVIEW_FILES
+            lines.append(f"    [dim]…and {more} more[/]")
     if len(lines) > PLAN_PREVIEW_LINES:
         hidden = len(lines) - PLAN_PREVIEW_LINES
         lines = lines[:PLAN_PREVIEW_LINES] + [f"[dim]…and {hidden} more lines[/]"]
@@ -411,6 +437,8 @@ class DetailsPane(VerticalScroll, can_focus=True):
         self._book_cover = False    # shown book has an extractable cover
         self._folderize_ready = False   # probe: this folder has work to do
         self._folderize_plan: folderize.FolderizePlan | None = None
+        self._multiartist_ready = False
+        self._multiartist_plan: multiartist.MultiArtistPlan | None = None
         self._video_srt: Path | None = None     # cleanable/shiftable sibling
         self._shift_open = False
         self._shift_entries: list[srt.Entry] | None = None  # ORIGINAL parse
@@ -476,8 +504,8 @@ class DetailsPane(VerticalScroll, can_focus=True):
 
         with Vertical(id="panel-folder", classes="panel"):
             yield self._row("contains", "folder-counts", 8 + LABEL_GUTTER)
-            with Vertical(id="folderize-preview"):
-                yield Static("", id="folderize-tree")
+            with Vertical(id="plan-preview"):   # folderize, multi-artist, …
+                yield Static("", id="plan-tree")
 
         with Vertical(id="panel-other", classes="panel"):
             width = 4 + LABEL_GUTTER
@@ -496,7 +524,7 @@ class DetailsPane(VerticalScroll, can_focus=True):
         self.query_one("#row-fname").display = False
         self.query_one("#row-audio-info").display = False
         self.query_one("#row-art-path").display = False
-        self.query_one("#folderize-preview").display = False
+        self.query_one("#plan-preview").display = False
         self.query_one("#shift-div").display = False
         self._sync_pane_bar()
 
@@ -570,7 +598,9 @@ class DetailsPane(VerticalScroll, can_focus=True):
         self._book_cover = False
         self._folderize_ready = False
         self._folderize_plan = None
-        self.query_one("#folderize-preview").display = False
+        self._multiartist_ready = False
+        self._multiartist_plan = None
+        self.query_one("#plan-preview").display = False
         self._hide_art_path()
         self._video_srt = None
         self._shift_hide()      # browsing away drops a pending shift
@@ -683,6 +713,7 @@ class DetailsPane(VerticalScroll, can_focus=True):
         self._refresh_marks()
         if self.path is not None:               # album-folder origin: the
             self._probe_folderize(self.path)    # folder actions still apply
+            self._probe_multiartist(self.path)
         if self._focus_after_load:
             self._focus_after_load = False
             self.focus()
@@ -755,6 +786,7 @@ class DetailsPane(VerticalScroll, can_focus=True):
             if d.counts.get(k)) or "empty"
         self._set("folder-counts", summary)
         self._probe_folderize(path)
+        self._probe_multiartist(path)
 
     def _fill_other(self, path: Path, d: adapters.OtherDetails) -> None:
         self._set("other-size", human_size(d.size))
@@ -855,8 +887,8 @@ class DetailsPane(VerticalScroll, can_focus=True):
     def _sync_pane_bar(self) -> None:
         """Show the pane-bar buttons the current selection has earned."""
         names: set[str] = set()
-        if self._folderize_plan is not None:    # a preview owns the bar
-            names = {"folderize_apply", "folderize_cancel"}
+        if self.plan_preview_open():            # a preview owns the bar
+            names = {"plan_apply", "plan_cancel"}
         else:
             if self.can_edit():
                 names.add("save")
@@ -872,6 +904,8 @@ class DetailsPane(VerticalScroll, can_focus=True):
                             names.add("extract_cover")
             if self._folderize_ready:           # probe: work to do below
                 names.add("folderize")
+            if self._multiartist_ready:
+                names.add("fix_multi_artist")
             if self._video_target() is not None:
                 names |= {"get_subs", "watch"}
                 if self._video_srt is not None:
@@ -1234,10 +1268,58 @@ class DetailsPane(VerticalScroll, can_focus=True):
         self.notify(f"{target.name} created", title=title)
         self.post_message(self.FileCreated(target))
 
-    # -- folderize: a folder action with a plan preview ---------------------------
-    # The probe fills in late (NAS rule); the button appears only when the
-    # subtree has work to do. Pressing it plans in a worker and swaps the
-    # folder panel to a preview; apply/cancel own the bar until resolved.
+    # -- folder plans: probe → button → preview → apply/cancel ---------------------
+    # Folderize and fix-multi-artist share the mechanism: probes fill in
+    # late (NAS rule); a button appears only when the subtree has work to
+    # do; pressing it plans in a worker and swaps the folder panel to a
+    # preview; ONE apply/cancel pair owns the bar until resolved —
+    # whichever plan is open receives them.
+
+    def plan_preview_open(self) -> bool:
+        return (self._folderize_plan is not None
+                or self._multiartist_plan is not None)
+
+    def _show_plan_preview(self, title: str, text: str) -> None:
+        for panel in PANELS:
+            self.query_one(f"#panel-{panel}").display = (panel == kinds.FOLDER)
+        self.query_one("#dtitle", Label).update(title)
+        self.query_one("#dtitle").display = True
+        self.query_one("#row-fname").display = False
+        self.query_one("#row-audio-info").display = False
+        self.query_one("#plan-tree", Static).update(text)
+        self.query_one("#plan-preview").display = True
+        self._sync_pane_bar()
+
+    def _plan_root(self) -> Path | None:
+        """The folder a plan action applies to: a folder selection, or
+        the origin folder of an album-like bulk view."""
+        if self.path is None:
+            return None
+        if self.kind == kinds.FOLDER or self.paths is not None:
+            return self.path if self.path.is_dir() else None
+        return None
+
+    def action_plan_apply(self) -> None:
+        if self._folderize_plan is not None:
+            plan = self._folderize_plan
+            self._folderize_plan = None
+            self.notify("organizing…", title="folderize")
+            self._folderize_exec_worker(plan)
+        elif self._multiartist_plan is not None:
+            plan = self._multiartist_plan
+            self._multiartist_plan = None
+            self.notify("fixing…", title="fix multi-artist")
+            self._multiartist_exec_worker(plan)
+
+    def action_plan_cancel(self) -> None:
+        if not self.plan_preview_open():
+            return
+        self._folderize_plan = None
+        self._multiartist_plan = None
+        if self.path is not None:               # restore the normal view
+            self.preview(self.path, immediate=True)
+
+    # -- folderize --------------------------------------------------------------
 
     @work(thread=True, exclusive=True, group="folderize-probe")
     def _probe_folderize(self, root: Path) -> None:
@@ -1246,22 +1328,12 @@ class DetailsPane(VerticalScroll, can_focus=True):
             self.app.call_from_thread(self._folderize_probed, root)
 
     def _folderize_probed(self, root: Path) -> None:
-        if self.path == root and self._folderize_plan is None:
+        if self.path == root and not self.plan_preview_open():
             self._folderize_ready = True
             self._sync_pane_bar()
 
-    def folderize_preview_open(self) -> bool:
-        return self._folderize_plan is not None
-
-    def _folderize_root(self) -> Path | None:
-        if self.path is None:
-            return None
-        if self.kind == kinds.FOLDER or self.paths is not None:
-            return self.path if self.path.is_dir() else None
-        return None
-
     def action_folderize(self) -> None:
-        root = self._folderize_root()
+        root = self._plan_root()
         if root is None or not self._folderize_ready:
             return
         self.notify("scanning…", title="folderize")
@@ -1282,23 +1354,7 @@ class DetailsPane(VerticalScroll, can_focus=True):
             self._sync_pane_bar()
             return
         self._folderize_plan = plan
-        for panel in PANELS:
-            self.query_one(f"#panel-{panel}").display = (panel == kinds.FOLDER)
-        self.query_one("#dtitle", Label).update(f"folderize {root.name}/")
-        self.query_one("#dtitle").display = True
-        self.query_one("#row-fname").display = False
-        self.query_one("#row-audio-info").display = False
-        self.query_one("#folderize-tree", Static).update(render_plan(plan))
-        self.query_one("#folderize-preview").display = True
-        self._sync_pane_bar()
-
-    def action_folderize_apply(self) -> None:
-        plan = self._folderize_plan
-        if plan is None:
-            return
-        self._folderize_plan = None
-        self.notify("organizing…", title="folderize")
-        self._folderize_exec_worker(plan)
+        self._show_plan_preview(f"folderize {root.name}/", render_plan(plan))
 
     @work(thread=True, exclusive=True, group="folderize-exec")
     def _folderize_exec_worker(self, plan: folderize.FolderizePlan) -> None:
@@ -1321,12 +1377,62 @@ class DetailsPane(VerticalScroll, can_focus=True):
         if self.path == root:
             self.preview(root, immediate=True)  # fresh counts, fresh probe
 
-    def action_folderize_cancel(self) -> None:
-        if self._folderize_plan is None:
+    # -- fix multi-artist ---------------------------------------------------------
+
+    @work(thread=True, exclusive=True, group="multiartist-probe")
+    def _probe_multiartist(self, root: Path) -> None:
+        ready = multiartist.probe(root)
+        if ready:
+            self.app.call_from_thread(self._multiartist_probed, root)
+
+    def _multiartist_probed(self, root: Path) -> None:
+        if self.path == root and not self.plan_preview_open():
+            self._multiartist_ready = True
+            self._sync_pane_bar()
+
+    def action_fix_multi_artist(self) -> None:
+        root = self._plan_root()
+        if root is None or not self._multiartist_ready:
             return
-        self._folderize_plan = None
-        if self.path is not None:               # restore the normal view
-            self.preview(self.path, immediate=True)
+        self.notify("scanning…", title="fix multi-artist")
+        self._multiartist_plan_worker(root)
+
+    @work(thread=True, exclusive=True, group="multiartist-plan")
+    def _multiartist_plan_worker(self, root: Path) -> None:
+        plan = multiartist.build_plan(root)
+        self.app.call_from_thread(self._multiartist_planned, root, plan)
+
+    def _multiartist_planned(self, root: Path,
+                             plan: multiartist.MultiArtistPlan) -> None:
+        if self.path != root:                   # selection moved on
+            return
+        if plan.empty:
+            self.notify("no tangled artists", title="fix multi-artist")
+            self._multiartist_ready = False
+            self._sync_pane_bar()
+            return
+        self._multiartist_plan = plan
+        self._show_plan_preview(f"fix multi-artist in {root.name}/",
+                                render_multiartist_plan(plan))
+
+    @work(thread=True, exclusive=True, group="multiartist-exec")
+    def _multiartist_exec_worker(self,
+                                 plan: multiartist.MultiArtistPlan) -> None:
+        fixed, errors = multiartist.execute(plan)
+        self.app.call_from_thread(
+            self._multiartist_done, plan.root, fixed, errors)
+
+    def _multiartist_done(self, root: Path, fixed: int,
+                          errors: list[tuple[Path, str]]) -> None:
+        parts = [f"{fixed} fixed"]
+        if errors:
+            path, reason = errors[0]
+            parts.append(f"{len(errors)} failed — {path.name}: {reason}")
+        self.notify(" · ".join(parts), title="fix multi-artist", timeout=8,
+                    severity="warning" if errors else "information")
+        # tags changed in place — no tree structure change, just re-read
+        if self.path == root:
+            self.preview(root, immediate=True)  # fresh view, fresh probes
 
     # -- subtitles: get / clean / shift / watch on a video file --------------------
     # The engine work lives in subsync.py (dl+sync, the tuned v1 policy)
