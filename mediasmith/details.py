@@ -24,6 +24,7 @@ from pathlib import Path
 from textual import work
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.content import Content
 from textual.css.query import NoMatches
 from textual.message import Message
 from textual.screen import ModalScreen
@@ -31,7 +32,7 @@ from textual.widgets import Button, Input, Label, Static
 
 from . import (adapters, artfetch, calibre, folderize, fs, kinds,
                multiartist, srt, subsync)
-from .actions import Action, ActionBar, ActionButton
+from .actions import Action, ActionBar, ActionButton, action_markup
 from .images import image_widget
 
 PANELS = [kinds.AUDIO, kinds.VIDEO, kinds.BOOK, kinds.IMAGE,
@@ -56,7 +57,13 @@ PANE_ACTIONS = [
     Action("clean_subs", "clean subs", "u"),
     Action("shift_subs", "shift subs", "v"),
     Action("watch", "watch", "w"),
+    # Move (proposal M1): ONE stateful chord — ^n lifts the selection,
+    # ^n places it at the highlighted spot; the label flips to match.
+    # Single-key because the ctrl-letter pool is exhausted (see QA-TODO).
+    Action("move", "move", "n"),
 ]
+
+MOVE_WORDS = {False: "move", True: "place here"}
 
 EDITABLE_KINDS: frozenset[str] = frozenset({kinds.AUDIO, kinds.BOOK})
 """Kinds whose details can take focus for editing."""
@@ -912,6 +919,12 @@ class DetailsPane(VerticalScroll, can_focus=True):
                     names |= {"clean_subs", "shift_subs"}
                 if self._shift_open:            # the write manifest: ^s
                     names.add("save")           # writes the pending shift
+            lifted = self.app.lifted
+            if lifted is None:
+                if self._liftable_paths():
+                    names.add("move")
+            elif self._place_target() is not None:
+                names.add("move")               # label reads "place here"
         try:
             bar = self.query_one("#pane-bar", ActionBar)
         except NoMatches:
@@ -919,6 +932,7 @@ class DetailsPane(VerticalScroll, can_focus=True):
             # after the pane's children are gone — a late result is
             # meaningless then, not an error (flaked the suite twice)
             return
+        self._relabel_move(self.app.lifted is not None)
         bar.set_visible(names)
 
     def action_for_key(self, key: str) -> Action | None:
@@ -1433,6 +1447,102 @@ class DetailsPane(VerticalScroll, can_focus=True):
         # tags changed in place — no tree structure change, just re-read
         if self.path == root:
             self.preview(root, immediate=True)  # fresh view, fresh probes
+
+    # -- move (proposal M1): lift the selection, browse, place ---------------------
+    # State lives on the App so a lift survives selection changes and
+    # path-bar jumps — cut → ^/ → type destination → ⏎ → place is the
+    # intended long-distance flow. The strip carries the pending state;
+    # esc in the tree cancels (after plan previews, before narrow close).
+
+    def _relabel_move(self, lifted: bool) -> None:
+        button = self.query_one("#act-move", ActionButton)
+        word = MOVE_WORDS[lifted]
+        if getattr(button, "_move_word", None) != word:
+            button._move_word = word
+            button.label = Content.from_markup(action_markup(word, "n"))
+
+    def _liftable_paths(self) -> list[Path]:
+        """What ^n would pick up: the highlighted folder (even when it
+        opens as an album-like bulk form), the shift-selection, or the
+        single highlighted path (any kind — a lift is a filesystem op).
+        No stats here: ``path`` beside ``paths`` is always a folder."""
+        if self.paths:
+            if self.path is not None:       # folder-origin bulk: the folder
+                return [self.path]
+            return list(self.paths)         # shift-range: the files
+        if self.path is not None:
+            return [self.path]
+        return []
+
+    def _place_target(self) -> Path | None:
+        """Where ^n would drop: the highlighted folder (album-like bulk
+        views count — their ``kind`` reads as the children's), or the
+        highlighted file's folder."""
+        if self.path is not None:
+            if self.kind == kinds.FOLDER or self.paths:
+                return self.path
+            return self.path.parent
+        if self.paths:
+            return self.paths[0].parent
+        return None
+
+    def action_move(self) -> None:
+        lifted = self.app.lifted
+        if lifted is None:
+            paths = self._liftable_paths()
+            if paths:
+                self.app.begin_lift(paths)
+                self._sync_pane_bar()
+            return
+        target = self._place_target()
+        if target is None:
+            return
+        movable = [p for p in lifted if p.parent != target]
+        if not movable:
+            self.notify("already here — pick another folder (esc cancels)",
+                        title="move")
+            return
+        for source in movable:                  # a folder can't enter itself
+            if source == target or source in target.parents:
+                self.notify(f"can't move {source.name} into itself",
+                            title="move", severity="warning")
+                return
+        self.notify(f"moving {len(movable)}…", title="move")
+        self._move_worker(movable, target)
+
+    @work(thread=True, exclusive=True, group="move")
+    def _move_worker(self, sources: list[Path], target: Path) -> None:
+        # cross-volume (NAS↔local) is copy+delete under the hood — never
+        # block the UI on it
+        import shutil
+        moved: list[Path] = []
+        errors: list[tuple[Path, str]] = []
+        for source in sources:
+            dest = target / source.name
+            if dest.exists():                   # refuse-overwrite, per file
+                errors.append((source, f"{dest.name} already exists"))
+                continue
+            try:
+                shutil.move(str(source), str(dest))
+                moved.append(source)
+            except OSError as error:
+                errors.append((source, str(error)))
+        self.app.call_from_thread(self._move_done, moved, errors, target)
+
+    def _move_done(self, moved: list[Path],
+                   errors: list[tuple[Path, str]], target: Path) -> None:
+        parts = [f"{len(moved)} moved to {target.name or target}/"]
+        if errors:
+            path, reason = errors[0]
+            parts.append(f"{len(errors)} failed — {path.name}: {reason}")
+        self.notify(" · ".join(parts), title="move", timeout=8,
+                    severity="warning" if errors else "information")
+        self.app.end_lift()
+        fs.clear_cache()
+        self.post_message(self.FolderChanged(target))
+        for parent in {p.parent for p in moved}:
+            self.post_message(self.FolderChanged(parent))
+        self._sync_pane_bar()
 
     # -- subtitles: get / clean / shift / watch on a video file --------------------
     # The engine work lives in subsync.py (dl+sync, the tuned v1 policy)

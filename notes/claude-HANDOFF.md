@@ -254,12 +254,18 @@ What the next model needs to know:
   presence check like calibre. Worker + FileCreated. Low priority —
   do it last of the builds; it's Nick's treat, make the defaults tasty.
 
-## #15 Search design + folder Move — DONE (write-ups only)
+## #15 Search design + folder Move — RESOLVED
 
-**notes/claude-PROPOSALS.md exists (Fable, 2026-07-11): search panel
-in the details column (S1) and cut/paste Move with strip state (M1),
-each with the rejected alternatives and open questions. Do not build
-either without Nick's pick.** Original brief below.
+Nick picked, same evening (decisions recorded at the top of
+notes/claude-PROPOSALS.md): **search is out of mediasmith entirely**
+(download tools move to ~/code/downloader; the anna-search strategy
+audit lives there too), and **Move shipped as M1** with a single
+stateful chord (^n lift/place — ^x/^v collide with pane actions;
+tree bindings starve app-wide chords, a constraint to remember).
+Lift state lives on the App (`app.lifted`) so it survives path-bar
+jumps. ⚠ ^n was the last free ctrl-letter — resolve the key-space
+question in QA-TODO before wiring #10 New/Delete. Original brief
+below.
 
 ## #15 original brief (superseded)
 
@@ -275,6 +281,18 @@ either without Nick's pick.** Original brief below.
   every dual-pane file manager. Do not implement without his pick.
 
 ## Gate discipline (why snapshots)
+
+Two workflow rules learned the hard way (2026-07-11, session 3):
+
+- **Never chain `pytest | tail … && fuzz`** — the pipe masks pytest's
+  exit code, so the gate runs (and can pass!) over a red suite. Use
+  `set -o pipefail`, or run pytest unpiped and read the tail after.
+  A Move commit briefly claimed a green suite this way; caught and
+  amended minutes later, but the trap is silent.
+- **Any new pane-bar button breaks every exact-list bar assertion**
+  (`_bar_names(app) == [...]`) — that's by design (they pin the
+  palette per kind); expect to touch them whenever the palette grows,
+  and re-run the FULL suite before committing, not just `-k feature`.
 
 Run the fuzz gate from a snapshot copy, not the working tree — the
 children re-import the package every seed, so live edits during a

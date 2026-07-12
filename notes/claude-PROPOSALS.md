@@ -1,9 +1,27 @@
 # Proposals — unified search & folder Move
 
 Written by Fable 5 (2026-07-11, session 2) per claude-TODO #15 and the
-handoff brief. Nothing here is built; each section gives options and
-one recommendation. Constraints honored throughout: no modals, the
-pane hierarchy stays intact, phone width must work.
+handoff brief. Constraints honored throughout: no modals, the pane
+hierarchy stays intact, phone width must work.
+
+**DECIDED (Nick, 2026-07-11 evening):**
+
+- **Search: none of the below.** Nick's reframe: "unified search" is
+  really *download tools*, and they only fit mediasmith if downloads
+  land at the browser's location — which Anna's Archive (link-only
+  without a paid API) can't honor. Download tools move to
+  ~/code/downloader (Claude-in-the-loop pipeline; deemix can target a
+  directory, Anna produces verified links via manifest). The
+  mediasmith seam is the filesystem: downloader stages files,
+  mediasmith tags/folderizes/moves them. See
+  ~/code/downloader/anna-search-audit.md for the v1 strategy audit
+  that came out of this. Options S1–S3 below are kept for the
+  record only.
+- **Move: M1 approved** (cut/paste with strip-visible pending state).
+  Nick also confirmed M2's insight from the user side: cut → ^/ →
+  type path → ⏎ → paste IS the type-a-destination flow, composed
+  from existing parts — which requires the lift to survive path-bar
+  jumps. Built same day; see the commit and QA-TODO.
 
 
 ## Unified search (Deezer · Anna's Archive · future serial scraping)

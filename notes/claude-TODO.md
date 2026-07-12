@@ -41,8 +41,13 @@
 -[x] Deezer lookup
      I don't think I need this.
 
--[ ] Deezer search*
+-[x] Deezer search*
      This is a really useful tool, but I'm not sure how to fit it in. The best idea I have right now is a global keybinding to open a modal, but I would like to hear any ideas you have, too. Also, I understand that the `dzr-srt` command doesn't work on my computer right now; just implement assuming it does and I will fix later.
+     (Claude, 2026-07-11: resolved OUT of mediasmith by Nick's call —
+     download tools move to ~/code/downloader (Claude-in-the-loop
+     pipeline). Rationale recorded in notes/claude-PROPOSALS.md;
+     deemix can target a directory via flag, so the downloader can
+     still land files where mediasmith expects them.)
 
 -[x] Folderize
      Aha, an action which the user can perform on a folder! If you put a button for "folderize audio files" on every folder I wouldn't hate it; however, it would be cool if the button only appeared when this action was possible. This button should appear on folders no matter how high up in the tree the action is possible (barring technical limitations, of course). So, for example, this button would appear on /Users/nick/Music and all subfolders (except for /Users/nick/Music/Album Art).
@@ -79,8 +84,14 @@
 
 **Booksmith**
 
--[ ] Anna search*
+-[x] Anna search*
      Like Deezer search, this is a really useful tool, and I'm not sure how to fit it in. The best idea I have right now is a global keybinding to open a modal, but I would like to hear any ideas you have, too.
+     (Claude, 2026-07-11: out of mediasmith, same call as Deezer
+     search. Also audited the v1 tool's strategy at Nick's request —
+     ~/code/downloader/anna-search-audit.md: the parser fails open,
+     the grouping key can't see un-numbered curator batches, and
+     ranking puts coverage fourth. Verdict: don't port; rebuild in
+     the downloader as agent-judged link manifests.)
 
 -[x] Convert
      Add buttons to the bottom of ebook views from this palette of buttons:
@@ -118,8 +129,11 @@
 -[ ] Omnibus splitter
      Add a "split omnibus" button following the app's button pattern. Based on the logic for how this works, if I remember correctly it should do nothing on books that are not omnibuses
 
--[ ] Scrape serial*
+-[x] Scrape serial*
      I'm not sure I need this anymore -- this was a tool used for downloading Wildbow's serials off of Wordpress, but now that I have them in ebook format, I don't know what else I will do with this. Well, now I'm thinking, what about Wildbow's future stories? Perhaps this should be folded into a "search" feature, which can collect this, anna search, and deezer search.
+     (Claude, 2026-07-11: your instinct held — it folds into the
+     download family, which now lives in ~/code/downloader, not
+     here. Nothing to build in mediasmith.)
 
 -[ ] Standardize formatting
      This tool is cool. If I remember how it works correctly, it can be used on a single book or on a folder. Add buttons!
@@ -227,6 +241,18 @@
 -[ ] New/Delete
      Adding functionality for the final two CRUD operations would take the folder organization to another level. I think there should be keybindings for these operations visible on the command strip, and the "delete" action should have a button on the folder detail view
 
--[ ] Move(???)
+-[x] Move(???)
      This feature probably has the biggest difference between how easy the operation is to perform vs how much UI support it needs. This feature probably needs my full attention to solve...unless there's a common pattern hiding in plain sight among other, similar programs.
+     (Claude, 2026-07-11: shipped as approved M1 (cut/paste; the
+     browser IS the destination picker). One change from the
+     proposal: a single stateful chord — `^n move` lifts, the button
+     relabels to `^n place here`, esc cancels — because ^x/^v turned
+     out to collide with fix-multi-artist and shift-subs (tree
+     bindings would starve their app-wide chords). The strip shows
+     "moving N · ^n place here · esc cancel" while lifted; lifts
+     survive path-bar jumps (your cut → ^/ → type → ⏎ → paste flow
+     works); refuse-overwrite per file; folder-into-itself refused;
+     same-folder place is a no-op that KEEPS the lift. Heads-up: ^n
+     was the last free ctrl-letter — see QA-TODO "key space" before
+     queueing New/Delete.)
 

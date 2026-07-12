@@ -190,6 +190,10 @@ class MediasmithApp(App):
         self._details_viewing = False
         """Narrow "view": the details column is swapped in while the tree
         keeps focus — read-only kinds, which never take focus themselves."""
+        self.lifted: list[Path] | None = None
+        """A pending move (^n): app-level so it survives selection
+        changes and path-bar jumps — the long-distance flow is
+        cut → ^/ → destination → ⏎ → place."""
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="body"):
@@ -218,7 +222,13 @@ class MediasmithApp(App):
         in_details = focused is not None and (
             focused is details or details in focused.ancestors)
         left.visible = in_left
-        left.update(STRIP_PATH if isinstance(focused, PathBar) else STRIP_TREE)
+        if self.lifted is not None:             # a pending move owns the strip
+            n = len(self.lifted)
+            tree_strip = (f" moving {n} item{'s' if n != 1 else ''} · "
+                          f"^n place here · esc cancel")
+        else:
+            tree_strip = STRIP_TREE
+        left.update(STRIP_PATH if isinstance(focused, PathBar) else tree_strip)
         right.visible = in_details
         right.update(STRIP_DETAILS)
         # narrow: a hidden strip must release its width too (visible=False
@@ -274,6 +284,24 @@ class MediasmithApp(App):
 
     def action_focus_tree(self) -> None:
         self.query_one(LibraryTree).focus()
+
+    # -- pending move (^n lift/place — DetailsPane.action_move drives) ---------
+
+    def begin_lift(self, paths: list[Path]) -> None:
+        self.lifted = list(paths)
+        n = len(paths)
+        self.notify(f"{n} item{'s' if n != 1 else ''} lifted — browse to "
+                    "the destination, ^n places, esc cancels", title="move")
+        self._sync_strips(self.screen.focused)
+
+    def end_lift(self) -> None:
+        self.lifted = None
+        self._sync_strips(self.screen.focused)
+
+    def cancel_lift(self) -> None:
+        self.notify("move cancelled", title="move")
+        self.end_lift()
+        self.query_one(DetailsPane)._sync_pane_bar()
 
     def on_key(self, event: events.Key) -> None:
         # Any ^x chord printed on a visible action button fires it, no

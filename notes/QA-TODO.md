@@ -1,3 +1,38 @@
+# QA to-do — 2026-07-11 session 3 (multi-artist · Move)
+
+## fix multi-artist — see its section under session 2 below
+
+## Move (^n — proposal M1, approved)
+
+- [ ] `^n move` on any file/folder/selection lifts it; strip reads
+      "moving N · ^n place here · esc cancel"; the button relabels
+- [ ] Browse anywhere (including a ^/ path jump — the lift survives),
+      `^n` again places into the highlighted folder (a highlighted
+      file means its folder; an album-like bulk view means that
+      folder)
+- [ ] Same folder → "already here" toast, lift kept; folder into its
+      own subtree → refused; existing name at target → that file
+      refused, others move (refuse-overwrite per file)
+- [ ] esc cancels the lift (after plan previews, before narrow view
+      close — check the esc chain feels right on the phone)
+- [ ] Cross-volume move (NAS↔local): copy+delete under the hood —
+      try one biggish file; UI should stay live, toast on finish
+- [ ] Lifting an album-like folder lifts the FOLDER (not its files);
+      lifting a shift-selection lifts the files. Right call?
+
+## ⚠ Key space is exhausted — needs your decision
+
+^n was the last unclaimed ctrl-letter (a–z minus RESERVED_KEYS are
+all assigned). New/Delete (#10), sort (#12), and gif (#13) will need
+chords. Options to weigh, roughly in my preference order:
+1. Audit RESERVED_KEYS (c d e h i j m q z) — some may be safely
+   bindable in this app's contexts; even 2–3 recovered letters buys
+   a year.
+2. A ctrl+shift layer (kitty protocol carries it; Ghostty yes,
+   tmux-from-phone needs testing) for rarer actions.
+3. Contextual reuse with a precedence rule (same chord, different
+   meaning per kind) — cheapest, but invisible modality; I'd avoid.
+
 # QA to-do — 2026-07-11 session 2 (subtitles: the flagship port)
 
 Everything below passed pytest + the fuzz harness; human pass pending.

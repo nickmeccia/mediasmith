@@ -449,6 +449,9 @@ class LibraryTree(DirectoryTree):
         if details.plan_preview_open():         # esc backs out of a plan
             details.action_plan_cancel()
             return
+        if self.app.lifted is not None:         # …or a pending move
+            self.app.cancel_lift()
+            return
         self.app.close_details_view()
 
     def action_stay(self) -> None:

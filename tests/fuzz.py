@@ -36,6 +36,7 @@ KEYS = ([b"\x1b[B"] * 5 + [b"\x1b[A"] * 3
            b"\x13", b"\x0f", b"\x06",    # ^s ^o ^f: action-bar chords
            b"\x0b", b"\x15", b"\x16", b"\x17",   # ^k ^u ^v ^w: subtitles
            b"\x18",                      # ^x: fix multi-artist
+           b"\x0e",                      # ^n: move (lift/place)
            b"\x1b[1;2C", b"\x1b[1;2D",   # shift+→/←: shift-div nudges
            b"\x1b[5~", b"\x1b[6~"])      # pgup/pgdn: ±10s nudges
 

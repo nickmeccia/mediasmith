@@ -675,7 +675,7 @@ async def test_book_offers_conversions_minus_own_format(media_tree):
         bar = app.query_one("#pane-bar", ActionBar)
         names = [b.spec.name for b in bar.buttons()]
         assert names == ["save", "convert_mobi", "convert_azw3",
-                         "extract_cover", "create_opf"]
+                         "extract_cover", "create_opf", "move"]
 
 
 async def test_plain_book_hides_extract_cover(media_tree):
@@ -722,7 +722,7 @@ async def test_audio_offers_save_only(media_tree):
     async with app.run_test(size=(120, 40)) as pilot:
         await _goto_first_song(app, pilot)
         bar = app.query_one("#pane-bar", ActionBar)
-        assert [b.spec.name for b in bar.buttons()] == ["save"]
+        assert [b.spec.name for b in bar.buttons()] == ["save", "move"]
 
 
 async def test_convert_creates_sibling_and_tree_follows(media_tree, monkeypatch):
@@ -986,10 +986,10 @@ async def test_art_buttons_reachable_by_arrows(media_tree):
         await pilot.press("enter")
         for _ in range(30):                          # ↓ walks clean through:
             await pilot.press("down")                # fields → art → buttons
-        assert app.focused.id == "save-btn"          # …and clamps at the end
+        assert app.focused.id == "act-move"          # …and clamps at the end
         await pilot.press("down")                    # bottom: clamp
-        assert app.focused.id == "save-btn"
-        await pilot.press("up", "up")                # ↑ = left through buttons
+        assert app.focused.id == "act-move"
+        await pilot.press("up", "up", "up")          # ↑ = left through buttons
         assert app.focused.id == "art-btn-path"
         await pilot.press("right")
         assert app.focused.id == "art-btn-fetch"
@@ -1407,6 +1407,149 @@ async def test_artist_folder_does_not_bulk(media_tree):
         assert app.query_one("#panel-folder").display
 
 
+# -- move (M1: ^n lifts, ^n places, esc cancels) ---------------------------------
+
+
+async def _goto_notes(app, pilot):
+    await settle(pilot)
+    await pilot.press("down", "n")               # notes.txt
+    await settle(pilot)
+    assert app.query_one(DetailsPane).path == app.start_dir / "notes.txt"
+
+
+async def test_move_lift_place_flow(media_tree):
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _goto_notes(app, pilot)
+        await pilot.press("ctrl+n")              # lift
+        await pilot.pause()
+        assert app.lifted == [media_tree / "notes.txt"]
+        strip = str(app.query_one("#strip-left").render())
+        assert "moving 1 item" in strip
+        await pilot.press("alt+up")              # Books (first sibling)
+        await settle(pilot)
+        await pilot.press("ctrl+n")              # place into Books
+        await pilot.pause(0.8)
+        assert (media_tree / "Books" / "notes.txt").exists()
+        assert not (media_tree / "notes.txt").exists()
+        assert app.lifted is None
+        strip = str(app.query_one("#strip-left").render())
+        assert "moving" not in strip             # strip restored
+
+
+async def test_move_survives_pathbar_jump(media_tree):
+    # Nick's long-distance flow: cut → ^/ → type destination → ⏎ → place
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _goto_notes(app, pilot)
+        await pilot.press("ctrl+n")
+        await pilot.pause()
+        await pilot.press("ctrl+slash")
+        bar = app.query_one(PathBar)
+        bar.value = str(media_tree / "Pics")
+        await settle(pilot)
+        await pilot.press("enter")
+        await settle(pilot)
+        assert app.lifted is not None            # the jump kept the lift
+        await pilot.press("ctrl+n")              # place into Pics
+        await pilot.pause(0.8)
+        assert (media_tree / "Pics" / "notes.txt").exists()
+        assert app.lifted is None
+
+
+async def test_move_refuses_overwrite(media_tree):
+    (media_tree / "Books" / "notes.txt").write_text("precious")
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _goto_notes(app, pilot)
+        await pilot.press("ctrl+n")
+        await pilot.pause()
+        await pilot.press("alt+up")              # Books
+        await settle(pilot)
+        await pilot.press("ctrl+n")
+        await pilot.pause(0.8)
+        assert (media_tree / "notes.txt").exists()               # unmoved
+        assert (media_tree / "Books" / "notes.txt").read_text() == "precious"
+
+
+async def test_move_into_own_subtree_refused(media_tree):
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await settle(pilot)
+        await pilot.press("down")
+        await pilot.press("m", "o")              # Movies
+        await settle(pilot)
+        await pilot.press("ctrl+n")              # lift the folder
+        await pilot.pause()
+        await pilot.press("right")               # expand it
+        await settle(pilot)
+        await pilot.press("down")                # Alien (1979)
+        await settle(pilot)
+        await pilot.press("ctrl+n")              # into its own child: refused
+        await pilot.pause(0.5)
+        assert (media_tree / "Movies" / "Alien (1979)").exists()
+        assert app.lifted is not None            # lift retained
+
+
+async def test_move_same_folder_is_noop(media_tree):
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _goto_notes(app, pilot)
+        await pilot.press("ctrl+n", "ctrl+n")    # lift, place in place
+        await pilot.pause(0.5)
+        assert (media_tree / "notes.txt").exists()
+        assert app.lifted is not None            # kept for a real target
+
+
+async def test_move_esc_cancels(media_tree):
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _goto_notes(app, pilot)
+        await pilot.press("ctrl+n")
+        await pilot.pause()
+        assert app.lifted is not None
+        await pilot.press("escape")
+        await pilot.pause()
+        assert app.lifted is None
+        assert (media_tree / "notes.txt").exists()
+        strip = str(app.query_one("#strip-left").render())
+        assert "moving" not in strip
+
+
+async def test_move_bulk_selection(media_tree):
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _goto_first_song(app, pilot)
+        await pilot.press("shift+down")          # both songs
+        await _bulk_settle(pilot)
+        await pilot.press("ctrl+n")              # lift the selection
+        await pilot.pause()
+        assert app.lifted is not None and len(app.lifted) == 2
+        await pilot.press("left")                # up to Music
+        await settle(pilot)
+        await pilot.press("alt+up")              # Books
+        await settle(pilot)
+        await pilot.press("ctrl+n")
+        await pilot.pause(0.8)
+        assert (media_tree / "Books" / "01 Song One.mp3").exists()
+        assert (media_tree / "Books" / "02 Song Two.mp3").exists()
+
+
+async def test_move_button_label_flips(media_tree):
+    from mediasmith.actions import ActionButton
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _goto_notes(app, pilot)
+        button = app.query_one("#act-move", ActionButton)
+        assert "move" in str(button.label)
+        await pilot.press("ctrl+n")
+        await pilot.pause()
+        assert "place" in str(button.label)
+        await pilot.press("escape")              # cancel
+        await pilot.pause()
+        assert "place" not in str(button.label)
+
+
 # -- fix multi-artist (folder action, folderize's pattern) ----------------------
 
 
@@ -1501,7 +1644,7 @@ async def test_video_offers_subtitle_actions(media_tree):
     async with app.run_test(size=(120, 40)) as pilot:
         await _goto_alien(app, pilot)
         assert _bar_names(app) == ["get_subs", "clean_subs",
-                                   "shift_subs", "watch"]
+                                   "shift_subs", "watch", "move"]
         await pilot.press("z")                       # the srt-less video
         await settle(pilot)
         names = _bar_names(app)
