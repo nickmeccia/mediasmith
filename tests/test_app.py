@@ -3,7 +3,7 @@
 from pathlib import Path
 
 from mediasmith import adapters
-from mediasmith.app import MediasmithApp
+from mediasmith.app import LOGO, LOGO_MIN_WIDTH, MediasmithApp
 from mediasmith.browser import LibraryTree, PathBar, parse_view
 from mediasmith.details import ConfirmSave, DetailsPane, EditForm
 
@@ -1841,3 +1841,34 @@ async def test_watch_launches_player(media_tree, monkeypatch):
         await pilot.pause()
         video = media_tree / "Movies" / "Alien (1979)" / "Alien.1979.mkv"
         assert calls == [video]
+
+
+# -- global-strip logo ------------------------------------------------------
+
+
+async def test_logo_shows_on_wide_viewport(media_tree):
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        logo = app.query_one("#strip-logo")
+        assert logo.display is True
+        assert str(logo.render()) == LOGO
+
+
+async def test_logo_hides_when_it_would_collide(media_tree):
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(LOGO_MIN_WIDTH - 1, 40)) as pilot:
+        await pilot.pause()
+        assert app.query_one("#strip-logo").display is False
+
+
+async def test_logo_follows_resize(media_tree):
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await pilot.resize_terminal(LOGO_MIN_WIDTH - 1, 40)
+        await pilot.pause()
+        assert app.query_one("#strip-logo").display is False
+        await pilot.resize_terminal(LOGO_MIN_WIDTH, 40)
+        await pilot.pause()
+        assert app.query_one("#strip-logo").display is True

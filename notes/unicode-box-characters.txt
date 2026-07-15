@@ -1,0 +1,130 @@
+╔═════════════╗
+║ HALF BLOCKS ║
+╚═════════════╝
+
+█ ▀ ▄
+
+╔═══════════╗
+║ QUADRANTS ║
+╚═══════════╝
+
+▖ ▗ ▘ ▙ ▚ ▛ ▜ ▝ ▞ ▟ ▌(l) ▐(r)
+
+╔══════════╗
+║ SEXTANTS ║
+╚══════════╝
+
+🬀 🬁 🬂 🬃 🬄 🬅 🬆 🬇 🬈 🬉 🬊 🬋 🬌 🬍 🬎 🬏 🬐 🬑 🬒 🬓 🬔 🬕 🬖 🬗 🬘 🬙 🬚 🬛 🬜 🬝 🬞 🬟 🬠 🬡 🬢 🬣 🬤 🬥 🬦 🬧 🬨 🬩 🬪 🬫 🬬 🬭 🬮 🬯 🬰 🬱 🬲 🬳 🬴 🬵 🬶 🬷 🬸 🬹 🬺 🬻
+
+╔═════════╗
+║ OCTANTS ║
+╚═════════╝
+
+round 3
+
+        col1 col2
+  row1   1    2      top half  → low nibble  (row label)
+  row2   3    4
+  row3   5    6      bottom half→ high nibble (column label)
+  row4   7    8
+
+
+      bottom half →
+top │ · ▘ ▝ ▀ ▖ ▌ ▞ ▛ ▗ ▚ ▐ ▜ ▄ ▙ ▟ █
+────┼────────────────────────────────
+·   │   𜴉 𜴘 𜴧 𜺣 ▖ 𜵑 𜵡 𜺠 𜶀 ▗ 𜶜 ▂ 𜶻 𜷋 ▄
+    │
+▘   │ 𜺨 𜴊 𜴙 𜴨 𜴶 𜵅 𜵒 𜵢 𜵱 𜶁 𜶐 𜶝 𜶬 𜶼 𜷌 𜷛
+    │
+▝   │ 𜺫 𜴋 𜴚 𜴩 𜴷 𜵆 𜵓 𜵣 𜵲 𜶂 𜶑 𜶞 𜶭 𜶽 𜷍 𜷜
+    │
+▀   │ 🮂 𜴌 𜴛 𜴪 𜴸 𜵇 𜵔 𜵤 𜵳 𜶃 𜶒 𜶟 𜶮 𜶾 𜷎 𜷝
+    │
+▖   │ 𜴀 🯦 𜴜 𜴫 𜴹 𜵈 𜵕 𜵥 𜵴 𜶄 𜶓 𜶠 𜶯 𜶿 𜷏 𜷞
+    │
+▌   │ ▘ 𜴍 𜴝 𜴬 𜴺 ▌ 𜵖 𜵦 𜵵 𜶅 ▚ 𜶡 𜶰 𜷀 𜷐 ▙
+    │
+▞   │ 𜴁 𜴎 𜴞 𜴭 𜴻 𜵉 𜵗 𜵧 𜵶 𜶆 𜶔 𜶢 𜶱 𜷁 𜷑 𜷟
+    │
+▛   │ 𜴂 𜴏 𜴟 𜴮 𜴼 𜵊 𜵘 𜵨 𜵷 𜶇 𜶕 𜶣 𜶲 𜷂 𜷒 𜷠
+    │
+▗   │ 𜴃 𜴐 🯧 𜴯 𜴽 𜵋 𜵙 𜵩 𜵸 𜶈 𜶖 𜶤 𜶳 𜷃 𜷓 𜷡
+    │
+▚   │ 𜴄 𜴑 𜴠 𜴰 𜴾 𜵌 𜵚 𜵪 𜵹 𜶉 𜶗 𜶥 𜶴 𜷄 𜷔 𜷢
+    │
+▐   │ ▝ 𜴒 𜴡 𜴱 𜴿 ▞ 𜵛 𜵫 𜵺 𜶊 ▐ 𜶦 𜶵 𜷅 𜷕 ▟
+    │
+▜   │ 𜴅 𜴓 𜴢 𜴲 𜵀 𜵍 𜵜 𜵬 𜵻 𜶋 𜶘 𜶧 𜶶 𜷆 𜷖 𜷣
+    │
+▄   │ 𜴆 𜴔 𜴣 𜴳 𜵁 𜵎 𜵝 𜵭 𜵼 𜶌 𜶙 𜶨 𜶷 𜷇 𜷗 ▆
+    │
+▙   │ 𜴇 𜴕 𜴤 𜴴 𜵂 𜵏 𜵞 𜵮 𜵽 𜶍 𜶚 𜶩 𜶸 𜷈 𜷘 𜷤
+    │
+▟   │ 𜴈 𜴖 𜴥 𜴵 𜵃 𜵐 𜵟 𜵯 𜵾 𜶎 𜶛 𜶪 𜶹 𜷉 𜷙 𜷥
+    │
+█   │ ▀ 𜴗 𜴦 🮅 𜵄 ▛ 𜵠 𜵰 𜵿 𜶏 ▜ 𜶫 𜶺 𜷊 𜷚 █
+
+Two structural things fall out of this layout, both useful to know:
+
+- The top-left cell is a space (empty pixel) and the bottom-right is █ (full block) — the two extremes sit on the diagonal.
+- Every character showing as a plain block/quadrant (▖ ▗ ▘ ▚ ▝ ▞ ▀ ▄ ▌ ▐ ▙ ▟ ▛ ▜ █ and the 4 quarter-bars ▂ ▆ 🮂 🮅) is a borrowed glyph, not an octant. Those are the 26 that predate the octant block.
+
+╔═════════════════════╗
+║ WHERE THE 256 LIVE  ║
+╚═════════════════════╝
+
+If a glyph in the grid renders as tofu, this tells you which font coverage you need:
+
+- 230 — Block Octants · U+1CD00–U+1CDE5 · the new Unicode 16.0 block, names BLOCK OCTANT-<cells>.
+- 16 — Block Elements / quadrants · U+0020 (space), U+2580 2584 258C 2590 2588 (halves + full), U+2596–259F (the ten quadrants). The ·, halves, and quadrant glyphs in the grid.
+- 6 — half-width quarter blocks · U+1CEA0 1CEA3 1CEA8 1CEAB (LEFT/RIGHT HALF UPPER/LOWER ONE QUARTER = single corner pixels) and U+1FBE6 1FBE7 (MIDDLE LEFT/RIGHT ONE QUARTER = the vertical-center dominoes, values 20 & 40 — the hardest two to locate).
+- 4 — quarter-height bars · U+1FB82 🮂 U+1FB85 🮅 (upper ¼, upper ¾) and U+2582 ▂ U+2586 ▆ (lower ¼, lower ¾).
+
+Caveat worth flagging: the 230 octants are new (Sept 2024), so most fonts won't have them. For a reference that actually renders, use GNU Unifont, Cascadia Code ≥ 2404, Julia Mono, or Iosevka — those ship the full Block Octants range.
+
+round 2
+
+𜴀 𜴁 𜴂 𜴃 𜴄 𜴅 𜴆 𜴇 𜴈 𜴉 𜴊 𜴋 𜴌 𜴍 𜴎 𜴏
+
+𜴐 𜴑 𜴒 𜴓 𜴔 𜴕 𜴖 𜴗 𜴘 𜴙 𜴚 𜴛 𜴜 𜴝 𜴞 𜴟
+
+𜴠 𜴡 𜴢 𜴣 𜴤 𜴥 𜴦 𜴧 𜴨 𜴩 𜴪 𜴫 𜴬 𜴭 𜴮 𜴯
+
+𜴰 𜴱 𜴲 𜴳 𜴴 𜴵 𜴶 𜴷 𜴸 𜴹 𜴺 𜴻 𜴼 𜴽 𜴾 𜴿
+
+𜵀 𜵁 𜵂 𜵃 𜵄 𜵅 𜵆 𜵇 𜵈 𜵉 𜵊 𜵋 𜵌 𜵍 𜵎 𜵏
+
+𜵐 𜵑 𜵒 𜵓 𜵔 𜵕 𜵖 𜵗 𜵘 𜵙 𜵚 𜵛 𜵜 𜵝 𜵞 𜵟
+
+𜵠 𜵡 𜵢 𜵣 𜵤 𜵥 𜵦 𜵧 𜵨 𜵩 𜵪 𜵫 𜵬 𜵭 𜵮 𜵯
+
+𜵰 𜵱 𜵲 𜵳 𜵴 𜵵 𜵶 𜵷 𜵸 𜵹 𜵺 𜵻 𜵼 𜵽 𜵾 𜵿
+
+𜶀 𜶁 𜶂 𜶃 𜶄 𜶅 𜶆 𜶇 𜶈 𜶉 𜶊 𜶋 𜶌 𜶍 𜶎 𜶏
+
+𜶐 𜶑 𜶒 𜶓 𜶔 𜶕 𜶖 𜶗 𜶘 𜶙 𜶚 𜶛 𜶜 𜶝 𜶞 𜶟
+
+𜶠 𜶡 𜶢 𜶣 𜶤 𜶥 𜶦 𜶧 𜶨 𜶩 𜶪 𜶫 𜶬 𜶭 𜶮 𜶯
+
+𜶰 𜶱 𜶲 𜶳 𜶴 𜶵 𜶶 𜶷 𜶸 𜶹 𜶺 𜶻 𜶼 𜶽 𜶾 𜶿
+
+𜷀 𜷁 𜷂 𜷃 𜷄 𜷅 𜷆 𜷇 𜷈 𜷉 𜷊 𜷋 𜷌 𜷍 𜷎 𜷏
+
+𜷐 𜷑 𜷒 𜷓 𜷔 𜷕 𜷖 𜷗 𜷘 𜷙 𜷚 𜷛 𜷜 𜷝 𜷞 𜷟
+
+𜷠 𜷡 𜷢 𜷣 𜷤 𜷥
+
+round 1
+
+𜴀 𜴁 𜴂 𜴃 𜴄 𜴅 𜴆 𜴇 𜴈 𜴉 𜴊 𜴋 𜴌 𜴍 𜴎 𜴏 𜴐 𜴑 𜴒 𜴓 𜴔 𜴕 𜴖 𜴗 𜴘 𜴙 𜴚 𜴛 𜴜 𜴝 𜴞 𜴟 𜴠 𜴡 𜴢 𜴣 𜴤 𜴥 𜴦 𜴧 𜴨 𜴩 𜴪
+
+𜴫 𜴬 𜴭 𜴮 𜴯 𜴰 𜴱 𜴲 𜴳 𜴴 𜴵 𜴶 𜴷 𜴸 𜴹 𜴺 𜴻 𜴼 𜴽 𜴾 𜴿 𜵀 𜵁 𜵂 𜵃 𜵄 𜵅 𜵆 𜵇 𜵈 𜵉 𜵊 𜵋 𜵌 𜵍 𜵎 𜵏 𜵐 𜵑 𜵒 𜵓 𜵔 𜵕
+
+𜵖 𜵗 𜵘 𜵙 𜵚 𜵛 𜵜 𜵝 𜵞 𜵟 𜵠 𜵡 𜵢 𜵣 𜵤 𜵥 𜵦 𜵧 𜵨 𜵩 𜵪 𜵫 𜵬 𜵭 𜵮 𜵯 𜵰 𜵱 𜵲 𜵳 𜵴 𜵵 𜵶 𜵷 𜵸 𜵹 𜵺 𜵻 𜵼 𜵽 𜵾 𜵿 𜶀
+
+𜶁 𜶂 𜶃 𜶄 𜶅 𜶆 𜶇 𜶈 𜶉 𜶊 𜶋 𜶌 𜶍 𜶎 𜶏 𜶐 𜶑 𜶒 𜶓 𜶔 𜶕 𜶖 𜶗 𜶘 𜶙 𜶚 𜶛 𜶜 𜶝 𜶞 𜶟 𜶠 𜶡 𜶢 𜶣 𜶤 𜶥 𜶦 𜶧 𜶨 𜶩 𜶪 𜶫
+
+𜶬 𜶭 𜶮 𜶯 𜶰 𜶱 𜶲 𜶳 𜶴 𜶵 𜶶 𜶷 𜶸 𜶹 𜶺 𜶻 𜶼 𜶽 𜶾 𜶿 𜷀 𜷁 𜷂 𜷃 𜷄 𜷅 𜷆 𜷇 𜷈 𜷉 𜷊 𜷋 𜷌 𜷍 𜷎 𜷏 𜷐 𜷑 𜷒 𜷓 𜷔 𜷕 𜷖
+
+𜷗 𜷘 𜷙 𜷚 𜷛 𜷜 𜷝 𜷞 𜷟 𜷠 𜷡 𜷢 𜷣 𜷤 𜷥
+

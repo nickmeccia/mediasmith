@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from rich.cells import cell_len
 from rich.color import Color
 from rich.segment import Segment, Segments
 from rich.style import Style
@@ -71,6 +72,15 @@ NARROW_COLUMNS = 80
 
 STRIP_GLOBAL = " ^/ path · ^. hidden · ^q quit"
 STRIP_TREE = " ↑↓ ←→ move · type jump · ⏎ edit · ^r refresh"
+
+LOGO = "𜵎𜵎▖𜷇🯦𜷇▌𜵅𜷃𜵈𜷓𜴀𜵎𜵎▖𜵅𜶍▐𜶓"
+"""Octant-glyph wordmark (see notes/octant.py) — right edge of the
+global strip. Every glyph is cell-width 1 under Rich (verified), so
+the collision math below is exact."""
+
+LOGO_MIN_WIDTH = 1 + cell_len(STRIP_GLOBAL) + 1 + cell_len(LOGO)
+"""Viewport cells needed before the logo shows: the strip's 1-cell
+left padding, the commands, one blank cell of separation, the logo."""
 STRIP_PATH = " ⇥ complete · ⏎ go · esc cancel"
 STRIP_DETAILS = " ↑↓ fields · ^s save · esc back"
 
@@ -160,6 +170,8 @@ class MediasmithApp(App):
     #strip-right { width: 1fr; padding-left: 1; }
     #strip { dock: bottom; height: 1; background: $surface;
              color: $text-muted; padding-left: 1; }
+    #strip-global { width: 1fr; }
+    #strip-logo { width: auto; }
     /* -- narrow (phone) breakpoint: one column at a time. Which column
        shows follows the pane hierarchy: -details-open swaps the details
        column in ("view" keeps the tree focused — no accent border;
@@ -204,7 +216,9 @@ class MediasmithApp(App):
         with Horizontal(id="ctxrow"):
             yield Static("", id="strip-left")
             yield Static("", id="strip-right")
-        yield Static(STRIP_GLOBAL, id="strip")
+        with Horizontal(id="strip"):
+            yield Static(STRIP_GLOBAL, id="strip-global")
+            yield Static(LOGO, id="strip-logo")
 
     async def on_mount(self) -> None:
         self.watch(self.screen, "focused", self._sync_strips)
@@ -231,6 +245,9 @@ class MediasmithApp(App):
         left.update(STRIP_PATH if isinstance(focused, PathBar) else tree_strip)
         right.visible = in_details
         right.update(STRIP_DETAILS)
+        # the logo yields before it collides with the global commands
+        logo = self.query_one("#strip-logo", Static)
+        logo.display = self.size.width >= LOGO_MIN_WIDTH
         # narrow: a hidden strip must release its width too (visible=False
         # keeps the space, which the wide layout wants for column alignment)
         narrow = self.screen.has_class("-narrow")

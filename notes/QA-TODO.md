@@ -1,3 +1,14 @@
+# QA to-do — 2026-07-15 session (logo · video: container + posters)
+
+## Mediasmith logo (global strip)
+
+- [ ] The wordmark sits flush right on the global strip; eyeball it in
+      Ghostty (the octant glyphs need a font with Unicode 16 blocks —
+      if you see tofu, that's the font, not the app)
+- [ ] Shrink the window: at 50 cells the logo vanishes (collision
+      rule), reappears at 51; check it survives a phone-width tmux
+- [ ] Color: it inherits the strip's muted gray — want it accented?
+
 # QA to-do — 2026-07-11 session 3 (multi-artist · Move)
 
 ## fix multi-artist — see its section under session 2 below

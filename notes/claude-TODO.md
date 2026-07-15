@@ -204,6 +204,20 @@
 
 ## New features
 
+**Command Strip**
+-[x] Mediasmith logo
+     Can you add this logo to the bottom-most, global command strip, right-aligned with the edge of the viewport?
+     𜵎𜵎▖𜷇🯦𜷇▌𜵅𜷃𜵈𜷓𜴀𜵎𜵎▖𜵅𜶍▐𜶓
+     Responsive rules: if the viewport would shrink such that this logo would collide with the commands in the command strip, set it to `display: none;` Looking at mediasmith on my phone, it looks like it can still fit. :)
+     (Claude, 2026-07-15: shipped — the strip is now commands (1fr) +
+     logo (auto), so the wordmark sits flush with the viewport's right
+     edge. Every glyph measures cell-width 1 under Rich, so the
+     responsive rule is exact math: below 51 cells (1 padding + 30
+     commands + 1 gap + 19 logo = LOGO_MIN_WIDTH in app.py) it goes
+     display-none, and re-appears on resize. Phone width (60+) keeps
+     it, per your check. It inherits the strip's $text-muted — say the
+     word if you want it in the accent color.)
+
 **Videosmith**
 -[ ] Container
      Can you show the container name as a field? Can you make it editable? (I would be satisfied if it was merely viewable)
