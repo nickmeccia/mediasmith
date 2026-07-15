@@ -87,6 +87,94 @@ def make_epub(path: Path, title="Dune", author="Frank Herbert",
     return path
 
 
+def make_omnibus(path: Path, books: int = 2, chapters: int = 2,
+                 flat: bool = False, title="Omnibus",
+                 author="Frank Herbert",
+                 author_sort="Herbert, Frank") -> Path:
+    """An omnibus epub: front matter + N books × M chapters, an NCX with
+    one navPoint tree per book (or a flat chapter list with ``flat``),
+    everything under OEBPS/ so zip-path resolution is exercised. Book
+    one's first chapter references style.css and pic.png (the asset
+    scan)."""
+    def xhtml(text: str, assets: bool = False) -> str:
+        head = ('<link rel="stylesheet" href="style.css"/>' if assets else "")
+        img = ('<img src="pic.png"/>' if assets else "")
+        return ('<?xml version="1.0"?><html xmlns="http://www.w3.org/1999/'
+                f'xhtml"><head><title>x</title>{head}</head>'
+                f'<body><p>{text}</p>{img}</body></html>')
+
+    manifest, spine, files = [], [], {}
+    manifest.append('<item id="titlepage" href="titlepage.xhtml" '
+                    'media-type="application/xhtml+xml"/>')
+    spine.append('<itemref idref="titlepage"/>')
+    files["OEBPS/titlepage.xhtml"] = xhtml("The Omnibus")
+
+    navpoints, order = [], [1]
+
+    def navpoint(label: str, src: str, children: str = "") -> str:
+        oid = order[0]
+        order[0] += 1
+        return (f'<navPoint id="np{oid}" playOrder="{oid}">'
+                f'<navLabel><text>{label}</text></navLabel>'
+                f'<content src="{src}"/>{children}</navPoint>')
+
+    navpoints.append(navpoint("Cover", "titlepage.xhtml"))
+    for b in range(1, books + 1):
+        chapter_points = []
+        for c in range(1, chapters + 1):
+            name = f"b{b}c{c}"
+            manifest.append(f'<item id="{name}" href="{name}.xhtml" '
+                            'media-type="application/xhtml+xml"/>')
+            spine.append(f'<itemref idref="{name}"/>')
+            files[f"OEBPS/{name}.xhtml"] = xhtml(
+                f"Book {b}, chapter {c}.", assets=(b == 1 and c == 1))
+            chapter_points.append(navpoint(f"Chapter {c}", f"{name}.xhtml"))
+        if flat:
+            navpoints.extend(chapter_points)
+        else:
+            navpoints.append(navpoint(f"Book {b}", f"b{b}c1.xhtml",
+                                      "".join(chapter_points)))
+
+    manifest.append('<item id="css" href="style.css" media-type="text/css"/>')
+    manifest.append('<item id="pic" href="pic.png" media-type="image/png"/>')
+    manifest.append('<item id="ncx" href="toc.ncx" '
+                    'media-type="application/x-dtbncx+xml"/>')
+    files["OEBPS/style.css"] = "p { margin: 0 }"
+
+    opf = f"""<?xml version="1.0"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="2.0">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/"
+            xmlns:opf="http://www.idpf.org/2007/opf">
+    <dc:title>{title}</dc:title>
+    <dc:creator opf:file-as="{author_sort}">{author}</dc:creator>
+    <dc:language>en</dc:language>
+  </metadata>
+  <manifest>{''.join(manifest)}</manifest>
+  <spine toc="ncx">{''.join(spine)}</spine>
+</package>"""
+    ncx = f"""<?xml version="1.0"?>
+<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">
+  <head><meta name="dtb:uid" content="test"/></head>
+  <docTitle><text>{title}</text></docTitle>
+  <navMap>{''.join(navpoints)}</navMap>
+</ncx>"""
+    container = """<?xml version="1.0"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles><rootfile full-path="OEBPS/content.opf"
+    media-type="application/oebps-package+xml"/></rootfiles>
+</container>"""
+    with zipfile.ZipFile(path, "w") as z:
+        z.writestr(zipfile.ZipInfo("mimetype"), b"application/epub+zip",
+                   compress_type=zipfile.ZIP_STORED)
+        z.writestr("META-INF/container.xml", container)
+        z.writestr("OEBPS/content.opf", opf)
+        z.writestr("OEBPS/toc.ncx", ncx)
+        z.writestr("OEBPS/pic.png", make_png())
+        for name, content in files.items():
+            z.writestr(name, content)
+    return path
+
+
 def make_media_tree(root: Path) -> Path:
     """The standard scratch tree: one of everything, plus edge cases."""
     root.mkdir(parents=True, exist_ok=True)

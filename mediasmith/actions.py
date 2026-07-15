@@ -34,7 +34,13 @@ KEY_STYLE = "$text-accent"
 
 # ctrl+<char> chords the terminal or the app already owns; binding an
 # action to one of these would shadow typing or core chrome.
-RESERVED_KEYS = frozenset("cdehijmqz")
+# Audited 2026-07-15 against Textual 8's real bindings (QA-TODO "key
+# space", option 1): c/q are App-owned, h/i/j/m are terminal aliases
+# for backspace/tab/newline/enter, z is shell suspend muscle memory.
+# d and e turned out to be only Input editing chords (delete-right,
+# end) — the same class as the already-assigned a/k/u/v/w/x, safe for
+# actions whose context has no focusable Input.
+RESERVED_KEYS = frozenset("chijmqz")
 
 
 @dataclass(frozen=True)

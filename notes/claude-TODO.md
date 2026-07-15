@@ -126,8 +126,20 @@
      cover survive the epub rewrite. Covered by test_book_panel_is_editable;
      your manual pass is still listed in QA-TODO.)
 
--[ ] Omnibus splitter
+-[x] Omnibus splitter
      Add a "split omnibus" button following the app's button pattern. Based on the logic for how this works, if I remember correctly it should do nothing on books that are not omnibuses
+     (Claude, 2026-07-15: shipped — `split omnibus ^e` appears on an
+     epub only when a cheap zip-read probe finds ≥2 books in its NCX
+     (your "does nothing on non-omnibuses", done as "isn't offered").
+     It's the third plan-shaped action: press → preview lists each
+     book + the epub it will write → ^a applies, esc cancels. Output
+     is v1's convention ("Author Sort - Title.epub", beside the
+     source, refuse-overwrite per book; front matter duplicated into
+     each; chapters promoted to TOC roots). One scope cut: v1's
+     interactive flows (renaming detected titles, drawing boundaries
+     in a FLAT table of contents) needed a conversation the plan
+     preview can't hold — so flat-TOC omnibuses simply don't get the
+     button. If you own one, say so and it becomes a wizard div.)
 
 -[x] Scrape serial*
      I'm not sure I need this anymore -- this was a tool used for downloading Wildbow's serials off of Wordpress, but now that I have them in ebook format, I don't know what else I will do with this. Well, now I'm thinking, what about Wildbow's future stories? Perhaps this should be folded into a "search" feature, which can collect this, anna search, and deezer search.
@@ -163,8 +175,21 @@
 
 **Videosmith**
 
--[ ] Download posters
+-[x] Download posters
      This should be a button on a video file, and should detect if the file is on a network volume or not. If it's on a local volume, download posters to the file's folder. If it's on a network volume, create a local folder per the current tool's process.
+     (Claude, 2026-07-15: shipped — `^download posters` on every single
+     video. The v1 engine is ported to mediasmith/posters.py with its
+     tuned parts intact (title ladder: container tag → filename →
+     folder; dhash near-duplicate collapse keeping the hi-res copy).
+     Decisions to review: [1] "on a network volume" = path under
+     /Volumes — crude but honest, flag if your setup disagrees;
+     [2] local videos get posters in a subfolder named "Film (Year)"
+     beside the video, not loose in the folder (loose files would
+     hijack the details pane's poster row and clutter the film dir) —
+     network videos stage to ~/Downloads/Videosmith/ as before;
+     [3] refuse-overwrite per poster file; [4] progress = a toast per
+     phase + every 5th download. The ^d chord came from a RESERVED_KEYS
+     audit — see QA-TODO "key space", you have veto.)
 
 -[x] Subtitle clean SRT
      This should be a button on the video file.
@@ -219,8 +244,15 @@
      word if you want it in the accent color.)
 
 **Videosmith**
--[ ] Container
+-[x] Container
      Can you show the container name as a field? Can you make it editable? (I would be satisfied if it was merely viewable)
+     (Claude, 2026-07-15: viewable — a "container" row on the video
+     panel showing the suffix name ("mkv"), instant, no ffprobe.
+     Editable was deliberately left out: changing a container is a
+     remux (an ffmpeg conversion), not a metadata write, so it belongs
+     with the convert-button pattern (books/images have it) rather
+     than an editable field. Say the word and "convert to mp4/mkv"
+     buttons follow the book-convert shape.)
 
 
 **Imagesmith** (I know that these names aren't preserved in the new design, but I thought this was a cute header for this section)

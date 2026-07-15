@@ -31,6 +31,7 @@ class AudioDetails:
 @dataclass(frozen=True)
 class VideoDetails:
     size: int
+    container: str              # suffix name ("mkv") — free, no ffprobe
     subtitle_name: str | None
     poster_name: str | None
     poster_bytes: bytes | None
@@ -99,6 +100,7 @@ def _read_video(path: Path) -> VideoDetails:
                   None)
     return VideoDetails(
         size=path.stat().st_size,
+        container=path.suffix.lstrip(".").lower(),
         subtitle_name=subtitle,
         poster_name=poster.name if poster else None,
         poster_bytes=poster.read_bytes() if poster else None,

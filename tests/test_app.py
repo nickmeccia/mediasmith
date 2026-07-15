@@ -716,6 +716,60 @@ async def test_create_opf_creates_sidecar(media_tree):
         assert "<dc:title>Dune</dc:title>" in target.read_text()
 
 
+async def _goto_omni(app, pilot, media_tree):
+    """An omnibus in Books/, cursor on it, probe settled."""
+    from tests.mediafactory import make_omnibus
+    make_omnibus(media_tree / "Books" / "Omni.epub")
+    await _goto_dune(app, pilot)
+    await pilot.press("down")                    # Omni.epub (D < O)
+    await settle(pilot)
+    await pilot.pause(0.3)                       # the zip-read probe
+
+
+async def test_split_omnibus_button_is_probe_gated(media_tree):
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _goto_omni(app, pilot, media_tree)
+        assert "split_omnibus" in _bar_names(app)
+        await pilot.press("up")                  # back to Dune (one book)
+        await settle(pilot)
+        await pilot.pause(0.3)
+        assert "split_omnibus" not in _bar_names(app)
+
+
+async def test_split_omnibus_preview_and_apply(media_tree):
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _goto_omni(app, pilot, media_tree)
+        await pilot.press("ctrl+e")              # split omnibus
+        await pilot.pause(0.6)
+        details = app.query_one(DetailsPane)
+        assert details.plan_preview_open()
+        assert set(_bar_names(app)) == {"plan_apply", "plan_cancel"}
+        await pilot.press("ctrl+a")              # apply
+        await pilot.pause(0.6)
+        one = media_tree / "Books" / "Herbert, Frank - Book 1.epub"
+        two = media_tree / "Books" / "Herbert, Frank - Book 2.epub"
+        assert one.exists() and two.exists()
+        tree = app.query_one(LibraryTree)
+        assert tree._node_for(one) is not None   # tree re-listed in place
+
+
+async def test_split_omnibus_escape_cancels(media_tree):
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _goto_omni(app, pilot, media_tree)
+        await pilot.press("ctrl+e")
+        await pilot.pause(0.6)
+        details = app.query_one(DetailsPane)
+        assert details.plan_preview_open()
+        await pilot.press("escape")
+        await settle(pilot)
+        assert not details.plan_preview_open()
+        assert not (media_tree / "Books"
+                    / "Herbert, Frank - Book 1.epub").exists()
+
+
 async def test_audio_offers_save_only(media_tree):
     from mediasmith.actions import ActionBar
     app = MediasmithApp(media_tree)
@@ -1643,8 +1697,8 @@ async def test_video_offers_subtitle_actions(media_tree):
     app = MediasmithApp(media_tree)
     async with app.run_test(size=(120, 40)) as pilot:
         await _goto_alien(app, pilot)
-        assert _bar_names(app) == ["get_subs", "clean_subs",
-                                   "shift_subs", "watch", "move"]
+        assert _bar_names(app) == ["get_subs", "clean_subs", "shift_subs",
+                                   "watch", "download_posters", "move"]
         await pilot.press("z")                       # the srt-less video
         await settle(pilot)
         names = _bar_names(app)
@@ -1841,6 +1895,57 @@ async def test_watch_launches_player(media_tree, monkeypatch):
         await pilot.pause()
         video = media_tree / "Movies" / "Alien (1979)" / "Alien.1979.mkv"
         assert calls == [video]
+
+
+# -- video: container field + download posters ----------------------------------
+
+
+async def test_video_panel_shows_container(media_tree):
+    from textual.widgets import Static
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _goto_alien(app, pilot)
+        row = app.query_one("#video-container", Static)
+        assert str(row.render()) == "mkv"
+
+
+async def test_download_posters_lands_files_and_tree_follows(
+        media_tree, monkeypatch):
+    from mediasmith import posters
+    video = media_tree / "Movies" / "Alien (1979)" / "Alien.1979.mkv"
+    folder = video.parent / "Alien (1979)"
+
+    def fake_run(target, **kwargs):
+        assert target == video
+        folder.mkdir()
+        (folder / "a.png").write_bytes(b"poster")
+        yield posters.Identified("Alien (1979)")
+        yield posters.Done(folder=folder, saved=1, duplicates=2, existing=0)
+
+    monkeypatch.setattr("mediasmith.posters.run", fake_run)
+    monkeypatch.setattr("mediasmith.adapters.probe_video_title",
+                        lambda path: None)
+    monkeypatch.delenv("MEDIASMITH_OFFLINE", raising=False)
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _goto_alien(app, pilot)
+        await pilot.press("ctrl+d")                  # ^download posters
+        await pilot.pause(0.5)
+        tree = app.query_one(LibraryTree)
+        assert tree._node_for(folder) is not None    # re-listed in place
+
+
+async def test_download_posters_honors_offline(media_tree, monkeypatch):
+    calls = []
+    monkeypatch.setattr("mediasmith.posters.run",
+                        lambda *a, **kw: calls.append(a))
+    monkeypatch.setenv("MEDIASMITH_OFFLINE", "1")
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _goto_alien(app, pilot)
+        await pilot.press("ctrl+d")
+        await pilot.pause(0.3)
+        assert calls == []
 
 
 # -- global-strip logo ------------------------------------------------------

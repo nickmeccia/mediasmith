@@ -67,7 +67,28 @@ not new buttons. The preview container ids are now `#plan-preview` /
   Input cut, but no inputs are focusable on folder views, so it's
   safe there. Nick renames keys at will; note it in QA-TODO.
 
-## #6 Video: container field + download posters
+## #6 Video: container field + download posters — DONE (Fable, 2026-07-15)
+
+Shipped per this brief. Deltas the next model should know:
+
+- Container is the suffix name only, shown instantly from `_read_video`
+  — the ffprobe fold-in was skipped (Nick asked for the suffix; the
+  demuxer name added noise for no request). `probe_video_title` is
+  unchanged.
+- `mediasmith/posters.py` follows subsync's generator-of-events shape
+  with ONE injectable `fetch(url)->bytes` seam — tests fake all of
+  TMDB through it (tests/test_posters.py, 15 tests). guessit joined
+  pyproject.
+- Local videos get a "Film (Year)" folder BESIDE the video (not loose
+  files — they'd hijack the video panel's poster row); network
+  (/Volumes) stages to ~/Downloads/Videosmith/ as v1 did.
+- The ^d chord came from a RESERVED_KEYS audit (with ^e): against
+  Textual 8's real bindings, d/e are Input-editing chords only — same
+  safety class as the already-used a/k/u/v/w/x. QA-TODO has the full
+  audit note; the ctrl-letter pool is exhausted AGAIN, so #10 still
+  needs Nick's ctrl+shift-layer decision.
+
+## #6 original brief (superseded)
 
 - Container: `adapters._read_video` gains
   `container: str` — just the suffix name ("mkv") is what Nick asked
@@ -216,7 +237,25 @@ What the next model needs to know:
   for new-folder flow, delete-to-trash (monkeypatch send2trash),
   rename with expansion restore.
 
-## #11 Omnibus splitter
+## #11 Omnibus splitter — DONE (Fable, 2026-07-15)
+
+Shipped per this brief as the third plan-shaped action (dispatch
+branch on the shared plan_apply/plan_cancel, exactly as the #5 note
+prescribed). Deltas:
+
+- The 571 v1 lines held up on close read; parsing/writing ported
+  faithfully into `mediasmith/omnibus.py`. `epub.rewrite_epub` did NOT
+  fit (it rewrites one epub in place; the splitter assembles new zips
+  from slices) — the splitter keeps its own writer.
+- v1's interactive flows (title renaming, flat-TOC boundary entry)
+  are not portable to a plan preview; flat-TOC omnibuses therefore
+  don't get the button (probe requires boundaries WITH children).
+  Flagged to Nick in QA-TODO — a wizard div could restore it.
+- `make_omnibus` in tests/mediafactory.py builds a two-book omnibus
+  under OEBPS/ (exercises zip-path resolution + the asset scan).
+- Key is ^e (the other recovered letter — see #6 note).
+
+## #11 original brief (superseded)
 
 - v1 `tools/booksmith/omnibus-splitter/omnibus-splitter.py` (571
   lines) is regex/ET-based NCX parsing + epub slicing. Port the

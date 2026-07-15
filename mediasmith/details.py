@@ -31,7 +31,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Label, Static
 
 from . import (adapters, artfetch, calibre, folderize, fs, kinds,
-               multiartist, srt, subsync)
+               multiartist, omnibus, posters, srt, subsync)
 from .actions import Action, ActionBar, ActionButton, action_markup
 from .images import image_widget
 
@@ -47,6 +47,10 @@ PANE_ACTIONS = [
     Action("convert_azw3", "convert to azw3", "y"),
     Action("extract_cover", "extract cover", "t"),
     Action("create_opf", "create opf", "g"),
+    # ^e recovered from RESERVED_KEYS (2026-07-15 audit — see actions.py);
+    # while a tag field is focused the Input eats ^e (end-of-line), so
+    # the chord fires from the tree — the button itself always works
+    Action("split_omnibus", "split omnibus", "e"),
     Action("folderize", "folderize", "l"),
     Action("fix_multi_artist", "fix multi-artist", "x"),
     # while any plan preview is up, these two own the bar
@@ -57,6 +61,8 @@ PANE_ACTIONS = [
     Action("clean_subs", "clean subs", "u"),
     Action("shift_subs", "shift subs", "v"),
     Action("watch", "watch", "w"),
+    # ^d recovered from RESERVED_KEYS (2026-07-15 audit — see actions.py)
+    Action("download_posters", "download posters", "d"),
     # Move (proposal M1): ONE stateful chord — ^n lifts the selection,
     # ^n places it at the highlighted spot; the label flips to match.
     # Single-key because the ctrl-letter pool is exhausted (see QA-TODO).
@@ -132,6 +138,22 @@ def render_multiartist_plan(plan: multiartist.MultiArtistPlan) -> str:
         if len(group.changes) > GROUP_PREVIEW_FILES:
             more = len(group.changes) - GROUP_PREVIEW_FILES
             lines.append(f"    [dim]…and {more} more[/]")
+    if len(lines) > PLAN_PREVIEW_LINES:
+        hidden = len(lines) - PLAN_PREVIEW_LINES
+        lines = lines[:PLAN_PREVIEW_LINES] + [f"[dim]…and {hidden} more lines[/]"]
+    return "\n".join(lines)
+
+
+def render_omnibus_plan(plan: omnibus.OmnibusPlan) -> str:
+    """The split-omnibus preview: each detected book and the epub the
+    apply button will write beside the source."""
+    n = len(plan.books)
+    lines = [f'{n} books found in "{_mk(plan.title)}":', ""]
+    for i, book in enumerate(plan.books, 1):
+        lines.append(f"  {i}. [bold]{_mk(book.label)}[/]  "
+                     f"[dim]({book.chapters} chapter"
+                     f"{'s' if book.chapters != 1 else ''})[/]")
+        lines.append(f"     → {_mk(book.filename)}")
     if len(lines) > PLAN_PREVIEW_LINES:
         hidden = len(lines) - PLAN_PREVIEW_LINES
         lines = lines[:PLAN_PREVIEW_LINES] + [f"[dim]…and {hidden} more lines[/]"]
@@ -442,6 +464,8 @@ class DetailsPane(VerticalScroll, can_focus=True):
         self._art_candidates: list[artfetch.CoverCandidate] = []
         self._art_index = 0
         self._book_cover = False    # shown book has an extractable cover
+        self._omnibus_ready = False     # probe: this epub holds ≥2 books
+        self._omnibus_plan: omnibus.OmnibusPlan | None = None
         self._folderize_ready = False   # probe: this folder has work to do
         self._folderize_plan: folderize.FolderizePlan | None = None
         self._multiartist_ready = False
@@ -490,6 +514,7 @@ class DetailsPane(VerticalScroll, can_focus=True):
         with Vertical(id="panel-video", classes="panel"):
             width = len("embedded title") + LABEL_GUTTER
             yield self._row("size", "video-size", width)
+            yield self._row("container", "video-container", width)
             yield self._row("embedded title", "video-title", width)
             yield self._row("subtitles", "video-subs", width)
             yield self._row("posters", "video-posters", width)
@@ -603,6 +628,8 @@ class DetailsPane(VerticalScroll, can_focus=True):
         self._art_candidates = []
         self._art_index = 0
         self._book_cover = False
+        self._omnibus_ready = False
+        self._omnibus_plan = None
         self._folderize_ready = False
         self._folderize_plan = None
         self._multiartist_ready = False
@@ -757,6 +784,7 @@ class DetailsPane(VerticalScroll, can_focus=True):
 
     def _fill_video(self, path: Path, d: adapters.VideoDetails) -> None:
         self._set("video-size", human_size(d.size))
+        self._set("video-container", d.container or "—")
         self._set("video-title", "…")
         self._set("video-subs", d.subtitle_name or "none")
         self._set("video-posters", d.poster_name or "none")
@@ -780,6 +808,8 @@ class DetailsPane(VerticalScroll, can_focus=True):
         self._set_cover("cover-book", d.cover)
         self._book_cover = d.cover is not None
         self._sync_pane_bar()       # extract-cover appears with the cover
+        if path.suffix.lower() == ".epub":
+            self._probe_omnibus(path)   # split button fills in late
 
     def _fill_image(self, path: Path, d: adapters.ImageDetails) -> None:
         self._set("image-size", human_size(d.size))
@@ -909,12 +939,14 @@ class DetailsPane(VerticalScroll, can_focus=True):
                         names.add("create_opf")
                         if self._book_cover:    # only when there is one
                             names.add("extract_cover")
+                        if self._omnibus_ready:  # probe: ≥2 books inside
+                            names.add("split_omnibus")
             if self._folderize_ready:           # probe: work to do below
                 names.add("folderize")
             if self._multiartist_ready:
                 names.add("fix_multi_artist")
             if self._video_target() is not None:
-                names |= {"get_subs", "watch"}
+                names |= {"get_subs", "watch", "download_posters"}
                 if self._video_srt is not None:
                     names |= {"clean_subs", "shift_subs"}
                 if self._shift_open:            # the write manifest: ^s
@@ -1291,7 +1323,8 @@ class DetailsPane(VerticalScroll, can_focus=True):
 
     def plan_preview_open(self) -> bool:
         return (self._folderize_plan is not None
-                or self._multiartist_plan is not None)
+                or self._multiartist_plan is not None
+                or self._omnibus_plan is not None)
 
     def _show_plan_preview(self, title: str, text: str) -> None:
         for panel in PANELS:
@@ -1324,12 +1357,18 @@ class DetailsPane(VerticalScroll, can_focus=True):
             self._multiartist_plan = None
             self.notify("fixing…", title="fix multi-artist")
             self._multiartist_exec_worker(plan)
+        elif self._omnibus_plan is not None:
+            plan = self._omnibus_plan
+            self._omnibus_plan = None
+            self.notify("splitting…", title="split omnibus")
+            self._omnibus_exec_worker(plan)
 
     def action_plan_cancel(self) -> None:
         if not self.plan_preview_open():
             return
         self._folderize_plan = None
         self._multiartist_plan = None
+        self._omnibus_plan = None
         if self.path is not None:               # restore the normal view
             self.preview(self.path, immediate=True)
 
@@ -1447,6 +1486,70 @@ class DetailsPane(VerticalScroll, can_focus=True):
         # tags changed in place — no tree structure change, just re-read
         if self.path == root:
             self.preview(root, immediate=True)  # fresh view, fresh probes
+
+    # -- split omnibus: the third plan-shaped action (epub, not folder) ------------
+
+    @work(thread=True, exclusive=True, group="omnibus-probe")
+    def _probe_omnibus(self, path: Path) -> None:
+        ready = omnibus.probe(path)             # one zip read
+        if ready:
+            self.app.call_from_thread(self._omnibus_probed, path)
+
+    def _omnibus_probed(self, path: Path) -> None:
+        if self.path == path and not self.plan_preview_open():
+            self._omnibus_ready = True
+            self._sync_pane_bar()
+
+    def action_split_omnibus(self) -> None:
+        path = self.path
+        if (path is None or not self._omnibus_ready
+                or self.paths is not None):
+            return
+        self.notify("reading…", title="split omnibus")
+        self._omnibus_plan_worker(path)
+
+    @work(thread=True, exclusive=True, group="omnibus-plan")
+    def _omnibus_plan_worker(self, path: Path) -> None:
+        try:
+            plan = omnibus.build_plan(path)
+        except (ValueError, OSError) as error:
+            self.app.call_from_thread(
+                self.notify, str(error), title="split omnibus",
+                severity="error")
+            return
+        self.app.call_from_thread(self._omnibus_planned, path, plan)
+
+    def _omnibus_planned(self, path: Path, plan: omnibus.OmnibusPlan) -> None:
+        if self.path != path:                   # selection moved on
+            return
+        if plan.empty:
+            self.notify("not an omnibus after all", title="split omnibus")
+            self._omnibus_ready = False
+            self._sync_pane_bar()
+            return
+        self._omnibus_plan = plan
+        self._show_plan_preview(f"split {path.name}",
+                                render_omnibus_plan(plan))
+
+    @work(thread=True, exclusive=True, group="omnibus-exec")
+    def _omnibus_exec_worker(self, plan: omnibus.OmnibusPlan) -> None:
+        written, errors = omnibus.execute(plan)
+        self.app.call_from_thread(self._omnibus_done, plan.source,
+                                  written, errors)
+
+    def _omnibus_done(self, source: Path, written: list[Path],
+                      errors: list[tuple[str, str]]) -> None:
+        parts = [f"{len(written)} book{'s' if len(written) != 1 else ''} "
+                 "written"]
+        if errors:
+            name, reason = errors[0]
+            parts.append(f"{len(errors)} failed — {name}: {reason}")
+        self.notify(" · ".join(parts), title="split omnibus", timeout=8,
+                    severity="warning" if errors else "information")
+        for path in written:
+            self.post_message(self.FileCreated(path))
+        if self.path == source:
+            self.preview(source, immediate=True)    # restore the book view
 
     # -- move (proposal M1): lift the selection, browse, place ---------------------
     # State lives on the App so a lift survives selection changes and
@@ -1658,6 +1761,54 @@ class DetailsPane(VerticalScroll, can_focus=True):
             launch(video)
         except OSError as error:
             self.notify(str(error), title="watch", severity="error")
+
+    # -- download posters: TMDB fetch into a curation folder (posters.py) ---------
+
+    def action_download_posters(self) -> None:
+        video = self._video_target()
+        if video is None:
+            return
+        if os.environ.get(artfetch.OFFLINE_ENV):
+            self.notify("offline (MEDIASMITH_OFFLINE set)",
+                        title="download posters", severity="warning")
+            return
+        self.notify(f"{video.name}: identifying film…",
+                    title="download posters")
+        self._posters_worker(video)
+
+    @work(thread=True, group="posters", exclusive=False)
+    def _posters_worker(self, video: Path) -> None:
+        # the longest worker yet (N image downloads) — progress via
+        # notify, throttled so a 40-poster film doesn't post 40 toasts
+        notify = lambda *a, **kw: self.app.call_from_thread(  # noqa: E731
+            self.notify, *a, title="download posters", **kw)
+        try:
+            title = adapters.probe_video_title(video)
+            for event in posters.run(video, container_title=title):
+                if isinstance(event, posters.Failed):
+                    notify(event.reason, severity="warning", timeout=10)
+                elif isinstance(event, posters.Identified):
+                    notify(event.label, timeout=3)
+                elif isinstance(event, posters.PhaseStarted):
+                    notify(event.label, timeout=3)
+                elif isinstance(event, posters.Progress):
+                    if event.phase == "downloading" and event.done % 5 == 0:
+                        notify(f"{event.done}/{event.total} downloaded…",
+                               timeout=2)
+                elif isinstance(event, posters.Done):
+                    self.app.call_from_thread(self._posters_done, event)
+        except Exception as error:
+            notify(str(error), severity="error")
+
+    def _posters_done(self, done: posters.Done) -> None:
+        parts = [f"{done.saved} poster{'s' if done.saved != 1 else ''} "
+                 f"→ {done.folder}"]
+        if done.duplicates:
+            parts.append(f"{done.duplicates} near-duplicates skipped")
+        if done.existing:
+            parts.append(f"{done.existing} already there (kept)")
+        self.notify(" · ".join(parts), title="download posters", timeout=10)
+        self.post_message(self.FolderChanged(done.folder.parent))
 
     # -- shift subs: the inline wizard div ----------------------------------------
 

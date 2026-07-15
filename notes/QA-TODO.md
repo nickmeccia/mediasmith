@@ -1,4 +1,5 @@
-# QA to-do — 2026-07-15 session (logo · video: container + posters)
+# QA to-do — 2026-07-15 session (logo · video: container + posters ·
+# split omnibus)
 
 ## Mediasmith logo (global strip)
 
@@ -8,6 +9,64 @@
 - [ ] Shrink the window: at 50 cells the logo vanishes (collision
       rule), reappears at 51; check it survives a phone-width tmux
 - [ ] Color: it inherits the strip's muted gray — want it accented?
+
+## Video: container row
+
+- [ ] Every video shows a "container" row (suffix name: mkv/mp4/…)
+      above the embedded title; instant, no probe delay
+- [ ] Parked: editable container = a remux — if you want it, it should
+      be convert-to-mp4/mkv buttons (book-convert shape), not a field
+
+## Download posters (^d, on any single video)
+
+- [ ] Press on a local video: toasts walk the phases (identifying →
+      searching → fingerprinting → downloading, every 5th file), then
+      a summary; posters land in a "Film (Year)" folder BESIDE the
+      video and the tree shows it without ^r
+- [ ] Press on a NAS video (under /Volumes): posters stage to
+      ~/Downloads/Videosmith/<Film (Year)>/ instead — the
+      local/network heuristic is literally "path starts /Volumes";
+      veto if that's wrong for your mounts
+- [ ] No TMDB key → a toast with the two setup lines (env var or
+      ~/.config/mediasmith/tmdb_api_key)
+- [ ] Near-duplicate posters are collapsed (keeps the hi-res copy);
+      re-running refuses to overwrite what's already there
+- [ ] A film TMDB can't match → "no TheMovieDB match" warning, no
+      folder created
+
+## Split omnibus (^e, on epubs that hold ≥2 books)
+
+- [ ] The button appears on a real omnibus shortly after highlight
+      (zip-read probe fills in late), never on single books
+- [ ] Press: preview lists each detected book, chapter counts, and
+      the output filenames; ^a writes them beside the source, esc
+      backs out untouched
+- [ ] Outputs open in your reader: front matter present, only the
+      book's own chapters, TOC has chapters at the root (the omnibus
+      book-title level is dropped)
+- [ ] Re-apply refuses to overwrite existing outputs (per book)
+- [ ] Known scope cut: a FLAT-TOC omnibus (chapters at top level, no
+      book containers) gets no button — v1 solved it with an
+      interactive conversation; v2 would need a wizard div. Do you
+      own any? If yes it gets built.
+
+## ⚠ Key space: two letters recovered (your veto)
+
+The ^d and ^e chords come from auditing RESERVED_KEYS (option 1 from
+the session-3 note, executed): against Textual 8's real bindings,
+^d and ^e are only Input *editing* chords (delete-right / end) — the
+same class as a/k/u/v/w/x, which video/folder actions already use
+safely because no Input is focusable in those contexts. c/q (app),
+h/i/j/m (terminal aliases), z (suspend) stay reserved. So:
+- ^d → download posters (shipped)
+- ^e → split omnibus (shipped); on book views a focused tag field
+  eats ^e (end-of-line) — the chord fires from the tree, the button
+  itself always works. Same caveat will apply to any future letter
+  on editable kinds.
+The pool is exhausted again; #10 New/Delete still needs the
+ctrl+shift-layer (or contextual-reuse) decision from the session-3
+note. Veto any of this by renaming keys; the reserve list is
+actions.RESERVED_KEYS.
 
 # QA to-do — 2026-07-11 session 3 (multi-artist · Move)
 
