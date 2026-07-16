@@ -180,6 +180,11 @@ class MediasmithApp(App):
     #resize-x { width: 3; color: $text-muted; text-align: center; }
     #resize-link { margin-left: 2; }
     #resize-bar { margin-top: 1; }
+    /* the gif wizard div — same block shape as resize */
+    #gif-div { height: auto; margin-top: 1; }
+    #gif-row { height: 1; }
+    .wsep { width: auto; color: $text-muted; padding: 0 1; }
+    #gif-bar { margin-top: 1; }
     #plan-preview { height: auto; margin-top: 1; }
     #plan-tree { height: auto; }
     #ctxrow { height: 1; background: $surface; color: $text-muted; }

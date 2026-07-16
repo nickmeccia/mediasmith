@@ -373,7 +373,21 @@ Deltas:
 - Follow folderize's preview pattern for anything that renames or
   moves; plain in-place cleanups can act directly with a notify.
 
-## #13 Video → GIF
+## #13 Video → GIF — DONE (Fable, 2026-07-16) · THE QUEUE IS BUILT OUT
+
+Shipped per this brief (gif.py two-pass palette, `make ^gif` div with
+fps/width + ^apply). Deltas: start/duration live in the engine but
+have no fields (flagged); OFFLINE guards the ffmpeg spawn, not the
+div; the `runner` seam keeps tests ffmpeg-free. Structural note: this
+was the second focusable wizard in a non-editable pane, so _nav_items
+was GENERALIZED (fields → open wizard widgets → visible bar buttons)
+— the ShiftControl special case is gone, per the #7 note's request.
+
+Every numbered feature in notes/claude-TODO.md is now built or
+resolved. What remains is Nick's QA ledger (notes/QA-TODO.md) and
+whatever it spawns.
+
+## #13 original brief (superseded)
 
 - `mediasmith/gif.py`: ffmpeg two-pass palette
   (`palettegen`/`paletteuse`), options: fps (default 12), width

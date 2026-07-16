@@ -1,5 +1,20 @@
-# QA to-do — 2026-07-15 session 2 (images: rename · convert · resize ·
-# rotate · folders: rename · new · trash · standardize formatting)
+# QA to-do — 2026-07-15/16 session 2 (images · folders · standardize ·
+# sort · video→gif — the queue is BUILT OUT)
+
+## Video → gif (make ^gif — ^g on any video)
+
+- [ ] ^g toggles the div: fps [12] · width [480] · ^apply; ⏎ in a
+      field applies too; ^g again (from the tree) closes it
+- [ ] Make one from a real film clip: two-pass palette = no dither
+      banding; check the file size feels right for 12fps/480px
+- [ ] Defaults veto: 12 fps / 480 px — tasty or not?
+- [ ] Output Name.gif beside the video, refuse-overwrite; the tree
+      picks it up and the div stays open for another size
+- [ ] No ffmpeg → error toast with the brew line
+- [ ] Whole-video only: start/duration trimming exists in the engine
+      but has no fields yet — want them?
+- [ ] ↓ walks fps → width → ^apply → the pane bar; ↑ walks back
+      (the shift div and gif div can be open together — try it)
 
 ## Standardize formatting (stan^dardize — ^d on books/folders)
 

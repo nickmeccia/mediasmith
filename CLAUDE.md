@@ -201,11 +201,13 @@ Test-driven, calibrated by layer — this replaces Nick-as-only-QA:
    see QA-TODO and actions.ActionBar.set_visible — the folder slice
    (#10 rename/new/trash — Finder chords ⌘⇧N/⌘⌫, send2trash), and
    standardize-formatting #12 (v1 extractors verbatim; the rebuild
-   now keeps metadata + cover), and sort #12b (Nick's spec: wrap a
+   now keeps metadata + cover), sort #12b (Nick's spec: wrap a
    book's files into "Author Sort - Title/" — the fourth plan-shaped
-   action). The fuzz harness now write-jails its child and keeps pty
-   on death (see QA-TODO). Next: video→gif #13, the last queued
-   build. ⬅ next
+   action), and video→gif #13 (third wizard div; _nav_items
+   generalized). The fuzz harness write-jails its child and keeps pty
+   on death; its first real kill (ConfirmSave double-dismiss) is
+   fixed (see QA-TODO). **The claude-TODO queue is built out** — what
+   remains is Nick's QA ledger and what it spawns. ⬅ you are here
 4. **Batch operations.** Partially done ahead of schedule: shift-range
    and album-folder bulk editing shipped (2026-07-10); space-marking +
    batch bar still to come as a third gesture over the same selection

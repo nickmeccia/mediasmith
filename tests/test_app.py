@@ -1719,7 +1719,8 @@ async def test_video_offers_subtitle_actions(media_tree):
     async with app.run_test(size=(120, 40)) as pilot:
         await _goto_alien(app, pilot)
         assert _bar_names(app) == ["get_subs", "clean_subs", "shift_subs",
-                                   "watch", "download_posters", "move"]
+                                   "watch", "download_posters", "gif",
+                                   "move"]
         await pilot.press("z")                       # the srt-less video
         await settle(pilot)
         names = _bar_names(app)
@@ -2345,6 +2346,85 @@ async def test_trash_honors_offline(media_tree, monkeypatch):
         await pilot.pause(0.3)
         assert calls == []
         assert (media_tree / "Empty").is_dir()
+
+
+# -- video → gif (the third wizard div) -------------------------------------
+
+
+async def test_gif_div_toggles_with_tasty_defaults(media_tree):
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _goto_alien(app, pilot)
+        await pilot.press("ctrl+g")                  # make ^gif
+        await pilot.pause()
+        assert app.query_one("#gif-div").display is True
+        assert app.focused.id == "gif-fps"
+        assert app.focused.value == "12"
+        assert app.query_one("#gif-width").value == "480"
+        await pilot.press("ctrl+g")                  # react-style toggle
+        await pilot.pause()
+        assert app.query_one("#gif-div").display is False
+        assert app.focused is app.query_one(LibraryTree)
+
+
+async def test_gif_apply_creates_sibling(media_tree, monkeypatch):
+    from mediasmith import gif
+
+    def fake_make(video, fps, width):
+        assert (fps, width) == (24, 320)
+        target = gif.gif_target(video)
+        target.write_bytes(b"gif")
+        return target
+
+    monkeypatch.setattr(gif, "make_gif", fake_make)
+    monkeypatch.setattr(gif, "check_requirements", lambda: [])
+    monkeypatch.delenv("MEDIASMITH_OFFLINE", raising=False)
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _goto_alien(app, pilot)
+        await pilot.press("ctrl+g")
+        await pilot.pause()
+        app.query_one("#gif-fps").value = "24"
+        app.query_one("#gif-width").value = "320"
+        await pilot.press("ctrl+a")                  # ^apply in the div
+        await pilot.pause(0.6)
+        target = (media_tree / "Movies" / "Alien (1979)"
+                  / "Alien.1979.gif")
+        assert target.exists()
+        tree = app.query_one(LibraryTree)
+        assert tree._node_for(target) is not None
+        assert app.query_one(DetailsPane)._gif_open  # div stays for more
+
+
+async def test_gif_honors_offline(media_tree, monkeypatch):
+    from mediasmith import gif
+    calls = []
+    monkeypatch.setattr(gif, "make_gif", lambda *a, **kw: calls.append(a))
+    monkeypatch.setenv("MEDIASMITH_OFFLINE", "1")
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _goto_alien(app, pilot)
+        await pilot.press("ctrl+g")
+        await pilot.pause()
+        await pilot.press("ctrl+a")
+        await pilot.pause(0.3)
+        assert calls == []
+
+
+async def test_gif_down_walks_into_the_bars(media_tree):
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _goto_alien(app, pilot)
+        await pilot.press("ctrl+g")
+        await pilot.pause()
+        await pilot.press("down")                    # fps → width
+        assert app.focused.id == "gif-width"
+        await pilot.press("down")                    # width → ^apply
+        assert app.focused.id == "gif-apply-btn"
+        await pilot.press("down")                    # → the pane bar
+        assert app.focused.id == "act-get_subs"
+        await pilot.press("up", "up", "up")
+        assert app.focused.id == "gif-fps"
 
 
 # -- global-strip logo ------------------------------------------------------

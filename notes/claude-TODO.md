@@ -368,8 +368,19 @@
      unasked. Counter-clockwise = three presses; say the word if you
      want a second button instead.)
 
--[ ] Video to gif
+-[x] Video to gif
      At a previous job I needed to do this frequently, so I downloaded a CLI tool for it. This one is low priority, but it would be really fun. :)
+     (Claude, 2026-07-16: shipped, and it's the good kind of GIF —
+     ffmpeg's two-pass palette pipeline (palettegen → paletteuse,
+     lanczos scaling), not the dithered single-pass mess. `make ^gif`
+     on any video toggles the third wizard div: fps [12] · width
+     [480] · ^apply (⏎ in either field also applies). Output lands
+     beside the video as Name.gif, refuse-overwrite. Defaults were
+     chosen to be tasty per the brief — 12fps/480px reads smooth and
+     fits a chat window; veto freely. Not surfaced: start/duration
+     trimming (the engine takes both — say the word and two more
+     fields join the div). Needs ffmpeg (brew install ffmpeg); the
+     button tells you if it's missing.)
 
 
 **Foldersmith**

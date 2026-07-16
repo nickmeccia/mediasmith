@@ -30,7 +30,7 @@ from textual.message import Message
 from textual.screen import ModalScreen
 from textual.widgets import Button, Checkbox, Input, Label, Static
 
-from . import (adapters, artfetch, booksort, calibre, folderize, fs,
+from . import (adapters, artfetch, booksort, calibre, folderize, fs, gif,
                imageops, kinds, multiartist, omnibus, posters, srt,
                standardize, subsync)
 from .actions import Action, ActionBar, ActionButton, action_markup
@@ -69,6 +69,8 @@ PANE_ACTIONS = [
     Action("watch", "watch", "w"),
     # ^d recovered from RESERVED_KEYS (2026-07-15 audit — see actions.py)
     Action("download_posters", "download posters", "d"),
+    # ^g reused from create-opf (epub-only — never shares a video view)
+    Action("gif", "make gif", "g"),
     # image: convert palette + resize/rotate — the first CONTEXTUAL
     # REUSES (Nick's pick, 2026-07-15; the ctrl-letter pool ran out).
     # Each letter's other owner is a book/audio-only button, so the two
@@ -546,6 +548,7 @@ class DetailsPane(VerticalScroll, can_focus=True):
         self._multiartist_ready = False
         self._multiartist_plan: multiartist.MultiArtistPlan | None = None
         self._video_srt: Path | None = None     # cleanable/shiftable sibling
+        self._gif_open = False
         self._resize_open = False
         self._resize_base: tuple[int, int] | None = None    # true dimensions
         self._resize_syncing = False    # guards the linked-field recompute
@@ -602,6 +605,19 @@ class DetailsPane(VerticalScroll, can_focus=True):
                     yield ShiftControl(" 0:00.0", id="shift-control")
                     yield Static("", id="shift-mark", classes="fmark")
                 yield Static(SHIFT_HINT, id="shift-hint")
+            with Vertical(id="gif-div"):    # the third wizard div
+                with Horizontal(id="gif-row"):
+                    yield Label(f"{'gif':<{width}}", classes="fkey")
+                    yield FieldInput(id="gif-fps", compact=True,
+                                     type="integer", classes="resize-num")
+                    yield Label("fps", classes="wsep")
+                    yield FieldInput(id="gif-width", compact=True,
+                                     type="integer", classes="resize-num")
+                    yield Label("px wide", classes="wsep")
+                yield ActionBar(
+                    Action("gif_make", "apply", "a",
+                           button_id="gif-apply-btn"),
+                    id="gif-bar")
             yield image_widget(self.images, id="cover-video")
 
         with Vertical(id="panel-book", classes="panel"):
@@ -652,6 +668,7 @@ class DetailsPane(VerticalScroll, can_focus=True):
         self.query_one("#row-art-path").display = False
         self.query_one("#plan-preview").display = False
         self.query_one("#shift-div").display = False
+        self.query_one("#gif-div").display = False
         self.query_one("#resize-div").display = False
         self._sync_pane_bar()
 
@@ -736,8 +753,8 @@ class DetailsPane(VerticalScroll, can_focus=True):
         self._hide_art_path()
         self._video_srt = None
         self._resize_base = None
-        self._resize_hide()     # browsing away closes the div (no pending
-                                # state to lose — resize writes a sibling)
+        self._resize_hide()     # browsing away closes the divs (no pending
+        self._gif_hide()        # state to lose — both write siblings)
         self._shift_hide()      # browsing away drops a pending shift
 
     def _apply_pending(self) -> None:
@@ -747,10 +764,11 @@ class DetailsPane(VerticalScroll, can_focus=True):
         if isinstance(target, list):
             self._begin_bulk(target, origin=None)
             return
-        # re-previewing the SAME image (a resize just landed and the tree
-        # re-listed, or a rotate refreshed the pane) must not slam the
-        # resize div shut under the user
+        # re-previewing the SAME file (a resize/gif just landed and the
+        # tree re-listed, or a rotate refreshed the pane) must not slam
+        # an open wizard div shut under the user
         keep_resize = self._resize_open and target == self.path
+        keep_gif = self._gif_open and target == self.path
         self.path = target
         self.paths = None
         self.kind = kinds.kind_of(target)
@@ -780,6 +798,9 @@ class DetailsPane(VerticalScroll, can_focus=True):
             # reopen without re-prefilling: the user's numbers stand
             self._resize_open = True
             self.query_one("#resize-div").display = True
+        if keep_gif and self.kind == kinds.VIDEO:
+            self._gif_open = True
+            self.query_one("#gif-div").display = True
 
     # -- bulk view: one form applied to many files -----------------------------------
 
@@ -1086,7 +1107,7 @@ class DetailsPane(VerticalScroll, can_focus=True):
             if self._plan_root() is not None:   # a folder is on show
                 names |= {"new_folder", "trash"}
             if self._video_target() is not None:
-                names |= {"get_subs", "watch", "download_posters"}
+                names |= {"get_subs", "watch", "download_posters", "gif"}
                 if self._video_srt is not None:
                     names |= {"clean_subs", "shift_subs"}
                 if self._shift_open:            # the write manifest: ^s
@@ -1125,15 +1146,17 @@ class DetailsPane(VerticalScroll, can_focus=True):
         self.trigger(ev.action)
 
     def _nav_items(self) -> list:
-        """Everything ↑↓ walks, top to bottom: the fields, then every
-        visible action button in reading order."""
-        if self._shift_open and not self.can_edit():
-            # the one focusable thing in a non-editable pane, plus the bar
-            items: list = [self.query_one("#shift-control", ShiftControl)]
-            items.extend(self.query_one("#pane-bar", ActionBar).buttons())
-            return items
-        items = self._field_inputs()
-        if self.can_edit():
+        """Everything ↑↓ walks, top to bottom: the fields, then any open
+        wizard's controls, then every visible action button in reading
+        order. Wizard widgets are how focus enters a non-editable
+        kind's pane (video: the shift readout, the gif inputs)."""
+        items: list = self._field_inputs()      # empty for read-only kinds
+        if self._shift_open:
+            items.append(self.query_one("#shift-control", ShiftControl))
+        if self._gif_open:
+            items.extend([self.query_one("#gif-fps", FieldInput),
+                          self.query_one("#gif-width", FieldInput)])
+        if items:
             for bar in self._active_bars():
                 items.extend(bar.buttons())
         return items
@@ -1227,6 +1250,10 @@ class DetailsPane(VerticalScroll, can_focus=True):
         if ev.input.id in ("resize-w", "resize-h"):     # ⏎ applies
             ev.stop()
             self.action_resize_apply()
+            return
+        if ev.input.id in ("gif-fps", "gif-width"):     # ⏎ applies
+            ev.stop()
+            self.action_gif_make()
             return
         if ev.input.id != "art-path":
             return
@@ -2286,6 +2313,71 @@ class DetailsPane(VerticalScroll, can_focus=True):
             parts.append(f"{done.existing} already there (kept)")
         self.notify(" · ".join(parts), title="download posters", timeout=10)
         self.post_message(self.FolderChanged(done.folder.parent))
+
+    # -- video → gif: the third wizard div (gif.py) ---------------------------------
+    # React-style toggle like resize: no pending state (output is a
+    # sibling), so esc just releases and the div stays until toggled.
+
+    def action_gif(self) -> None:
+        video = self._video_target()
+        if video is None:
+            return
+        if self._gif_open:
+            div = self.query_one("#gif-div")
+            inside = (self.app.focused is not None
+                      and div in self.app.focused.ancestors)
+            self._gif_hide()
+            if inside:                  # don't strand a dropped focus
+                self.app.action_focus_tree()
+            return
+        self.query_one("#gif-fps", FieldInput).value = str(gif.DEFAULT_FPS)
+        self.query_one("#gif-width", FieldInput).value = str(
+            gif.DEFAULT_WIDTH)
+        self._gif_open = True
+        self.query_one("#gif-div").display = True
+        self.app.reveal_details()       # narrow: display, then focus
+        self.query_one("#gif-fps", FieldInput).focus()
+
+    def _gif_hide(self) -> None:
+        self._gif_open = False
+        self.query_one("#gif-div").display = False
+
+    def action_gif_make(self) -> None:
+        video = self._video_target()
+        if video is None or not self._gif_open:
+            return
+        try:
+            fps = int(self.query_one("#gif-fps", FieldInput).value)
+            width = int(self.query_one("#gif-width", FieldInput).value)
+        except ValueError:
+            fps = width = 0
+        if fps < 1 or width < 1:
+            self.notify("fps and width need positive numbers",
+                        title="make gif", severity="warning")
+            return
+        if os.environ.get(artfetch.OFFLINE_ENV):
+            # ffmpeg spawns are too heavy for the fuzz gate (the div
+            # itself still gets fuzzed)
+            self.notify("make gif disabled (MEDIASMITH_OFFLINE set)",
+                        title="make gif", severity="warning")
+            return
+        problems = gif.check_requirements()
+        if problems:
+            self.notify("\n".join(problems), title="make gif",
+                        severity="error", timeout=10)
+            return
+        target = gif.gif_target(video)
+        if target.exists():
+            self.notify(f"{target.name} already exists — not overwriting",
+                        severity="warning", title="make gif")
+            return
+        self.notify(f"{video.name} → {target.name} ({fps} fps, {width} px)…",
+                    title="make gif")
+        # produce-a-sibling: the generic worker fits (div stays open)
+        self._produce_worker(
+            "make gif",
+            lambda path, f=fps, w=width: gif.make_gif(path, fps=f, width=w),
+            video)
 
     # -- shift subs: the inline wizard div ----------------------------------------
 
