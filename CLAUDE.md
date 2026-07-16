@@ -198,9 +198,10 @@ Test-driven, calibrated by layer — this replaces Nick-as-only-QA:
    container + posters (#6), omnibus splitter (#11), Move, the logo;
    session 2 shipped the image slice (#8/#9 rename/convert/resize/
    rotate) and resolved the key-space question — CONTEXTUAL REUSE,
-   see QA-TODO and actions.ActionBar.set_visible. Next: folders #10
-   (rename/new/delete — unblocked now), then standardize-formatting
-   #12, video→gif #13. ⬅ next
+   see QA-TODO and actions.ActionBar.set_visible — and the folder
+   slice (#10 rename/new/trash — Finder chords ⌘⇧N/⌘⌫, send2trash).
+   Next: standardize-formatting #12 (436 unread v1 lines — evaluate
+   before porting), then video→gif #13. ⬅ next
 4. **Batch operations.** Partially done ahead of schedule: shift-range
    and album-folder bulk editing shipped (2026-07-10); space-marking +
    batch bar still to come as a third gesture over the same selection

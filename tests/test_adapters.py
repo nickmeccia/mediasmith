@@ -310,3 +310,12 @@ def test_create_opf_never_overwrites(tmp_path):
     with pytest.raises(FileExistsError):
         adapters.create_opf(book)
     assert existing.read_text() == "precious"
+
+
+def test_create_folder_finds_a_free_name(tmp_path):
+    first = adapters.create_folder(tmp_path)
+    assert first == tmp_path / "untitled folder" and first.is_dir()
+    second = adapters.create_folder(tmp_path)
+    assert second == tmp_path / "untitled folder 2" and second.is_dir()
+    third = adapters.create_folder(tmp_path)
+    assert third == tmp_path / "untitled folder 3" and third.is_dir()

@@ -318,11 +318,33 @@
 
 **Foldersmith**
 
--[ ] Edit folder names
+-[x] Edit folder names
      This would really help with organization. Follow the same pattern as the other editable files (edit name in details view)
+     (Claude, 2026-07-15: shipped — plain folders joined EDITABLE_KINDS,
+     so ⏎ descends into the filename-only form (same as images); the
+     counts row stays. Renaming an expanded folder keeps its open
+     subtree and cursor. Two edges to know: [1] album-like folders
+     still descend into the BULK form, which has no filename field —
+     renaming an album folder means collapsing your way to the plain
+     view isn't possible, so that rename has no UI yet; flag if you
+     want a name field added to bulk-folder views; [2] ⏎ on a folder
+     used to do nothing on wide screens — now it descends. → still
+     folds, ⏎ still never folds.)
 
--[ ] New/Delete
+-[x] New/Delete
      Adding functionality for the final two CRUD operations would take the folder organization to another level. I think there should be keybindings for these operations visible on the command strip, and the "delete" action should have a button on the folder detail view
+     (Claude, 2026-07-15: shipped. The ctrl pool being empty — and
+     these actions showing on every folder, where contextual reuse has
+     no spare letters either — the chords are Finder's own: ⌘⇧N new
+     folder, ⌘⌫ trash (kitty protocol; buttons on folder views carry
+     the phone, where super chords may not arrive). Both sit on the
+     command strip. New folder is Finder's whole flow: creates
+     "untitled folder" in the highlighted folder (a file means its
+     parent), cursor lands on it, focus drops straight into the rename
+     field. Delete = send2trash to the macOS Trash, NO confirm — Trash
+     is the undo; that's the design that stays out of the modal trap.
+     Scope: trash is folders-only per your note — extending it to
+     files is a one-line guard change if you want it.)
 
 -[x] Move(???)
      This feature probably has the biggest difference between how easy the operation is to perform vs how much UI support it needs. This feature probably needs my full attention to solve...unless there's a common pattern hiding in plain sight among other, similar programs.

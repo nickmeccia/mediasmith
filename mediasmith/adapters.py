@@ -353,6 +353,25 @@ def rename(path: Path, new_name: str) -> Path:
     return target
 
 
+def create_folder(parent: Path, base: str = "untitled folder") -> Path:
+    """Finder's flow: mkdir under the first free "untitled folder[ N]"
+    name and return it. May raise OSError."""
+    target = parent / base
+    n = 2
+    while target.exists():
+        target = parent / f"{base} {n}"
+        n += 1
+    target.mkdir()
+    return target
+
+
+def trash(path: Path) -> None:
+    """Send ``path`` to the macOS Trash. Trash IS the undo — that is the
+    design that keeps delete out of the confirm-modal trap. May raise."""
+    from send2trash import send2trash
+    send2trash(str(path))
+
+
 def save_details(path: Path, new_name: str, fields: dict[str, str],
                  art: bytes | None = None) -> Path:
     """The pane's save: write ``art`` and ``fields`` (when writable), then

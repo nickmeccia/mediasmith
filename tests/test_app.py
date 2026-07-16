@@ -59,11 +59,11 @@ async def test_focus_locked_when_nothing_editable(media_tree):
     async with app.run_test(size=(120, 40)) as pilot:
         await settle(pilot)
         tree = app.query_one(LibraryTree)
-        assert tree.cursor_node.is_expanded          # the anchor folder
+        await pilot.press("down", "n")               # notes.txt (kind: other)
+        await settle(pilot)
         for key in ("tab", "shift+tab", "enter"):
             await pilot.press(key)
             assert app.focused is tree
-        assert tree.cursor_node.is_expanded          # enter didn't toggle it
 
 
 async def test_details_escape_returns_to_browser(media_tree):
@@ -71,12 +71,13 @@ async def test_details_escape_returns_to_browser(media_tree):
     async with app.run_test(size=(120, 40)) as pilot:
         await settle(pilot)
         details = app.query_one(DetailsPane)
-        details.focus()
+        details.focus()          # anchor folder: editable, lands on fname
         await pilot.pause()
+        assert app.focused.id == "fname"
         await pilot.press("tab")                     # no cycling out…
-        assert app.focused is details
+        assert details in app.focused.ancestors
         await pilot.press("shift+tab")
-        assert app.focused is details
+        assert details in app.focused.ancestors
         await pilot.press("escape")                  # …only esc releases
         assert app.focused is app.query_one(LibraryTree)
 
@@ -2080,6 +2081,123 @@ async def test_rotate_rotates_in_place(media_tree):
         assert Image.open(media_tree / "Pics" / "wide.png").size == (4, 8)
         assert sorted(p.name for p in (media_tree / "Pics").iterdir()) \
             == ["photo.png", "wide.png"]             # in place: no siblings
+
+
+# -- folders: rename / new / trash --------------------------------------------
+
+
+async def test_folder_is_renameable(media_tree):
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _goto_folder(app, pilot, "Empty")
+        await pilot.press("enter")                   # fname focused
+        assert app.focused.id == "fname"
+        assert app.focused.value == "Empty"
+        app.focused.value = "Emptier"
+        await pilot.press("ctrl+s")
+        await pilot.pause(0.6)
+        assert (media_tree / "Emptier").is_dir()
+        assert not (media_tree / "Empty").exists()
+        tree = app.query_one(LibraryTree)
+        assert str(tree.cursor_node.label) == "Emptier"
+
+
+async def test_folder_rename_keeps_expansion(media_tree):
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _goto_folder(app, pilot, "Movies")
+        await pilot.press("right")                   # expand Movies
+        await settle(pilot)
+        await pilot.press("down", "right")           # expand Alien (1979)
+        await settle(pilot)
+        await pilot.press("up")                      # back onto Movies
+        await settle(pilot)
+        await pilot.press("enter")
+        assert app.focused.value == "Movies"
+        app.focused.value = "Films"
+        await pilot.press("ctrl+s")
+        await pilot.pause(0.8)
+        assert (media_tree / "Films" / "Alien (1979)").is_dir()
+        tree = app.query_one(LibraryTree)
+        child = tree._node_for(media_tree / "Films" / "Alien (1979)")
+        assert child is not None and child.is_expanded   # subtree survived
+        assert str(tree.cursor_node.label) == "Films"
+
+
+async def test_folder_offers_new_and_trash_buttons(media_tree):
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _goto_folder(app, pilot, "Empty")
+        names = _bar_names(app)
+        assert "new_folder" in names and "trash" in names
+        await _goto_notes(app, pilot)                # kind: other — neither
+        names = _bar_names(app)
+        assert "new_folder" not in names and "trash" not in names
+
+
+async def test_new_folder_creates_and_descends(media_tree):
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _goto_folder(app, pilot, "Empty")
+        await pilot.press("super+shift+n")           # Finder's chord
+        await pilot.pause(0.8)
+        target = media_tree / "Empty" / "untitled folder"
+        assert target.is_dir()
+        assert app.focused.id == "fname"             # straight into rename
+        assert app.focused.value == "untitled folder"
+        tree = app.query_one(LibraryTree)
+        assert str(tree.cursor_node.label) == "untitled folder"
+
+
+async def test_new_folder_on_file_targets_its_parent(media_tree):
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _goto_notes(app, pilot)                # a file: its folder
+        await pilot.press("super+shift+n")
+        await pilot.pause(0.8)
+        assert (media_tree / "untitled folder").is_dir()
+
+
+async def test_new_folder_names_dont_collide(media_tree):
+    (media_tree / "Empty" / "untitled folder").mkdir()
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _goto_folder(app, pilot, "Empty")
+        await pilot.press("super+shift+n")
+        await pilot.pause(0.8)
+        assert (media_tree / "Empty" / "untitled folder 2").is_dir()
+
+
+async def test_trash_sends_to_trash_and_tree_follows(media_tree, monkeypatch):
+    import shutil
+    trashed = []
+
+    def fake_trash(path):
+        trashed.append(path)
+        shutil.rmtree(path)
+
+    monkeypatch.setattr(adapters, "trash", fake_trash)
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _goto_folder(app, pilot, "Empty")
+        await pilot.press("super+backspace")         # Finder's chord
+        await pilot.pause(0.8)
+        assert trashed == [media_tree / "Empty"]
+        tree = app.query_one(LibraryTree)
+        assert tree._node_for(media_tree / "Empty") is None
+
+
+async def test_trash_honors_offline(media_tree, monkeypatch):
+    calls = []
+    monkeypatch.setattr(adapters, "trash", lambda p: calls.append(p))
+    monkeypatch.setenv("MEDIASMITH_OFFLINE", "1")
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _goto_folder(app, pilot, "Empty")
+        await pilot.press("super+backspace")
+        await pilot.pause(0.3)
+        assert calls == []
+        assert (media_tree / "Empty").is_dir()
 
 
 # -- global-strip logo ------------------------------------------------------

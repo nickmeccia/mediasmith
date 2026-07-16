@@ -71,7 +71,7 @@ NARROW_COLUMNS = 80
 """Below this many cells the columns swap instead of sharing the row."""
 
 STRIP_GLOBAL = " ^/ path · ^. hidden · ^q quit"
-STRIP_TREE = " ↑↓ ←→ move · type jump · ⏎ edit · ^r refresh"
+STRIP_TREE = " ↑↓ ←→ move · type jump · ⏎ edit · ^r refresh · ⌘⇧n new · ⌘⌫ trash"
 
 LOGO = "𜵎𜵎▖𜷇🯦𜷇▌𜵅𜷃𜵈𜷓𜴀𜵎𜵎▖𜵅𜶍▐𜶓"
 """Octant-glyph wordmark (see notes/octant.py) — right edge of the
@@ -107,6 +107,11 @@ class MediasmithApp(App):
         Binding("ctrl+full_stop", "toggle_hidden", "hidden", show=False),
         Binding("super+shift+full_stop", "toggle_hidden", "hidden",
                 show=False),
+        # folder CRUD rides Finder's chords (the ctrl pool is spent, and
+        # these two show on every kind so contextual reuse can't help);
+        # kitty protocol only — the pane buttons are the fallback
+        Binding("super+shift+n", "new_folder", "new folder", show=False),
+        Binding("super+backspace", "trash_selection", "trash", show=False),
     ]
 
     CSS = """
@@ -314,6 +319,16 @@ class MediasmithApp(App):
     def action_focus_tree(self) -> None:
         self.query_one(LibraryTree).focus()
 
+    def action_new_folder(self) -> None:
+        if len(self.screen_stack) > 1:          # a modal owns the keys
+            return
+        self.query_one(DetailsPane).action_new_folder()
+
+    def action_trash_selection(self) -> None:
+        if len(self.screen_stack) > 1:
+            return
+        self.query_one(DetailsPane).action_trash()
+
     # -- pending move (^n lift/place — DetailsPane.action_move drives) ---------
 
     def begin_lift(self, paths: list[Path]) -> None:
@@ -357,10 +372,23 @@ class MediasmithApp(App):
         if not ev.renamed:
             return
         tree = self.query_one(LibraryTree)
+        if ev.old == Path(tree.path):           # renamed the context row
+            await tree.anchor(ev.new)
+            return
+        # an expanded folder keeps its open subtree across the rename —
+        # collect the old paths before the reload discards the nodes
+        expanded = [Path(str(ev.new) + str(p)[len(str(ev.old)):])
+                    for p in tree._expanded_paths()
+                    if p == ev.old or ev.old in p.parents]
         parent = tree._node_for(ev.new.parent)
         if parent is None:
             return
         await tree.reload_node(parent)
+        for path in expanded:                   # parents precede children
+            node = tree._node_for(path)
+            if node is not None and node.allow_expand:
+                await tree._add_to_load_queue(node)
+                node.expand()
         target = tree._node_for(ev.new)
         if target is not None:
             tree._move_cursor(target.line)
@@ -380,6 +408,34 @@ class MediasmithApp(App):
         node = tree._node_for(ev.path)
         if node is not None:
             await tree.reload_node(node)
+
+    async def on_details_pane_folder_created(
+            self, ev: DetailsPane.FolderCreated) -> None:
+        # Finder's flow: show it, cursor on it, straight into the rename
+        tree = self.query_one(LibraryTree)
+        parent = tree._node_for(ev.path.parent)
+        if parent is not None:
+            await tree.reload_node(parent)
+            if parent.allow_expand and not parent.is_expanded:
+                await tree._add_to_load_queue(parent)
+                parent.expand()
+        target = tree._node_for(ev.path)
+        if target is not None:
+            tree._move_cursor(target.line)
+        details = self.query_one(DetailsPane)
+        details.preview(ev.path, immediate=True)
+        self.reveal_details()                   # narrow: display, then focus
+        details.focus()
+
+    async def on_details_pane_trashed(self, ev: DetailsPane.Trashed) -> None:
+        tree = self.query_one(LibraryTree)
+        if ev.path == Path(tree.path):          # trashed the context row:
+            await tree.anchor(ev.path.parent)   # climb out of the dead root
+            return
+        parent = tree._node_for(ev.path.parent)
+        if parent is not None:
+            await tree.reload_node(parent)
+            tree._move_cursor(parent.line)      # off the dead row
 
 
 def main() -> None:

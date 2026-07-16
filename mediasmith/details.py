@@ -73,6 +73,11 @@ PANE_ACTIONS = [
     Action("convert_tiff", "convert to tiff", "f"),
     Action("resize", "resize", "e"),
     Action("rotate", "rotate", "o"),
+    # folders: no free letters and no reusable ones either (these show
+    # on every folder), so the chords are Finder's own — ⌘⇧N / ⌘⌫ as
+    # App bindings (kitty protocol) — and the buttons carry the phone
+    Action("new_folder", "new folder"),
+    Action("trash", "trash"),
     # Move (proposal M1): ONE stateful chord — ^n lifts the selection,
     # ^n places it at the highlighted spot; the label flips to match.
     # Single-key because the ctrl-letter pool is exhausted (see QA-TODO).
@@ -82,9 +87,11 @@ PANE_ACTIONS = [
 MOVE_WORDS = {False: "move", True: "place here"}
 
 EDITABLE_KINDS: frozenset[str] = frozenset({kinds.AUDIO, kinds.BOOK,
-                                            kinds.IMAGE})
-"""Kinds whose details can take focus for editing. Images edit as a
-filename-only form (no metadata fields) — rename is the edit."""
+                                            kinds.IMAGE, kinds.FOLDER})
+"""Kinds whose details can take focus for editing. Images and plain
+folders edit as a filename-only form (no metadata fields) — rename is
+the edit. Album-like folders never reach here: they descend into the
+bulk form of their contents before the folder panel is consulted."""
 
 DEBOUNCE_SECONDS = 0.15
 
@@ -451,6 +458,22 @@ class DetailsPane(VerticalScroll, can_focus=True):
     class FolderChanged(Message):
         """An action rearranged a folder's subtree (folderize, …); the
         tree should re-list that node."""
+
+        def __init__(self, path: Path) -> None:
+            super().__init__()
+            self.path = path
+
+    class FolderCreated(Message):
+        """New-folder made ``path``; the tree should show it, put the
+        cursor on it, and descend into the rename field (Finder's flow)."""
+
+        def __init__(self, path: Path) -> None:
+            super().__init__()
+            self.path = path
+
+    class Trashed(Message):
+        """``path`` went to the Trash; the tree should re-list its parent
+        and move the cursor off the dead row."""
 
         def __init__(self, path: Path) -> None:
             super().__init__()
@@ -1008,6 +1031,8 @@ class DetailsPane(VerticalScroll, can_focus=True):
                 names.add("folderize")
             if self._multiartist_ready:
                 names.add("fix_multi_artist")
+            if self._plan_root() is not None:   # a folder is on show
+                names |= {"new_folder", "trash"}
             if self._video_target() is not None:
                 names |= {"get_subs", "watch", "download_posters"}
                 if self._video_srt is not None:
@@ -1860,6 +1885,59 @@ class DetailsPane(VerticalScroll, can_focus=True):
         for parent in {p.parent for p in moved}:
             self.post_message(self.FolderChanged(parent))
         self._sync_pane_bar()
+
+    # -- folder CRUD: new folder / trash (rename rides the editable form) ----------
+    # Chords are Finder's (⌘⇧N / ⌘⌫, bound on the App); buttons show on
+    # folder views. The chord works with ANY selection — a highlighted
+    # folder is the target, a highlighted file means its folder.
+
+    def action_new_folder(self) -> None:
+        target = self._place_target()
+        if target is None:
+            return
+        self._new_folder_worker(target)
+
+    @work(thread=True, exclusive=True, group="new-folder")
+    def _new_folder_worker(self, parent: Path) -> None:
+        # one mkdir — but NAS rule: no filesystem op on the UI thread
+        try:
+            folder = adapters.create_folder(parent)
+        except OSError as error:
+            self.app.call_from_thread(
+                self.notify, str(error), title="new folder", severity="error")
+            return
+        self.app.call_from_thread(self._new_folder_done, folder)
+
+    def _new_folder_done(self, folder: Path) -> None:
+        fs.clear_cache()
+        self.post_message(self.FolderCreated(folder))
+
+    def action_trash(self) -> None:
+        root = self._plan_root()
+        if root is None:
+            return
+        if os.environ.get(artfetch.OFFLINE_ENV):
+            # the fuzz gate presses everything — it must not fill the
+            # REAL Trash with scratch folders
+            self.notify("trash disabled (MEDIASMITH_OFFLINE set)",
+                        title="trash", severity="warning")
+            return
+        self._trash_worker(root)
+
+    @work(thread=True, exclusive=True, group="trash")
+    def _trash_worker(self, path: Path) -> None:
+        try:
+            adapters.trash(path)
+        except Exception as error:
+            self.app.call_from_thread(
+                self.notify, str(error), title="trash", severity="error")
+            return
+        self.app.call_from_thread(self._trashed, path)
+
+    def _trashed(self, path: Path) -> None:
+        self.notify(f"{path.name} moved to Trash", title="trash")
+        fs.clear_cache()
+        self.post_message(self.Trashed(path))
 
     # -- subtitles: get / clean / shift / watch on a video file --------------------
     # The engine work lives in subsync.py (dl+sync, the tuned v1 policy)

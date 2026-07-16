@@ -1,5 +1,44 @@
 # QA to-do — 2026-07-15 session 2 (images: rename · convert · resize ·
-# rotate)
+# rotate · folders: rename · new · trash)
+
+## Folder rename (folders joined EDITABLE_KINDS)
+
+- [ ] ⏎ on a plain folder descends into a filename-only form (counts
+      row stays); rename on disk, tree and path bar follow
+- [ ] Rename an EXPANDED folder: its open subtree stays open, cursor
+      stays on it — try a deep NAS artist folder
+- [ ] Renaming the context row (the tree's own root line) re-anchors
+      cleanly
+- [ ] Known gap: album-like folders open as the bulk form, which has
+      no filename field — no UI to rename those yet. Want one?
+- [ ] Behavior change: ⏎ on folders used to be a no-op on wide (and
+      "view" on narrow) — now it descends with focus everywhere
+
+## New folder (⌘⇧N — Finder's chord — or the button on folder views)
+
+- [ ] Creates "untitled folder" in the highlighted folder (highlighted
+      file → its parent), cursor lands on it, focus drops straight
+      into the rename field — Finder's whole flow
+- [ ] Name collisions get " 2", " 3", …
+- [ ] ⌘⇧N needs the kitty protocol: works in Ghostty; CHECK
+      tmux-from-phone — if super doesn't arrive there, the button on
+      folder views is the fallback (chord ideas welcome)
+- [ ] Strip now reads "… · ⌘⇧n new · ⌘⌫ trash" — wording/clipping at
+      phone width is yours to trim
+
+## Trash (⌘⌫, or the trash button on folder views)
+
+- [ ] Sends the folder to the macOS Trash (send2trash dep) with NO
+      confirm — the Trash is the undo. Veto if that feels too hot.
+- [ ] Tree re-lists, cursor moves to the parent; trashing the context
+      row climbs out cleanly
+- [ ] Try one NAS folder: network volumes keep their own .Trashes —
+      confirm the file surfaces in Finder's Trash (send2trash may
+      error on volumes without one; the toast will say so)
+- [ ] Folders only for now (your note scoped it) — files are a
+      one-line change
+- [ ] Buttons print no chord (⌘-chords don't fit the ^x label scheme) —
+      naming/label ideas yours
 
 ## Image rename (images joined EDITABLE_KINDS)
 

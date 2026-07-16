@@ -241,7 +241,27 @@ Shipped per this brief. Deltas the next model needs:
   refuse-overwrite, aspect math), Pilot (toggle div, linked fields
   recompute, apply creates file).
 
-## #10 Folders: rename / new / delete
+## #10 Folders — DONE (Fable, 2026-07-15, session 2)
+
+Shipped per this brief. Deltas:
+
+- Keys: the brief's "^n new" was taken by Move in the interim; new
+  folder is ⌘⇧N and trash is ⌘⌫ (Finder's chords, App bindings,
+  kitty-protocol) with chord-less buttons on folder views as the
+  phone fallback. Contextual reuse couldn't help here: these show on
+  every folder alongside l/x/n/s/o/f/a contexts.
+- send2trash joined the deps (the brief's preference); trash honors
+  MEDIASMITH_OFFLINE so the fuzz gate can't fill the real Trash.
+- Expanded-rename restore didn't need _pending_restore — the Saved
+  handler collects the open subtree's paths, remaps old→new prefixes,
+  reloads the parent, and re-expands (app.py on_details_pane_saved).
+- Rename gap: album-like folders open as the bulk form (no filename
+  field) — renaming those has no UI; flagged to Nick.
+- Two messages joined the pane: FolderCreated (reload → cursor →
+  descend into rename) and Trashed (reload parent, climb out if the
+  context row died).
+
+## #10 original brief (superseded)
 
 - Rename: add `kinds.FOLDER` to EDITABLE_KINDS *carefully* — the
   folder panel currently descends into bulk-edit for album-like

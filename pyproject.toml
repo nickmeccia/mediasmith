@@ -9,6 +9,7 @@ dependencies = [
     "mutagen",
     "pillow",
     "guessit",
+    "send2trash>=2.1.0",
 ]
 
 [project.scripts]
