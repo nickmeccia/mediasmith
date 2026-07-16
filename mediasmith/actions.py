@@ -164,8 +164,6 @@ class ActionBar(Widget):
     def __init__(self, *actions: Action, **kwargs) -> None:
         super().__init__(**kwargs)
         self._actions = actions
-        keys = [a.key for a in actions if a.key]
-        assert len(keys) == len(set(keys)), f"{self.id}: duplicate keys"
         self.styles.layout = FlowLayout.name
 
     def compose(self):
@@ -177,9 +175,18 @@ class ActionBar(Widget):
         return [b for b in self.query(ActionButton) if b.display]
 
     def set_visible(self, names: set[str] | None) -> None:
-        """Show only the named actions (None: show everything)."""
+        """Show only the named actions (None: show everything).
+
+        Keys are CONTEXTUALLY REUSED (Nick's pick, 2026-07-15 — the
+        ctrl-letter pool ran out): one bar may hold two actions on the
+        same chord as long as no context ever shows both. A chord only
+        fires what its printed button says, so the visible set is the
+        contract — enforced here, where every context change lands."""
         for button in self.query(ActionButton):
             button.display = names is None or button.spec.name in names
+        keys = [b.spec.key for b in self.buttons() if b.spec.key]
+        assert len(keys) == len(set(keys)), \
+            f"{self.id}: chord collision among visible buttons ({keys})"
 
     def action_for_key(self, key: str) -> Action | None:
         """The visible action bound to this key event name, if any."""

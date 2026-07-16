@@ -179,7 +179,35 @@ What the next model needs to know:
 - Fuzz: add the new chords; the shift div's arrow keys ride existing
   KEYS already.
 
-## #8 + #9 Images: rename, convert, resize, rotate
+## #8 + #9 Images — DONE (Fable, 2026-07-15, session 2)
+
+Shipped per this brief. Deltas the next model needs:
+
+- **The key-space question is RESOLVED: contextual reuse** (Nick's
+  pick from the QA-TODO session-3 options). Image chords reuse
+  book/audio-only letters (^p jpg, ^g png, ^b webp, ^f tiff, ^e
+  resize, ^o rotate, ^a apply-in-div); the per-bar duplicate-key
+  assert moved from ActionBar.__init__ to set_visible, which asserts
+  no two *visible* buttons share a chord. #10/#12/#13 can now mint
+  chords the same way — pick letters whose other owners can't share
+  a context, and let the assert police it.
+- Images joined EDITABLE_KINDS, so the resize div rides the normal
+  editable-nav path (_field_inputs grows the div's controls while
+  open) — the ShiftControl special case in _nav_items stayed the
+  only one; no generalization was needed after all.
+- Textual's command palette (a system ctrl+p binding that wins before
+  App.on_key) had been silently eating convert-to-epub; it's now
+  disabled app-wide (ENABLE_COMMAND_PALETTE = False).
+- Book _convert now refuses under MEDIASMITH_OFFLINE — that's what
+  let ^p/^b/^y join fuzz KEYS (ebook-convert spawns are too heavy for
+  the gate). Every seed's walk re-dealt, as always.
+- A same-path re-preview (FileCreated → tree reload → cursor re-emit)
+  used to slam wizard state shut; _apply_pending now carries the open
+  resize div across it. Video→gif (#13) will want the same carry.
+- .tiff/.tif joined IMAGE_EXTENSIONS (a tiff convert must produce a
+  file the app can view).
+
+## #8 + #9 original brief (superseded)
 
 - Rename (do first, it's small): add `kinds.IMAGE` to
   `EDITABLE_KINDS`, give `_fill_image` a `_show_editable` path like

@@ -194,9 +194,13 @@ Test-driven, calibrated by layer — this replaces Nick-as-only-QA:
    (subsync.py + get/clean/shift/watch — the shift div is the wizard
    exemplar) and fix-multi-artist (plan previews share one
    apply/cancel pair now). notes/claude-PROPOSALS.md holds the
-   search + Move designs awaiting Nick's pick. Next: video
-   container/posters (#6), then image wiring (#8/#9 — engine
-   exists). ⬅ next
+   search + Move designs (both resolved). Shipped 2026-07-15: video
+   container + posters (#6), omnibus splitter (#11), Move, the logo;
+   session 2 shipped the image slice (#8/#9 rename/convert/resize/
+   rotate) and resolved the key-space question — CONTEXTUAL REUSE,
+   see QA-TODO and actions.ActionBar.set_visible. Next: folders #10
+   (rename/new/delete — unblocked now), then standardize-formatting
+   #12, video→gif #13. ⬅ next
 4. **Batch operations.** Partially done ahead of schedule: shift-range
    and album-folder bulk editing shipped (2026-07-10); space-marking +
    batch bar still to come as a third gesture over the same selection

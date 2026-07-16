@@ -17,7 +17,7 @@ AUDIO_EXTENSIONS = {
 }
 VIDEO_EXTENSIONS = {'.mp4', '.mkv', '.avi', '.mov', '.m4v'}
 BOOK_EXTENSIONS = {'.epub', '.mobi', '.azw3'}
-IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.gif', '.webp'}
+IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.tiff', '.tif'}
 
 # Sibling-subtitle suffixes for videos, in preference order.
 SUBTITLE_SUFFIXES = ['.en.srt', '.srt', '.en.ass', '.ass', '.en.vtt', '.vtt']

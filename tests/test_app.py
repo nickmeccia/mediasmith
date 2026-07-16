@@ -1948,6 +1948,140 @@ async def test_download_posters_honors_offline(media_tree, monkeypatch):
         assert calls == []
 
 
+# -- images: rename / convert / resize / rotate ------------------------------
+
+
+async def _goto_photo(app, pilot):
+    """Cursor onto Pics/photo.png with the details settled."""
+    await settle(pilot)
+    await pilot.press("down")
+    await pilot.press(*"pic", "right")           # Pics, expanded
+    await settle(pilot)
+    await pilot.press("down")                    # photo.png
+    await settle(pilot)
+    assert app.query_one(DetailsPane).kind == "image"
+
+
+async def test_image_is_renameable(media_tree):
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _goto_photo(app, pilot)
+        await pilot.press("enter")                   # fname focused
+        assert app.focused.id == "fname"
+        assert app.focused.value == "photo.png"
+        app.focused.value = "vacation.png"
+        await pilot.press("ctrl+s")
+        await pilot.pause(0.6)
+        old = media_tree / "Pics" / "photo.png"
+        new = media_tree / "Pics" / "vacation.png"
+        assert new.exists() and not old.exists()
+        tree = app.query_one(LibraryTree)
+        assert str(tree.cursor_node.label) == "vacation.png"
+
+
+async def test_image_offers_converts_minus_own_format(media_tree):
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _goto_photo(app, pilot)
+        assert _bar_names(app) == ["save", "convert_jpg", "convert_webp",
+                                   "convert_tiff", "resize", "rotate",
+                                   "move"]                 # png: no png
+
+
+async def test_image_convert_creates_sibling(media_tree):
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _goto_photo(app, pilot)
+        await pilot.press("ctrl+p")                  # convert to j^pg
+        await pilot.pause(0.5)
+        target = media_tree / "Pics" / "photo.jpg"
+        assert target.exists()
+        tree = app.query_one(LibraryTree)
+        assert tree._node_for(target) is not None    # tree picked it up
+
+
+async def test_image_convert_never_overwrites(media_tree):
+    existing = media_tree / "Pics" / "photo.jpg"
+    existing.write_bytes(b"precious")
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _goto_photo(app, pilot)
+        await pilot.press("ctrl+p")
+        await pilot.pause(0.5)
+        assert existing.read_bytes() == b"precious"
+
+
+async def test_resize_div_linked_fields(media_tree):
+    from textual.widgets import Checkbox
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _goto_photo(app, pilot)
+        await pilot.press("ctrl+e")                  # r^esize
+        await pilot.pause()
+        assert app.focused.id == "resize-w"
+        assert app.focused.value == "8"              # prefilled: true dims
+        height = app.query_one("#resize-h")
+        assert height.value == "8"
+        app.focused.value = "4"                      # linked: height follows
+        await pilot.pause()
+        assert height.value == "4"
+        app.query_one("#resize-link", Checkbox).value = False
+        app.focused.value = "2"                      # unlinked: it doesn't
+        await pilot.pause()
+        assert height.value == "4"
+
+
+async def test_resize_apply_creates_file(media_tree):
+    from PIL import Image
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _goto_photo(app, pilot)
+        await pilot.press("ctrl+e")
+        await pilot.pause()
+        from textual.widgets import Checkbox
+        app.query_one("#resize-link", Checkbox).value = False
+        app.query_one("#resize-w").value = "4"
+        app.query_one("#resize-h").value = "2"
+        await pilot.press("ctrl+a")                  # ^apply
+        await pilot.pause(0.5)
+        target = media_tree / "Pics" / "photo (4x2).png"
+        assert target.exists()
+        assert Image.open(target).size == (4, 2)
+        details = app.query_one(DetailsPane)
+        assert details._resize_open                  # div stays for more
+
+
+async def test_resize_div_toggles_closed(media_tree):
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _goto_photo(app, pilot)
+        await pilot.press("ctrl+e")
+        await pilot.pause()
+        assert app.query_one("#resize-div").display is True
+        await pilot.press("escape")                  # release to the tree
+        assert app.focused is app.query_one(LibraryTree)
+        assert app.query_one("#resize-div").display is True   # still open
+        await pilot.press("ctrl+e")                  # react-style toggle
+        await pilot.pause()
+        assert app.query_one("#resize-div").display is False
+
+
+async def test_rotate_rotates_in_place(media_tree):
+    from PIL import Image
+    from tests.mediafactory import make_png
+    make_png(media_tree / "Pics" / "wide.png", size=(8, 4))
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _goto_photo(app, pilot)
+        await pilot.press("down")                    # wide.png (p < w)
+        await settle(pilot)
+        await pilot.press("ctrl+o")                  # r^otate
+        await pilot.pause(0.5)
+        assert Image.open(media_tree / "Pics" / "wide.png").size == (4, 8)
+        assert sorted(p.name for p in (media_tree / "Pics").iterdir()) \
+            == ["photo.png", "wide.png"]             # in place: no siblings
+
+
 # -- global-strip logo ------------------------------------------------------
 
 

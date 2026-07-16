@@ -1,3 +1,73 @@
+# QA to-do — 2026-07-15 session 2 (images: rename · convert · resize ·
+# rotate)
+
+## Image rename (images joined EDITABLE_KINDS)
+
+- [ ] ⏎/⇥/→ on an image descends into a filename-only form; rename on
+      disk works; esc releases (ConfirmSave when the name is edited)
+- [ ] New "dimensions" row (e.g. "1920 × 1080") under size — instant,
+      read from the bytes already in memory; "—" for unparseable files
+- [ ] Narrow-mode change to eyeball: images used to "view" (tree kept
+      focus); now they descend WITH focus like audio/books, because
+      rename made them editable. If browsing photos on the phone feels
+      worse now, say so — a view-first hybrid is possible
+- [ ] .tiff/.tif are now image kinds (they convert, so they must view)
+
+## ⚠ Contextual key reuse is live (your pick, this session)
+
+The ctrl-letter pool was empty, so image actions REUSE letters whose
+other owner is a book/audio-only button — no two same-key buttons can
+ever be visible together, and ActionBar.set_visible asserts it (the
+app would crash-log rather than fire an ambiguous chord):
+- ^p convert to jpg (books: convert to epub)
+- ^g convert to png (books: create opf)
+- ^b convert to webp (books: convert to mobi)
+- ^f convert to tiff (audio: fetch art)
+- ^e resize (books: split omnibus)
+- ^o rotate (audio: art path)
+- ^a apply, in the resize div (plan previews: apply)
+Same Input caveat as ^e/split-omnibus: while the filename field is
+focused, ^e/^a are Input editing chords — the image chords fire from
+the tree, the buttons always work.
+
+## Convert (buttons on every image, own format hidden)
+
+- [ ] photo.png offers jpg/webp/tiff (no png); .jpeg hides jpg (alias)
+- [ ] Converted file lands beside the source, tree follows, cursor
+      stays; refuse-overwrite with a warning toast
+- [ ] RGBA→jpg flattens instead of erroring; EXIF survives where the
+      format allows (engine-tested; spot-check a real photo)
+
+## Resize (^e — the second wizard div; shift-subs is the first)
+
+- [ ] ^e opens an inline div: W × H inputs prefilled with the true
+      dimensions, a "link" checkbox (checked), an ^apply button
+- [ ] Linked: editing either field recomputes the other from the
+      TRUE aspect (no drift from repeated edits); unlinked: distort
+- [ ] ⏎ in either field applies, ^a applies, esc releases to the tree
+      (div stays open — no pending state, nothing to confirm)
+- [ ] ^e again from the tree toggles it closed, react-style
+- [ ] Output is "name (WxH).ext" beside the source (pixels are
+      precious — resize never edits in place), refuse-overwrite
+- [ ] The div's look should match the shift div — flag any mismatch
+
+## Rotate (^o, 90° clockwise per press)
+
+- [ ] The one in-place image edit; the pane's image and dimensions
+      row refresh after each press
+- [ ] On a JPEG the toast appends "(JPEG re-encoded)" (quality 95 —
+      a lossless-jpeg dep was not added unasked; say the word)
+
+## Also changed (FYI)
+
+- Book convert (^p/^b/^y) now refuses under MEDIASMITH_OFFLINE — that
+  guard is what let the convert chords join the fuzz gate's KEYS
+  (real ebook-convert spawns are too heavy for it). Normal use is
+  unaffected unless you export that env var yourself.
+- Fuzz KEYS grew ^a ^p ^b ^y ^t ^g — every seed's walk re-dealt.
+- Bulk-selecting images/videos now says "N images/files" instead of
+  mislabeling them "books" (still read-only — no bulk image form).
+
 # QA to-do — 2026-07-15 session (logo · video: container + posters ·
 # split omnibus)
 

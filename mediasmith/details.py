@@ -28,9 +28,9 @@ from textual.content import Content
 from textual.css.query import NoMatches
 from textual.message import Message
 from textual.screen import ModalScreen
-from textual.widgets import Button, Input, Label, Static
+from textual.widgets import Button, Checkbox, Input, Label, Static
 
-from . import (adapters, artfetch, calibre, folderize, fs, kinds,
+from . import (adapters, artfetch, calibre, folderize, fs, imageops, kinds,
                multiartist, omnibus, posters, srt, subsync)
 from .actions import Action, ActionBar, ActionButton, action_markup
 from .images import image_widget
@@ -63,6 +63,16 @@ PANE_ACTIONS = [
     Action("watch", "watch", "w"),
     # ^d recovered from RESERVED_KEYS (2026-07-15 audit — see actions.py)
     Action("download_posters", "download posters", "d"),
+    # image: convert palette + resize/rotate — the first CONTEXTUAL
+    # REUSES (Nick's pick, 2026-07-15; the ctrl-letter pool ran out).
+    # Each letter's other owner is a book/audio-only button, so the two
+    # can never be on show together; ActionBar.set_visible asserts it.
+    Action("convert_jpg", "convert to jpg", "p"),
+    Action("convert_png", "convert to png", "g"),
+    Action("convert_webp", "convert to webp", "b"),
+    Action("convert_tiff", "convert to tiff", "f"),
+    Action("resize", "resize", "e"),
+    Action("rotate", "rotate", "o"),
     # Move (proposal M1): ONE stateful chord — ^n lifts the selection,
     # ^n places it at the highlighted spot; the label flips to match.
     # Single-key because the ctrl-letter pool is exhausted (see QA-TODO).
@@ -71,8 +81,10 @@ PANE_ACTIONS = [
 
 MOVE_WORDS = {False: "move", True: "place here"}
 
-EDITABLE_KINDS: frozenset[str] = frozenset({kinds.AUDIO, kinds.BOOK})
-"""Kinds whose details can take focus for editing."""
+EDITABLE_KINDS: frozenset[str] = frozenset({kinds.AUDIO, kinds.BOOK,
+                                            kinds.IMAGE})
+"""Kinds whose details can take focus for editing. Images edit as a
+filename-only form (no metadata fields) — rename is the edit."""
 
 DEBOUNCE_SECONDS = 0.15
 
@@ -471,6 +483,9 @@ class DetailsPane(VerticalScroll, can_focus=True):
         self._multiartist_ready = False
         self._multiartist_plan: multiartist.MultiArtistPlan | None = None
         self._video_srt: Path | None = None     # cleanable/shiftable sibling
+        self._resize_open = False
+        self._resize_base: tuple[int, int] | None = None    # true dimensions
+        self._resize_syncing = False    # guards the linked-field recompute
         self._shift_open = False
         self._shift_entries: list[srt.Entry] | None = None  # ORIGINAL parse
         self._shift_target_ms = 0   # pending total shift (the display)
@@ -531,7 +546,23 @@ class DetailsPane(VerticalScroll, can_focus=True):
             yield image_widget(self.images, id="cover-book")
 
         with Vertical(id="panel-image", classes="panel"):
-            yield self._row("size", "image-size", 4 + LABEL_GUTTER)
+            width = len("dimensions") + LABEL_GUTTER
+            yield self._row("size", "image-size", width)
+            yield self._row("dimensions", "image-dims", width)
+            with Vertical(id="resize-div"):     # the wizard div, shift-style
+                with Horizontal(id="resize-row"):
+                    yield Label(f"{'resize':<{width}}", classes="fkey")
+                    yield FieldInput(id="resize-w", compact=True,
+                                     type="integer", classes="resize-num")
+                    yield Label("×", id="resize-x")
+                    yield FieldInput(id="resize-h", compact=True,
+                                     type="integer", classes="resize-num")
+                    yield Checkbox("link", value=True, id="resize-link",
+                                   compact=True)
+                yield ActionBar(
+                    Action("resize_apply", "apply", "a",
+                           button_id="resize-apply-btn"),
+                    id="resize-bar")
             yield image_widget(self.images, id="cover-image")
 
         with Vertical(id="panel-folder", classes="panel"):
@@ -558,6 +589,7 @@ class DetailsPane(VerticalScroll, can_focus=True):
         self.query_one("#row-art-path").display = False
         self.query_one("#plan-preview").display = False
         self.query_one("#shift-div").display = False
+        self.query_one("#resize-div").display = False
         self._sync_pane_bar()
 
     # -- value plumbing ----------------------------------------------------------
@@ -637,6 +669,9 @@ class DetailsPane(VerticalScroll, can_focus=True):
         self.query_one("#plan-preview").display = False
         self._hide_art_path()
         self._video_srt = None
+        self._resize_base = None
+        self._resize_hide()     # browsing away closes the div (no pending
+                                # state to lose — resize writes a sibling)
         self._shift_hide()      # browsing away drops a pending shift
 
     def _apply_pending(self) -> None:
@@ -646,6 +681,10 @@ class DetailsPane(VerticalScroll, can_focus=True):
         if isinstance(target, list):
             self._begin_bulk(target, origin=None)
             return
+        # re-previewing the SAME image (a resize just landed and the tree
+        # re-listed, or a rotate refreshed the pane) must not slam the
+        # resize div shut under the user
+        keep_resize = self._resize_open and target == self.path
         self.path = target
         self.paths = None
         self.kind = kinds.kind_of(target)
@@ -671,6 +710,10 @@ class DetailsPane(VerticalScroll, can_focus=True):
         getattr(self, f"_fill_{self.kind}")(self.path, details)
         self._baseline = self._current_state()
         self._refresh_marks()
+        if keep_resize and self.kind == kinds.IMAGE:
+            # reopen without re-prefilling: the user's numbers stand
+            self._resize_open = True
+            self.query_one("#resize-div").display = True
 
     # -- bulk view: one form applied to many files -----------------------------------
 
@@ -684,7 +727,8 @@ class DetailsPane(VerticalScroll, can_focus=True):
 
     def _count_label(self) -> str:
         n = len(self.paths or [])
-        noun = "audio file" if self.kind == kinds.AUDIO else "book"
+        noun = {kinds.AUDIO: "audio file", kinds.BOOK: "book",
+                kinds.IMAGE: "image"}.get(self.kind, "file")
         return f"{n} {noun}{'s' if n != 1 else ''}"
 
     def _begin_bulk(self, paths: list[Path], origin: Path | None) -> None:
@@ -813,7 +857,12 @@ class DetailsPane(VerticalScroll, can_focus=True):
 
     def _fill_image(self, path: Path, d: adapters.ImageDetails) -> None:
         self._set("image-size", human_size(d.size))
+        has_dims = bool(d.width and d.height)
+        self._set("image-dims",
+                  f"{d.width} × {d.height}" if has_dims else "—")
+        self._resize_base = (d.width, d.height) if has_dims else None
         self._set_cover("cover-image", d.data)
+        self._sync_pane_bar()       # convert/resize/rotate ride the kind
 
     def _fill_folder(self, path: Path, d: adapters.FolderDetails) -> None:
         summary = " · ".join(
@@ -850,6 +899,10 @@ class DetailsPane(VerticalScroll, can_focus=True):
             fields.extend(form.inputs())
         if self.kind == kinds.AUDIO:
             fields.append(self.query_one("#art-field", ArtField))
+        if self._resize_open:       # the div's controls join the ↑↓ walk
+            fields.extend([self.query_one("#resize-w", FieldInput),
+                           self.query_one("#resize-h", FieldInput),
+                           self.query_one("#resize-link", Checkbox)])
         return fields
 
     def _current_state(self) -> tuple[str, dict[str, str]] | None:
@@ -888,6 +941,9 @@ class DetailsPane(VerticalScroll, can_focus=True):
             "✓" if self._pending_art is not None else "")
 
     def on_input_changed(self, ev: Input.Changed) -> None:
+        if ev.input.id in ("resize-w", "resize-h"):     # not fields either
+            self._resize_link_sync(ev.input.id)
+            return
         if ev.input.id != "art-path":       # method input: not a field
             self._refresh_marks()
 
@@ -941,6 +997,13 @@ class DetailsPane(VerticalScroll, can_focus=True):
                             names.add("extract_cover")
                         if self._omnibus_ready:  # probe: ≥2 books inside
                             names.add("split_omnibus")
+                if (self.kind == kinds.IMAGE and self.paths is None
+                        and self.path is not None):
+                    own = imageops.normalize_format(self.path.suffix)
+                    names |= {f"convert_{fmt}"
+                              for fmt in imageops.CONVERT_FORMATS
+                              if fmt != own}
+                    names |= {"resize", "rotate"}
             if self._folderize_ready:           # probe: work to do below
                 names.add("folderize")
             if self._multiartist_ready:
@@ -1084,6 +1147,10 @@ class DetailsPane(VerticalScroll, can_focus=True):
         art_path.focus()
 
     def on_input_submitted(self, ev: Input.Submitted) -> None:
+        if ev.input.id in ("resize-w", "resize-h"):     # ⏎ applies
+            ev.stop()
+            self.action_resize_apply()
+            return
         if ev.input.id != "art-path":
             return
         ev.stop()
@@ -1254,6 +1321,13 @@ class DetailsPane(VerticalScroll, can_focus=True):
     def _convert(self, fmt: str) -> None:
         if self.kind != kinds.BOOK or self.path is None or self.paths is not None:
             return
+        if os.environ.get(artfetch.OFFLINE_ENV):
+            # the fuzz gate presses every chord; real ebook-convert spawns
+            # are minutes each — too heavy for it (this guard is what let
+            # ^p/^b/^y join tests/fuzz.py KEYS)
+            self.notify("convert disabled (MEDIASMITH_OFFLINE set)",
+                        title="convert", severity="warning")
+            return
         source = self.path
         target = source.with_suffix("." + fmt)
         if target.exists():
@@ -1313,6 +1387,146 @@ class DetailsPane(VerticalScroll, can_focus=True):
     def _produced(self, title: str, target: Path) -> None:
         self.notify(f"{target.name} created", title=title)
         self.post_message(self.FileCreated(target))
+
+    # -- image actions: convert / resize / rotate (imageops.py) --------------------
+    # Convert and resize are produce-a-sibling actions (refuse-overwrite
+    # lives in the engine); rotate is the one in-place pixel edit. The
+    # resize div is the second wizard div (shift-subs is the exemplar):
+    # ^e toggles it, ⏎ or ^a applies, esc closes — resize never pends,
+    # so there is no ConfirmSave leg.
+
+    def _image_target(self) -> Path | None:
+        """The single image file the actions apply to, or None."""
+        if (self.kind == kinds.IMAGE and self.paths is None
+                and self.path is not None and self._readable):
+            return self.path
+        return None
+
+    def action_convert_jpg(self) -> None:
+        self._image_convert("jpg")
+
+    def action_convert_png(self) -> None:
+        self._image_convert("png")
+
+    def action_convert_webp(self) -> None:
+        self._image_convert("webp")
+
+    def action_convert_tiff(self) -> None:
+        self._image_convert("tiff")
+
+    def _image_convert(self, fmt: str) -> None:
+        image = self._image_target()
+        if image is None:
+            return
+        self._produce_worker(f"convert to {fmt}",
+                             lambda path, f=fmt: imageops.convert(path, f),
+                             image)
+
+    def action_resize(self) -> None:
+        image = self._image_target()
+        if image is None:
+            return
+        if self._resize_open:           # react-style toggle; nothing pends
+            div = self.query_one("#resize-div")
+            inside = (self.app.focused is not None
+                      and div in self.app.focused.ancestors)
+            self._resize_hide()
+            if inside:                  # don't strand a dropped focus
+                self.app.action_focus_tree()
+            return
+        if self._resize_base is None:
+            self.notify("can't read the image's dimensions",
+                        title="resize", severity="warning")
+            return
+        width, height = self._resize_base
+        self._resize_syncing = True     # prefill is not an edit
+        self.query_one("#resize-w", FieldInput).value = str(width)
+        self.query_one("#resize-h", FieldInput).value = str(height)
+        self._resize_syncing = False
+        self.query_one("#resize-link", Checkbox).value = True
+        self._resize_open = True
+        self.query_one("#resize-div").display = True
+        self.app.reveal_details()       # narrow: display, then focus
+        self.query_one("#resize-w", FieldInput).focus()
+
+    def _resize_hide(self) -> None:
+        self._resize_open = False
+        self.query_one("#resize-div").display = False
+
+    def _resize_link_sync(self, changed_id: str) -> None:
+        """The link checkbox: editing one dimension recomputes the other
+        from the image's true aspect (Photoshop's chain icon). Unlinked,
+        each field stands alone and the resize distorts."""
+        if (self._resize_syncing or not self._resize_open
+                or self._resize_base is None
+                or not self.query_one("#resize-link", Checkbox).value):
+            return
+        try:
+            value = int(self.query_one(f"#{changed_id}", FieldInput).value)
+        except ValueError:
+            return
+        if value < 1:
+            return
+        width, height = self._resize_base
+        if changed_id == "resize-w":
+            _, other = imageops.fit_dimensions(
+                width, height, new_width=value, new_height=None)
+            target = self.query_one("#resize-h", FieldInput)
+        else:
+            other, _ = imageops.fit_dimensions(
+                width, height, new_width=None, new_height=value)
+            target = self.query_one("#resize-w", FieldInput)
+        self._resize_syncing = True
+        target.value = str(other)
+        self._resize_syncing = False
+
+    def on_checkbox_changed(self, ev: Checkbox.Changed) -> None:
+        if ev.checkbox.id == "resize-link" and ev.value:
+            self._resize_link_sync("resize-w")      # re-link: width wins
+
+    def action_resize_apply(self) -> None:
+        image = self._image_target()
+        if image is None or not self._resize_open:
+            return
+        try:
+            width = int(self.query_one("#resize-w", FieldInput).value)
+            height = int(self.query_one("#resize-h", FieldInput).value)
+        except ValueError:
+            width = height = 0
+        if width < 1 or height < 1:
+            self.notify("both dimensions need a positive number",
+                        title="resize", severity="warning")
+            return
+        # the div stays open — a second size costs nothing extra
+        self._produce_worker(
+            "resize",
+            lambda path, w=width, h=height: imageops.resize(path, w, h),
+            image)
+
+    def action_rotate(self) -> None:
+        image = self._image_target()
+        if image is None:
+            return
+        self._rotate_worker(image)
+
+    @work(thread=True, exclusive=True, group="rotate")
+    def _rotate_worker(self, path: Path) -> None:
+        # in place and read-modify-write: exclusive, so rapid presses
+        # queue instead of racing the same file
+        try:
+            _, lossy = imageops.rotate(path, 1)
+        except Exception as error:
+            self.app.call_from_thread(
+                self.notify, str(error), title="rotate", severity="error")
+            return
+        self.app.call_from_thread(self._rotated, path, lossy)
+
+    def _rotated(self, path: Path, lossy: bool) -> None:
+        note = " (JPEG re-encoded)" if lossy else ""
+        self.notify(f"{path.name}: rotated 90° clockwise{note}",
+                    title="rotate")
+        if self.path == path:
+            self.preview(path, immediate=True)  # fresh image + dimensions
 
     # -- folder plans: probe → button → preview → apply/cancel ---------------------
     # Folderize and fix-multi-artist share the mechanism: probes fill in

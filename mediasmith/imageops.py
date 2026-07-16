@@ -22,6 +22,15 @@ _PIL_FORMAT = {"jpg": "JPEG", "jpeg": "JPEG", "png": "PNG",
 
 _NO_ALPHA = {"JPEG"}
 
+_FORMAT_ALIASES = {"jpeg": "jpg", "tif": "tiff"}
+
+
+def normalize_format(suffix: str) -> str:
+    """One name per format, for the convert palette: a ``.jpeg`` file's
+    own-format button is ``jpg``."""
+    name = suffix.lstrip(".").lower()
+    return _FORMAT_ALIASES.get(name, name)
+
 
 def _open(path: Path):
     from PIL import Image

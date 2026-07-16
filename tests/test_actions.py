@@ -41,9 +41,31 @@ def test_reserved_key_rejected():
         Action("quit", "quit", "q")     # ctrl+q is the app's
 
 
-def test_duplicate_keys_in_one_bar_rejected():
-    with pytest.raises(AssertionError):
-        ActionBar(Action("a", "aaa", "a"), Action("b", "abba", "a"))
+class ReuseApp(App):
+    # contextual reuse: two actions may share a chord as long as no
+    # context ever shows both (set_visible enforces the contract)
+    def compose(self):
+        yield ActionBar(Action("a", "aaa", "a"), Action("b", "abba", "a"))
+
+
+async def test_shared_key_ok_while_only_one_shows():
+    app = ReuseApp()
+    async with app.run_test(size=(80, 24)) as pilot:
+        bar = app.query_one(ActionBar)
+        bar.set_visible({"a"})
+        await pilot.pause()
+        assert bar.action_for_key("ctrl+a").name == "a"
+        bar.set_visible({"b"})
+        assert bar.action_for_key("ctrl+a").name == "b"
+
+
+async def test_shared_key_both_visible_rejected():
+    app = ReuseApp()
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        bar = app.query_one(ActionBar)
+        with pytest.raises(AssertionError):
+            bar.set_visible({"a", "b"})
 
 
 # -- the bar: wrap, visibility, keys ----------------------------------------------

@@ -38,7 +38,11 @@ KEYS = ([b"\x1b[B"] * 5 + [b"\x1b[A"] * 3
            b"\x18",                      # ^x: fix multi-artist
            b"\x0e",                      # ^n: move (lift/place)
            b"\x04",                      # ^d: download posters
-           b"\x05",                      # ^e: split omnibus
+           b"\x05",                      # ^e: split omnibus / resize div
+           b"\x01",                      # ^a: plan apply / resize apply
+           b"\x10", b"\x02", b"\x19",    # ^p ^b ^y: converts (books are
+                                         # OFFLINE-guarded; images run)
+           b"\x14", b"\x07",             # ^t ^g: extract cover, create opf
            b"\x1b[1;2C", b"\x1b[1;2D",   # shift+→/←: shift-div nudges
            b"\x1b[5~", b"\x1b[6~"])      # pgup/pgdn: ±10s nudges
 

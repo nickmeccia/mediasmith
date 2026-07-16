@@ -257,10 +257,17 @@
 
 **Imagesmith** (I know that these names aren't preserved in the new design, but I thought this was a cute header for this section)
 
--[ ] View/edit name
+-[x] View/edit name
      Mediasmith already shows images, but images are media, too, and I want to be able to edit them! Let's start with editing the name.
+     (Claude, 2026-07-15: shipped — images joined EDITABLE_KINDS, so
+     ⏎/⇥/→ descends into a filename-only form; rename rides the same
+     ✓/^s/ConfirmSave flow as audio and books. A "dimensions" row
+     (1920 × 1080) joined size in the panel — free to read, and the
+     resize div needs the true aspect anyway. Consequence to eyeball:
+     on the phone, images now descend WITH focus (like audio) instead
+     of narrow "view" — flag if photo browsing feels worse.)
 
--[ ] Convert
+-[x] Convert
      Converting images is a task that I perform regularly, and I always have to open up Photoshop (and then the image file, too) to do it. It would be really neat to be able to convert an image using mediasmith into the following formats:
      - jpg
      - png
@@ -268,12 +275,42 @@
      - tiff
      - Claude's suggestions
      Converting will require choosing options beforehand; this pattern exists in a lot of these features, and I need to come up with a standard solution. However, I want your Fable-sized intelligence to get the functionality into the app before you leave me and it is super late and I can't think of the answer right now. Since you read everything all at once, hopefully you can apply this note found at the end to all "wizard"-style actions, choosing a pattern and using the same pattern. (Modal? I hate modals, but it's easy to conceive of this style of solution in a modal.)
+     (Claude, 2026-07-15: shipped, book-convert's exact shape — one
+     button per format, own format hidden (.jpeg counts as jpg), no
+     options-wizard needed after all: sensible defaults live in the
+     engine (JPEG quality 95, RGBA→jpg flattens, EXIF preserved) and
+     the output lands beside the source, refuse-overwrite. Your list
+     stands as-is; no additions — HEIC can't be written by Pillow and
+     AVIF needs a plugin, so both wait until you ask. The standard
+     wizard answer you wanted exists too, just not here: it's the
+     inline div (shift-subs, resize) — convert simply had no options
+     worth a div. NOTE the keys: this feature spent the key-space
+     decision — see QA-TODO "contextual key reuse". Also fixed en
+     route: Textual's hidden command palette owned ^p and silently ate
+     convert-to-epub; the palette is now disabled app-wide.)
 
--[ ] Resize
+-[x] Resize
      For this one, I think a button should toggle a div with dimensional controls. I am imagining Photoshop's two numerical inputs separated by a link icon. With the link icon enabled, resizing preserves aspect ratio; with it disabled, resizing distorts the image. I don't need a link icon, but...can you do a checkbox?
+     (Claude, 2026-07-15: shipped as specced — `r^esize` toggles an
+     inline div: W × H integer inputs prefilled with the true
+     dimensions, a "link" checkbox (yes, Textual has one — checked by
+     default), and an ^apply button; ⏎ in either field also applies.
+     Linked edits recompute the other side from the ORIGINAL aspect,
+     so repeated back-and-forth never drifts. Two decisions to review:
+     [1] output is a sibling "name (WxH).ext", never in place — pixels
+     are precious where metadata is not; [2] the div has no pending
+     state (nothing to lose), so esc just releases and the div stays
+     until ^e toggles it away — unlike shift-subs there's no
+     ConfirmSave leg.)
 
--[ ] Rotate
+-[x] Rotate
      I don't know how often I will use this feature, but it seems easy to implement. Add a button for it. This one is lower priority than video to gif, I have decided
+     (Claude, 2026-07-15: shipped — `r^otate`, 90° clockwise per
+     press, the one in-place image edit; the pane's image and
+     dimensions refresh after each turn. JPEGs re-encode at quality 95
+     (the toast says so) — a lossless-jpeg dependency wasn't added
+     unasked. Counter-clockwise = three presses; say the word if you
+     want a second button instead.)
 
 -[ ] Video to gif
      At a previous job I needed to do this frequently, so I downloaded a CLI tool for it. This one is low priority, but it would be really fun. :)

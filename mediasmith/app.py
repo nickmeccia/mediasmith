@@ -87,6 +87,11 @@ STRIP_DETAILS = " ↑↓ fields · ^s save · esc back"
 
 class MediasmithApp(App):
 
+    # Textual's command palette squats on ctrl+p (a system binding that
+    # wins before App.on_key) — it silently ate the convert-to-epub and
+    # convert-to-jpg chords, and none of this app's chrome comes from it
+    ENABLE_COMMAND_PALETTE = False
+
     # sets -narrow / -wide on the screen as the terminal resizes; all
     # phone-layout rules hang off those classes
     HORIZONTAL_BREAKPOINTS = [(0, "-narrow"), (NARROW_COLUMNS, "-wide")]
@@ -163,6 +168,13 @@ class MediasmithApp(App):
     #shift-control { width: auto; }
     ShiftControl:focus { text-style: reverse; }
     #shift-hint { height: 1; color: $text-muted; }
+    /* the resize wizard div — same block shape as #shift-div */
+    #resize-div { height: auto; margin-top: 1; }
+    #resize-row { height: 1; }
+    .resize-num { width: 7; background: transparent; }
+    #resize-x { width: 3; color: $text-muted; text-align: center; }
+    #resize-link { margin-left: 2; }
+    #resize-bar { margin-top: 1; }
     #plan-preview { height: auto; margin-top: 1; }
     #plan-tree { height: auto; }
     #ctxrow { height: 1; background: $surface; color: $text-muted; }

@@ -7,6 +7,7 @@ and the write half takes plain field dicts back.
 
 from __future__ import annotations
 
+import io
 import shutil
 import subprocess
 from dataclasses import dataclass, field
@@ -48,6 +49,8 @@ class BookDetails:
 class ImageDetails:
     size: int
     data: bytes
+    width: int      # 0 when Pillow can't parse the file
+    height: int
 
 
 @dataclass(frozen=True)
@@ -123,7 +126,15 @@ def _read_book(path: Path) -> BookDetails:
 
 
 def _read_image(path: Path) -> ImageDetails:
-    return ImageDetails(size=path.stat().st_size, data=path.read_bytes())
+    data = path.read_bytes()
+    try:
+        from PIL import Image
+        with Image.open(io.BytesIO(data)) as img:
+            width, height = img.size    # header only — no pixel decode
+    except Exception:
+        width = height = 0
+    return ImageDetails(size=path.stat().st_size, data=data,
+                        width=width, height=height)
 
 
 def _read_folder(path: Path) -> FolderDetails:
