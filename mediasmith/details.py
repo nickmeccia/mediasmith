@@ -30,8 +30,9 @@ from textual.message import Message
 from textual.screen import ModalScreen
 from textual.widgets import Button, Checkbox, Input, Label, Static
 
-from . import (adapters, artfetch, calibre, folderize, fs, imageops, kinds,
-               multiartist, omnibus, posters, srt, subsync)
+from . import (adapters, artfetch, booksort, calibre, folderize, fs,
+               imageops, kinds, multiartist, omnibus, posters, srt,
+               standardize, subsync)
 from .actions import Action, ActionBar, ActionButton, action_markup
 from .images import image_widget
 
@@ -51,6 +52,11 @@ PANE_ACTIONS = [
     # while a tag field is focused the Input eats ^e (end-of-line), so
     # the chord fires from the tree — the button itself always works
     Action("split_omnibus", "split omnibus", "e"),
+    # ^d reused from download-posters (video-only — never shares a view
+    # with books or folders)
+    Action("standardize", "standardize", "d"),
+    # ^t reused from extract-cover (single-epub-only, never a folder)
+    Action("sort", "sort", "t"),
     Action("folderize", "folderize", "l"),
     Action("fix_multi_artist", "fix multi-artist", "x"),
     # while any plan preview is up, these two own the bar
@@ -157,6 +163,27 @@ def render_multiartist_plan(plan: multiartist.MultiArtistPlan) -> str:
         if len(group.changes) > GROUP_PREVIEW_FILES:
             more = len(group.changes) - GROUP_PREVIEW_FILES
             lines.append(f"    [dim]…and {more} more[/]")
+    if len(lines) > PLAN_PREVIEW_LINES:
+        hidden = len(lines) - PLAN_PREVIEW_LINES
+        lines = lines[:PLAN_PREVIEW_LINES] + [f"[dim]…and {hidden} more lines[/]"]
+    return "\n".join(lines)
+
+
+def render_sort_plan(plan: booksort.SortPlan) -> str:
+    """The sort preview: each wrapper folder and the files moving in."""
+    n, g = plan.file_count, len(plan.groups)
+    lines = [f"{n} file{'s' if n != 1 else ''} into "
+             f"{g} book folder{'s' if g != 1 else ''}:", ""]
+    for group in plan.groups:
+        lines.append(f"  [bold]{_mk(group.folder_name)}/[/]")
+        for file in group.files:
+            lines.append(f"    {_mk(file.name)}")
+    if plan.skips:
+        lines.append("")
+        for skip in plan.skips[:8]:
+            lines.append(f"  {_mk(skip.source.name)}  [dim]{skip.reason}[/]")
+        if len(plan.skips) > 8:
+            lines.append(f"  [dim]…and {len(plan.skips) - 8} more[/]")
     if len(lines) > PLAN_PREVIEW_LINES:
         hidden = len(lines) - PLAN_PREVIEW_LINES
         lines = lines[:PLAN_PREVIEW_LINES] + [f"[dim]…and {hidden} more lines[/]"]
@@ -400,6 +427,16 @@ class ConfirmSave(ModalScreen[str]):
     def __init__(self, name: str) -> None:
         super().__init__()
         self._filename = name
+        self._decided = False
+
+    def _decide(self, choice: str) -> None:
+        # two keys inside one frame (esc esc, enter+esc…) would dismiss
+        # twice — the second pop has no screen left and ScreenStackError
+        # is app death (fuzz seed 10, 2026-07-16). First answer wins.
+        if self._decided:
+            return
+        self._decided = True
+        self.dismiss(choice)
 
     def compose(self):
         with Vertical(id="confirm-box"):
@@ -413,10 +450,10 @@ class ConfirmSave(ModalScreen[str]):
         self.query_one("#save", Button).focus()
 
     def on_button_pressed(self, ev: Button.Pressed) -> None:
-        self.dismiss(ev.button.id or "cancel")
+        self._decide(ev.button.id or "cancel")
 
     def action_choose(self, choice: str) -> None:
-        self.dismiss(choice)
+        self._decide(choice)
 
 
 class DetailsPane(VerticalScroll, can_focus=True):
@@ -503,6 +540,9 @@ class DetailsPane(VerticalScroll, can_focus=True):
         self._omnibus_plan: omnibus.OmnibusPlan | None = None
         self._folderize_ready = False   # probe: this folder has work to do
         self._folderize_plan: folderize.FolderizePlan | None = None
+        self._standardize_ready = False     # probe: uncleaned epubs below
+        self._sort_ready = False            # probe: unwrapped books below
+        self._sort_plan: booksort.SortPlan | None = None
         self._multiartist_ready = False
         self._multiartist_plan: multiartist.MultiArtistPlan | None = None
         self._video_srt: Path | None = None     # cleanable/shiftable sibling
@@ -687,6 +727,9 @@ class DetailsPane(VerticalScroll, can_focus=True):
         self._omnibus_plan = None
         self._folderize_ready = False
         self._folderize_plan = None
+        self._standardize_ready = False
+        self._sort_ready = False
+        self._sort_plan = None
         self._multiartist_ready = False
         self._multiartist_plan = None
         self.query_one("#plan-preview").display = False
@@ -815,6 +858,8 @@ class DetailsPane(VerticalScroll, can_focus=True):
         if self.path is not None:               # album-folder origin: the
             self._probe_folderize(self.path)    # folder actions still apply
             self._probe_multiartist(self.path)
+            self._probe_standardize(self.path)
+            self._probe_sort(self.path)
         if self._focus_after_load:
             self._focus_after_load = False
             self.focus()
@@ -896,6 +941,8 @@ class DetailsPane(VerticalScroll, can_focus=True):
         self._set("folder-counts", summary)
         self._probe_folderize(path)
         self._probe_multiartist(path)
+        self._probe_standardize(path)
+        self._probe_sort(path)
 
     def _fill_other(self, path: Path, d: adapters.OtherDetails) -> None:
         self._set("other-size", human_size(d.size))
@@ -1016,6 +1063,7 @@ class DetailsPane(VerticalScroll, can_focus=True):
                               if fmt != suffix.lstrip(".")}
                     if suffix == ".epub":       # the only kind we can read
                         names.add("create_opf")
+                        names.add("standardize")
                         if self._book_cover:    # only when there is one
                             names.add("extract_cover")
                         if self._omnibus_ready:  # probe: ≥2 books inside
@@ -1029,6 +1077,10 @@ class DetailsPane(VerticalScroll, can_focus=True):
                     names |= {"resize", "rotate"}
             if self._folderize_ready:           # probe: work to do below
                 names.add("folderize")
+            if self._standardize_ready:         # probe: uncleaned epubs
+                names.add("standardize")
+            if self._sort_ready:                # probe: unwrapped books
+                names.add("sort")
             if self._multiartist_ready:
                 names.add("fix_multi_artist")
             if self._plan_root() is not None:   # a folder is on show
@@ -1563,7 +1615,8 @@ class DetailsPane(VerticalScroll, can_focus=True):
     def plan_preview_open(self) -> bool:
         return (self._folderize_plan is not None
                 or self._multiartist_plan is not None
-                or self._omnibus_plan is not None)
+                or self._omnibus_plan is not None
+                or self._sort_plan is not None)
 
     def _show_plan_preview(self, title: str, text: str) -> None:
         for panel in PANELS:
@@ -1601,6 +1654,11 @@ class DetailsPane(VerticalScroll, can_focus=True):
             self._omnibus_plan = None
             self.notify("splitting…", title="split omnibus")
             self._omnibus_exec_worker(plan)
+        elif self._sort_plan is not None:
+            plan = self._sort_plan
+            self._sort_plan = None
+            self.notify("wrapping…", title="sort")
+            self._sort_exec_worker(plan)
 
     def action_plan_cancel(self) -> None:
         if not self.plan_preview_open():
@@ -1608,6 +1666,7 @@ class DetailsPane(VerticalScroll, can_focus=True):
         self._folderize_plan = None
         self._multiartist_plan = None
         self._omnibus_plan = None
+        self._sort_plan = None
         if self.path is not None:               # restore the normal view
             self.preview(self.path, immediate=True)
 
@@ -1789,6 +1848,132 @@ class DetailsPane(VerticalScroll, can_focus=True):
             self.post_message(self.FileCreated(path))
         if self.path == source:
             self.preview(source, immediate=True)    # restore the book view
+
+    # -- sort: wrap each book's files into "Author Sort - Title/" ------------------
+    # The fourth plan-shaped action (booksort.py) — folderize's exact
+    # shape on the shared plan_apply/plan_cancel pair.
+
+    @work(thread=True, exclusive=True, group="sort-probe")
+    def _probe_sort(self, root: Path) -> None:
+        ready = booksort.probe(root)
+        if ready:
+            self.app.call_from_thread(self._sort_probed, root)
+
+    def _sort_probed(self, root: Path) -> None:
+        if self.path == root and not self.plan_preview_open():
+            self._sort_ready = True
+            self._sync_pane_bar()
+
+    def action_sort(self) -> None:
+        root = self._plan_root()
+        if root is None or not self._sort_ready:
+            return
+        self.notify("reading…", title="sort")
+        self._sort_plan_worker(root)
+
+    @work(thread=True, exclusive=True, group="sort-plan")
+    def _sort_plan_worker(self, root: Path) -> None:
+        plan = booksort.build_plan(root)
+        self.app.call_from_thread(self._sort_planned, root, plan)
+
+    def _sort_planned(self, root: Path, plan: booksort.SortPlan) -> None:
+        if self.path != root:                   # selection moved on
+            return
+        if plan.empty:
+            self.notify("every book here is already wrapped", title="sort")
+            self._sort_ready = False
+            self._sync_pane_bar()
+            return
+        self._sort_plan = plan
+        self._show_plan_preview(f"sort {root.name}/", render_sort_plan(plan))
+
+    @work(thread=True, exclusive=True, group="sort-exec")
+    def _sort_exec_worker(self, plan: booksort.SortPlan) -> None:
+        moved, errors = booksort.execute(plan)
+        self.app.call_from_thread(self._sort_done, plan.root, moved, errors)
+
+    def _sort_done(self, root: Path, moved: int,
+                   errors: list[tuple[Path, str]]) -> None:
+        parts = [f"{moved} file{'s' if moved != 1 else ''} wrapped"]
+        if errors:
+            path, reason = errors[0]
+            parts.append(f"{len(errors)} failed — {path.name}: {reason}")
+        self.notify(" · ".join(parts), title="sort", timeout=8,
+                    severity="warning" if errors else "information")
+        fs.clear_cache()                        # the subtree just changed
+        self.post_message(self.FolderChanged(root))
+        if self.path == root:
+            self.preview(root, immediate=True)  # fresh counts, fresh probes
+
+    # -- standardize formatting: strip source cruft, rebuild clean -----------------
+    # One engine, two contexts: a single epub, or every direct-child
+    # epub of a folder (batch = v1's multi-file mode). Outputs are
+    # "(clean)" siblings, so no plan preview — nothing moves.
+
+    @work(thread=True, exclusive=True, group="standardize-probe")
+    def _probe_standardize(self, root: Path) -> None:
+        ready = standardize.probe_folder(root)
+        if ready:
+            self.app.call_from_thread(self._standardize_probed, root)
+
+    def _standardize_probed(self, root: Path) -> None:
+        if self.path == root and not self.plan_preview_open():
+            self._standardize_ready = True
+            self._sync_pane_bar()
+
+    def action_standardize(self) -> None:
+        if (self.kind == kinds.BOOK and self.paths is None
+                and self.path is not None
+                and self.path.suffix.lower() == ".epub"):
+            books = [self.path]
+        else:
+            root = self._plan_root()
+            if root is None or not self._standardize_ready:
+                return
+            books = standardize.folder_books(root)
+            books = [b for b in books
+                     if not standardize.clean_target(b).exists()]
+            if not books:
+                self.notify("everything here is already standardized",
+                            title="standardize")
+                self._standardize_ready = False
+                self._sync_pane_bar()
+                return
+        n = len(books)
+        self.notify(f"standardizing {n} book{'s' if n != 1 else ''}…",
+                    title="standardize")
+        self._standardize_worker(books)
+
+    @work(thread=True, exclusive=False, group="standardize")
+    def _standardize_worker(self, books: list[Path]) -> None:
+        # a whole-book rewrite per file — the heaviest batch yet; stream
+        # results as they land
+        done: list[standardize.BookDone] = []
+        failed: list[standardize.BookFailed] = []
+        for event in standardize.run(books):
+            if isinstance(event, standardize.BookDone):
+                done.append(event)
+                self.app.call_from_thread(self._standardized, event)
+            else:
+                failed.append(event)
+                self.app.call_from_thread(
+                    self.notify, f"{event.source.name}: {event.reason}",
+                    title="standardize", severity="warning", timeout=8)
+        if len(books) > 1:
+            summary = [f"{len(done)} standardized"]
+            if failed:
+                summary.append(f"{len(failed)} failed")
+            self.app.call_from_thread(
+                self.notify, " · ".join(summary), title="standardize",
+                timeout=8,
+                severity="warning" if failed else "information")
+
+    def _standardized(self, event: standardize.BookDone) -> None:
+        self.notify(f"{event.target.name} · {event.style} · "
+                    f"{event.chapters} chapter"
+                    f"{'s' if event.chapters != 1 else ''}",
+                    title="standardize")
+        self.post_message(self.FileCreated(event.target))
 
     # -- move (proposal M1): lift the selection, browse, place ---------------------
     # State lives on the App so a lift survives selection changes and

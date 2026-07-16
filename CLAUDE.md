@@ -198,10 +198,14 @@ Test-driven, calibrated by layer — this replaces Nick-as-only-QA:
    container + posters (#6), omnibus splitter (#11), Move, the logo;
    session 2 shipped the image slice (#8/#9 rename/convert/resize/
    rotate) and resolved the key-space question — CONTEXTUAL REUSE,
-   see QA-TODO and actions.ActionBar.set_visible — and the folder
-   slice (#10 rename/new/trash — Finder chords ⌘⇧N/⌘⌫, send2trash).
-   Next: standardize-formatting #12 (436 unread v1 lines — evaluate
-   before porting), then video→gif #13. ⬅ next
+   see QA-TODO and actions.ActionBar.set_visible — the folder slice
+   (#10 rename/new/trash — Finder chords ⌘⇧N/⌘⌫, send2trash), and
+   standardize-formatting #12 (v1 extractors verbatim; the rebuild
+   now keeps metadata + cover), and sort #12b (Nick's spec: wrap a
+   book's files into "Author Sort - Title/" — the fourth plan-shaped
+   action). The fuzz harness now write-jails its child and keeps pty
+   on death (see QA-TODO). Next: video→gif #13, the last queued
+   build. ⬅ next
 4. **Batch operations.** Partially done ahead of schedule: shift-range
    and album-folder bulk editing shipped (2026-07-10); space-marking +
    batch bar still to come as a third gesture over the same selection

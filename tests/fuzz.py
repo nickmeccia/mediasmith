@@ -50,19 +50,41 @@ KEYS = ([b"\x1b[B"] * 5 + [b"\x1b[A"] * 3
 SIZES = [(120, 40), (60, 40)]
 
 
-def attempt(seed: int, seconds: float, media: Path,
+def _jail_argv(argv: list[str], scratch: Path) -> list[str]:
+    """Confine the child's file WRITES to its scratch tree (macOS
+    seatbelt). The walk can browse anywhere — it has climbed to /dev,
+    and once RENAMED ITS OWN SCRATCH DIR out from under the app
+    (2026-07-15, seed 7) — so with rename/move/new-folder live, an
+    unjailed walk can mutate real directories. Reads stay open; only
+    writes outside the scratch (plus tty devices) are denied, and a
+    denied write surfaces as an error toast — an error path worth
+    fuzzing in itself."""
+    if sys.platform != "darwin" or not shutil.which("sandbox-exec"):
+        return argv
+    profile = ("(version 1)(allow default)(deny file-write*)"
+               f'(allow file-write* (subpath "{scratch}") (subpath "/dev"))')
+    return ["sandbox-exec", "-p", profile, *argv]
+
+
+def attempt(seed: int, seconds: float, scratch: Path, media: Path,
             size: tuple[int, int]) -> bool:
-    """Returns True if the app died mid-stress."""
+    """Returns True if the app died mid-stress. The pty output is kept
+    at /tmp/fuzz-seed<N>.pty on death — only that tail can tell a
+    worker crash from a swallowed CancelledError (standing lesson)."""
     pid, fd = pty.fork()
     if pid == 0:
         os.environ["TERM"] = "xterm-256color"
         os.environ["PYTHONFAULTHANDLER"] = "1"
         os.environ["MEDIASMITH_OFFLINE"] = "1"   # ^f must not hit the API
-        os.execvp(sys.executable, [sys.executable, "-m", "mediasmith", str(media)])
+        argv = _jail_argv([sys.executable, "-m", "mediasmith", str(media)],
+                          scratch)
+        os.execvp(argv[0], argv)
 
     cols, rows = size
     fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
     os.set_blocking(fd, False)   # a blocking write can hang the gate forever
+    pty_log = Path(f"/tmp/fuzz-seed{seed}.pty")
+    pty_out = pty_log.open("wb")
 
     def drain() -> bool:
         """Read everything buffered; False when the child hung up. A lazy
@@ -77,6 +99,7 @@ def attempt(seed: int, seconds: float, media: Path,
                 return False
             if not chunk:
                 return False
+            pty_out.write(chunk)
 
     random.seed(seed)
     start = time.time()
@@ -110,11 +133,23 @@ def attempt(seed: int, seconds: float, media: Path,
         except OSError:
             pass
         time.sleep(1)
+        drain()
     try:
         os.kill(pid, 9)
     except ProcessLookupError:
         pass
     os.waitpid(pid, 0)
+    pty_out.close()
+    if dead:
+        # unique name: a surviving re-run of the same seed must never
+        # delete the evidence of an earlier death
+        kept = pty_log.with_name(f"fuzz-seed{seed}-{int(time.time())}.pty")
+        pty_log.rename(kept)
+        tail = kept.read_bytes()[-2000:]
+        print(f"seed {seed}: pty kept at {kept}; tail:\n"
+              f"{tail.decode('utf-8', errors='replace')}", flush=True)
+    else:
+        pty_log.unlink(missing_ok=True)
     return dead
 
 
@@ -122,15 +157,17 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--seeds", type=int, default=6)
     parser.add_argument("--seconds", type=float, default=75)
+    parser.add_argument("--first", type=int, default=7,
+                        help="first seed (re-run a dying seed alone)")
     args = parser.parse_args()
 
     scratch = Path(tempfile.mkdtemp(prefix="mediasmith-fuzz-"))
     media = make_media_tree(scratch / "media")
     deaths = 0
     try:
-        for seed in range(7, 7 + args.seeds):
+        for seed in range(args.first, args.first + args.seeds):
             size = SIZES[seed % len(SIZES)]
-            died = attempt(seed, args.seconds, media, size)
+            died = attempt(seed, args.seconds, scratch, media, size)
             deaths += died
             print(f"seed {seed} @ {size[0]}x{size[1]}: "
                   f"{'DIED' if died else f'survived {args.seconds:.0f}s'}",

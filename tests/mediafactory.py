@@ -76,11 +76,21 @@ def make_epub(path: Path, title="Dune", author="Frank Herbert",
   <rootfiles><rootfile full-path="content.opf"
     media-type="application/oebps-package+xml"/></rootfiles>
 </container>"""
+    # calibre epubs always carry an NCX; standardize-formatting needs one
+    ncx = f"""<?xml version="1.0"?>
+<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">
+  <head><meta name="dtb:uid" content="test"/></head>
+  <docTitle><text>{title}</text></docTitle>
+  <navMap><navPoint id="np1" playOrder="1">
+    <navLabel><text>Chapter 1</text></navLabel>
+    <content src="chap1.xhtml"/></navPoint></navMap>
+</ncx>"""
     with zipfile.ZipFile(path, "w") as z:
         z.writestr(zipfile.ZipInfo("mimetype"), b"application/epub+zip",
                    compress_type=zipfile.ZIP_STORED)
         z.writestr("META-INF/container.xml", container)
         z.writestr("content.opf", opf)
+        z.writestr("toc.ncx", ncx)
         z.writestr("chap1.xhtml", chapter)
         if cover is not None:
             z.writestr("cover.png", cover)

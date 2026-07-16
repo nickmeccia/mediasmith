@@ -577,6 +577,25 @@ async def test_esc_clean_releases_focus(media_tree):
         assert app.focused is app.query_one(LibraryTree)
 
 
+async def test_confirm_save_survives_double_dismiss(media_tree):
+    # two modal keys inside one frame (esc esc) once dismissed twice;
+    # the second pop emptied the screen stack = app death (fuzz seed 10)
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _goto_first_song(app, pilot)
+        await pilot.press("enter")
+        app.focused.value = "junk.mp3"               # dirty
+        await pilot.press("escape")                  # modal up
+        await pilot.pause()
+        modal = app.screen
+        assert isinstance(modal, ConfirmSave)
+        modal.action_choose("cancel")                # both keys land…
+        modal.action_choose("cancel")                # …before the pop
+        await pilot.pause()
+        assert not isinstance(app.screen, ConfirmSave)
+        assert app.is_running
+
+
 async def test_esc_dirty_confirm_discard(media_tree):
     app = MediasmithApp(media_tree)
     async with app.run_test(size=(120, 40)) as pilot:
@@ -676,7 +695,8 @@ async def test_book_offers_conversions_minus_own_format(media_tree):
         bar = app.query_one("#pane-bar", ActionBar)
         names = [b.spec.name for b in bar.buttons()]
         assert names == ["save", "convert_mobi", "convert_azw3",
-                         "extract_cover", "create_opf", "move"]
+                         "extract_cover", "create_opf", "standardize",
+                         "move"]
 
 
 async def test_plain_book_hides_extract_cover(media_tree):
@@ -2083,6 +2103,109 @@ async def test_rotate_rotates_in_place(media_tree):
             == ["photo.png", "wide.png"]             # in place: no siblings
 
 
+# -- standardize formatting -----------------------------------------------------
+
+
+async def test_standardize_creates_clean_sibling(media_tree):
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _goto_dune(app, pilot)
+        assert "standardize" in _bar_names(app)
+        await pilot.press("ctrl+d")                  # stan^dardize
+        await pilot.pause(0.6)
+        target = media_tree / "Books" / "Dune (clean).epub"
+        assert target.exists()
+        assert adapters.read_details(target).fields["title"] == "Dune"
+        tree = app.query_one(LibraryTree)
+        assert tree._node_for(target) is not None    # tree picked it up
+
+
+async def test_standardize_folder_batch(media_tree):
+    from tests.mediafactory import make_epub
+    make_epub(media_tree / "Books" / "Second.epub", title="Second")
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _goto_folder(app, pilot, "Books")
+        assert "standardize" in _bar_names(app)      # probe filled in
+        await pilot.press("ctrl+d")
+        await pilot.pause(1.0)
+        assert (media_tree / "Books" / "Dune (clean).epub").exists()
+        assert (media_tree / "Books" / "Second (clean).epub").exists()
+
+
+async def test_standardize_probe_hides_when_done(media_tree):
+    from mediasmith import standardize
+    dune = media_tree / "Books" / "Dune.epub"
+    standardize.standardize(dune, standardize.clean_target(dune))
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _goto_folder(app, pilot, "Books")      # everything clean
+        assert "standardize" not in _bar_names(app)
+
+
+async def test_standardize_never_overwrites(media_tree):
+    existing = media_tree / "Books" / "Dune (clean).epub"
+    existing.write_bytes(b"precious")
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _goto_dune(app, pilot)
+        await pilot.press("ctrl+d")
+        await pilot.pause(0.6)
+        assert existing.read_bytes() == b"precious"
+
+
+# -- sort: wrap book files into "Author Sort - Title/" ---------------------------
+
+
+async def test_sort_button_is_probe_gated(media_tree):
+    from tests.mediafactory import make_epub
+    wrapper = media_tree / "Books" / "Herbert, Frank - Solo"
+    wrapper.mkdir()
+    make_epub(wrapper / "Solo.epub", title="Solo", author="Frank Herbert")
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _goto_folder(app, pilot, "Books")      # loose Dune.epub
+        assert "sort" in _bar_names(app)
+        await pilot.press("down")                    # the wrapper folder
+        await settle(pilot)
+        await pilot.pause(0.3)
+        assert "sort" not in _bar_names(app)         # already in place
+
+
+async def test_sort_preview_and_apply(media_tree):
+    (media_tree / "Books" / "Dune.mobi").write_bytes(b"mobi")
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _goto_folder(app, pilot, "Books")
+        await pilot.press("ctrl+t")                  # sor^t
+        await pilot.pause(0.6)
+        details = app.query_one(DetailsPane)
+        assert details.plan_preview_open()
+        assert set(_bar_names(app)) == {"plan_apply", "plan_cancel"}
+        await pilot.press("ctrl+a")                  # apply
+        await pilot.pause(0.8)
+        wrapper = media_tree / "Books" / "Herbert, Frank - Dune"
+        assert (wrapper / "Dune.epub").exists()
+        assert (wrapper / "Dune.mobi").exists()      # formats ride together
+        assert not (media_tree / "Books" / "Dune.epub").exists()
+        tree = app.query_one(LibraryTree)
+        assert tree._node_for(wrapper) is not None
+
+
+async def test_sort_escape_cancels(media_tree):
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _goto_folder(app, pilot, "Books")
+        await pilot.press("ctrl+t")
+        await pilot.pause(0.6)
+        details = app.query_one(DetailsPane)
+        assert details.plan_preview_open()
+        await pilot.press("escape")
+        await settle(pilot)
+        assert not details.plan_preview_open()
+        assert (media_tree / "Books" / "Dune.epub").exists()   # untouched
+
+
 # -- folders: rename / new / trash --------------------------------------------
 
 
@@ -2122,6 +2245,30 @@ async def test_folder_rename_keeps_expansion(media_tree):
         child = tree._node_for(media_tree / "Films" / "Alien (1979)")
         assert child is not None and child.is_expanded   # subtree survived
         assert str(tree.cursor_node.label) == "Films"
+
+
+async def test_rename_context_row_reanchors(media_tree):
+    # the tree's own root line is a folder like any other: renaming it
+    # must re-anchor instead of leaving every loaded path dangling
+    # (the fuzz walk hit exactly this on the scratch dir)
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await settle(pilot)
+        await pilot.press("up")                      # the context row
+        await settle(pilot)
+        details = app.query_one(DetailsPane)
+        assert details.path == media_tree.parent
+        await pilot.press("enter")                   # descend into rename
+        assert app.focused.id == "fname"
+        app.focused.value = media_tree.parent.name + " renamed"
+        await pilot.press("ctrl+s")
+        await pilot.pause(1.0)
+        new_parent = media_tree.parent.with_name(
+            media_tree.parent.name + " renamed")
+        assert new_parent.is_dir()
+        tree = app.query_one(LibraryTree)
+        assert Path(tree.path) == new_parent.parent  # re-anchored cleanly
+        assert tree._node_for(new_parent) is not None
 
 
 async def test_folder_offers_new_and_trash_buttons(media_tree):

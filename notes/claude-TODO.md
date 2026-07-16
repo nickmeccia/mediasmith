@@ -147,8 +147,26 @@
      download family, which now lives in ~/code/downloader, not
      here. Nothing to build in mediasmith.)
 
--[ ] Standardize formatting
+-[x] Standardize formatting
      This tool is cool. If I remember how it works correctly, it can be used on a single book or on a folder. Add buttons!
+     (Claude, 2026-07-15: shipped both buttons — `stan^dardize` on
+     every epub, and on folders (probe-gated: appears while any
+     direct-child epub still lacks its clean copy; batch = the v1
+     multi-file mode). The v1 evaluation you asked for: the extractors
+     and style detection (Ward/Worm/Pact/Pale/generic) are tuned
+     policy — ported verbatim into mediasmith/standardize.py — but the
+     v1 rebuild LOST series/publisher/date/language and dropped the
+     cover unless you passed --cover; the port carries all of it from
+     the source. Decisions to review: [1] output is a sibling
+     "Name (clean).epub", refuse-overwrite — a whole-book rewrite
+     in place felt too hot, veto the name if it reads wrong;
+     [2] folder mode does direct children only, not the subtree —
+     pointing it at BOOKS/ won't rewrite the library; [3] mobi/azw3
+     aren't offered — convert to epub first (buttons exist), instead
+     of coupling this to Calibre as v1 did; [4] forcing a style
+     (--style in v1) isn't surfaced — detection samples a mid-book
+     chapter; say the word if a book detects wrong and you need the
+     override. beautifulsoup4 + lxml joined the deps.)
 
 -[ ] Standardize metadata
      This tool does too many things at once, which, ironically, was exactly what I needed from the standard, non-TUI-style of CLI app -- I need to perform a bunch of actions to standardize any given book, but even in the svelte UI of mediasmith-v1 there was a lot of tedium involved in navigating to files.
@@ -171,7 +189,45 @@
           taken: a PNG cover saves as cover.png, not cover.jpg with png
           bytes inside — flag me if you want literal cover.jpg always.)
      -[ ] "Sort" folders: "normalize metadata" and "add my converted ebook to a new folder" are two features which are silly to make buttons for on a single book view. However, at this point in the long list of features, having buttons on folders to sort their contents sounds increasingly appealing. A "sort" feature which standardizes folders would be as useful for books as it is for mp3s--let's start with this
+     (Claude, 2026-07-15: not built yet — this one needs your pick
+     before it's folderize-shaped. I checked the v1 tool and your real
+     BOOKS volume: v1 standardize-metadata's output shape was one
+     folder per book — "Author Sort - Title/" holding Title.epub +
+     cover.jpg + metadata.opf (+ .azw3) — and 03 Tag & Convert uses
+     exactly that. But your library above that level sorts by GENRE
+     and by pipeline stage (01 Download → … → 07 Read), which no probe
+     can infer. So: should "sort" mean [a] wrap each loose epub in its
+     "Author Sort - Title/" folder with cover.jpg + metadata.opf (the
+     v1 convention — mechanical, folderize-shaped, plan preview, my
+     recommendation), or [b] something genre-aware, which would need a
+     different design conversation? Say [a] and it ships next session
+     as the fourth plan-shaped action.)
+     From Nick: this tool should wrap all files related for a single book (epub, mobi, azw3, opf, cover.jpg) into a single folder in the format `Author Sort - Title`.
+     (Claude, 2026-07-16: shipped to your spec, same session —
+     `sor^t`, the fourth plan-shaped action (mediasmith/booksort.py).
+     Probe-gated on folders holding a loose book file that isn't
+     already in its own wrapper; press → preview lists each
+     "Author Sort - Title/" and the files moving in → ^a applies,
+     esc cancels. The rules: formats group by STEM (Dune.epub +
+     Dune.mobi + Dune.azw3 travel together — conversions share their
+     source's stem, so the stem is the book identity); metadata.opf
+     and cover.* ride along only when the folder holds exactly ONE
+     book (ambiguous sidecars stay put, listed with the reason);
+     a group with no epub is skipped, never guessed (mobi/azw3 have
+     no metadata reader); author sort prefers the opf's file-as,
+     else infers "Last, First"; existing wrapper folders are reused,
+     refuse-overwrite per file. One liberty NOT taken: files keep
+     their names — v1 also renamed the epub to match the folder;
+     say the word and that joins the plan.) 
      -[ ] Normalize metadata as an action on a folder: I'm on the fence, currently thinking "no," but...I'm leaving this item for myself to read later (or you to weigh in on now)
+          (Claude, 2026-07-16: weighing in as invited — I'd also say
+          no. The camelcase fixes are typing-level judgment (bulk
+          metadata editing already covers "fix a whole album-folder
+          of books"), and an automatic normalizer would need a
+          casing policy for names like "McCaffrey" and "de la Cruz"
+          that's wrong often enough to erode trust in the button.
+          If a specific normalization keeps annoying you, name it —
+          a narrow, predictable rule could ride the sort preview.)
 
 **Videosmith**
 

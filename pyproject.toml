@@ -10,6 +10,8 @@ dependencies = [
     "pillow",
     "guessit",
     "send2trash>=2.1.0",
+    "beautifulsoup4>=4.15.0",
+    "lxml>=6.1.1",
 ]
 
 [project.scripts]

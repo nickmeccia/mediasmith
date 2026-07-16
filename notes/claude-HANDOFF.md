@@ -320,7 +320,49 @@ prescribed). Deltas:
   trees) — detection, split round-trip (each output opens, has its
   chapters), non-omnibus → no button.
 
-## #12 Standardize formatting + "sort" folders
+## #12 addendum — "sort" DONE too (Fable, 2026-07-16)
+
+Nick answered the [a]/[b] question inline in claude-TODO, extending
+[a]: wrap ALL of a book's files (epub/mobi/azw3/opf/cover) into one
+"Author Sort - Title/" folder. Shipped as the fourth plan-shaped
+action: mediasmith/booksort.py (stem = book identity; sidecars ride
+only when unambiguous; no-epub groups skipped, never guessed; wrapper
+folders are no-ops), key ^t (contextual reuse — extract-cover is
+single-epub-only). Files keep their names (v1 renamed the epub to
+match the folder) — flagged for his veto.
+
+Also this session: two real gate deaths, root-caused via the newly
+kept pty to a ConfirmSave double-dismiss (ScreenStackError = silent
+app death; fixed — first answer wins). The harness got a seatbelt
+WRITE-JAIL, per-seed pty capture kept on death, and --first. Full
+story: QA-TODO "Fuzz deaths: solved" + the gate-discipline memory.
+
+## #12 Standardize formatting — DONE (Fable, 2026-07-15, session 2);
+## "sort" awaited Nick's pick (answered — see addendum above)
+
+Formatting shipped per this brief (mediasmith/standardize.py — the
+436 v1 lines evaluated: extractors/detection ported verbatim as tuned
+policy; the rebuild now carries metadata + cover, which v1 dropped).
+Deltas:
+
+- Key: ^d contextual-reuse (download-posters is video-only).
+- Output: "Name (clean).epub" sibling, refuse-overwrite; folder mode
+  is DIRECT children only; acts directly with streamed notifications
+  (nothing moves, so no plan preview) — the folder button is
+  probe-gated on "any direct epub lacking its clean sibling".
+- mobi/azw3 not offered (convert first); --style override not
+  surfaced. Both flagged to Nick.
+- make_epub in mediafactory now writes an NCX (calibre always does;
+  the engine requires one).
+- **"Sort" folders is NOT built.** The brief's assumption was wrong on
+  one point: Nick's BOOKS volume sorts by genre/pipeline above the
+  per-book level, so "sort" isn't inferable. The v1 convention IS
+  clear — one "Author Sort - Title/" folder per book with cover.jpg +
+  metadata.opf — and the question is put to Nick inline in claude-TODO
+  ("Sort" folders entry). If he picks it, build it as the fourth
+  plan-shaped action on the shared plan_apply/plan_cancel pair.
+
+## #12 original brief (superseded)
 
 - Read `tools/booksmith/standardize-formatting/standardize-formatting.py`
   (436 lines, unread by me — evaluate before porting).

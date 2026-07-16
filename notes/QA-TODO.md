@@ -1,5 +1,67 @@
 # QA to-do — 2026-07-15 session 2 (images: rename · convert · resize ·
-# rotate · folders: rename · new · trash)
+# rotate · folders: rename · new · trash · standardize formatting)
+
+## Standardize formatting (stan^dardize — ^d on books/folders)
+
+- [ ] On any epub: writes "Name (clean).epub" beside it; toast names
+      the detected style + chapter count; tree follows
+- [ ] THE REAL TEST: run it on one Wildbow epub per style (Ward =
+      calibre-h1, Worm/Twig = calibre-bold, Pact = calibre-h2, Pale)
+      and read a few chapters — the extractors are v1's verbatim, but
+      the epub WRITER is a fresh port; confirm output matches what the
+      v1 tool produced
+- [ ] Metadata carry (new vs v1): series/publisher/date/language and
+      the cover survive into the clean copy — check one in Calibre
+- [ ] On a folder: button appears only while a direct-child epub
+      still lacks its "(clean)" sibling; batch streams a toast per
+      book + a summary; direct children only (subfolders untouched)
+- [ ] Refuse-overwrite per book; "(clean)" files are never batch
+      inputs (no "(clean) (clean)" from folder mode)
+- [ ] Naming veto: is " (clean)" the suffix you want?
+- [ ] Not offered on mobi/azw3 (convert to epub first) — OK?
+- [ ] Parked: v1's --style override isn't surfaced; if detection
+      misses on a real book, that becomes a wizard-div option
+
+## Sort (sor^t — ^t on folders with loose book files)
+
+- [ ] Button appears on folders holding a loose epub not already in
+      its own "Author Sort - Title/" wrapper; absent on wrapper
+      folders themselves (sorting a wrapped book is a no-op by design)
+- [ ] Press: preview lists each wrapper and the files moving in
+      (formats grouped by stem; opf/cover ride along only when the
+      folder holds exactly one book); ^a applies, esc cancels
+- [ ] Try it on a real 02 Sort dump: existing wrapper folders are
+      reused, name collisions refuse per file
+- [ ] Files keep their names — want the epub renamed to match the
+      folder (v1 did)? Say the word.
+- [ ] A mobi/azw3 with no epub sibling is skipped with a reason —
+      right call, or should it wrap by stem-as-name?
+
+## ⚠ Fuzz deaths: solved (ConfirmSave double-dismiss) + gate hardened
+
+Two gate deaths this session (seeds 7 and 10), one root cause, found
+via the new kept-on-death pty: **two ConfirmSave keys landing inside
+one frame (esc esc) dismissed the modal twice; the second pop hit an
+empty screen stack and ScreenStackError is app death.** The modal now
+takes only its first answer (regression test:
+test_confirm_save_survives_double_dismiss). This bug shipped with the
+modal itself (2026-07-10) — folders becoming editable just made
+dirty-state + esc vastly more common, which is why it fired now.
+
+The hunt also caught the gate writing outside its sandbox: the walk
+used folder-rename on its OWN scratch root and left "untitled folder"
+droppings (an exposure that predates #10 — move/folderize could
+always write wherever the walk browsed). Harness fixes in fuzz.py:
+- macOS seatbelt WRITE-JAIL: the child may only write inside its
+  scratch tree (+/dev); a denied write surfaces as an error toast,
+  itself now fuzzed
+- every seed's pty is captured, kept under a unique name on death
+  ("only the pty tail tells" — now enforced, and a re-run can't
+  delete the evidence); `--first N` re-runs one seed alone
+- known determinism hole: the random scratch dirname is VISIBLE in
+  the tree (parent context row), so every run's walk differs even at
+  a fixed seed — deaths reproduce statistically, not exactly
+Nothing outside /tmp was touched; your repo was verified clean.
 
 ## Folder rename (folders joined EDITABLE_KINDS)
 
