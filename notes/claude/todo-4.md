@@ -331,21 +331,44 @@ MEDIASMITH = Theme(
 
         # Focused View
         
-        "border-focus-fg": "$primary",
-        "text-focus-fg": "$grey-90",
+        "border-fg-focus": "$primary",
+        "text-fg-focus": "$grey-90",
 
-        "node-hidden-focus-fg": "$grey-60",
-        "node-selected-focus-bg": "$primary",
+        "node-hidden-fg-focus": "$grey-60",
+        "node-selected-bg-focus": "$primary",
+        "scrollbar-color-focus": "$grey-90",
+        "scrollbar-color-hover-focus": "$primary",
+        "scrollbar-color-active-focus": "$primary",
+        "scrollbar-track-focus": "transparent",
 
-        "label-focus-fg": "$grey-60",
-        "button-focus-bg":
-        "button-focus-fg":
-        "button-keybinding-fg":
+        "label-fg-focus": "$grey-60",
+        "button-bg-focus": "$grey-30",
+        "button-fg-focus": "$grey-90",
+        "button-keybinding-fg-focus": "$primary",
+        "button-selected-bg-focus": "$primary",
+        "button-selected-fg-focus": "$grey-90",
+        "button-selected-keybinding-fg-focus": "$grey-90",
 
 
         # Idle View
 
-        "border-idle-fg":  "$grey-20",
+        "border-fg-idle":  "$grey-30",
+        "text-fg-idle": "$grey-40",
+
+        "node-hidden-fg-idle": "$grey-30",
+        "node-selected-bg-idle": "$grey-20",
+        "scrollbar-color-idle": "$grey-30",
+        "scrollbar-color-hover-idle": "$grey-30",
+        "scrollbar-color-active-idle": "$grey-30",
+        "scrollbar-track-idle": "transparent",
+
+        "label-fg-idle": "$grey-30",
+        "button-bg-idle": "$grey-20",
+        "button-fg-idle": "$grey-40",
+        "button-keybinding-fg-idle": "$grey-40",
+        "button-selected-bg-idle": "$grey-20",
+        "button-selected-fg-idle": "$grey-40",
+        "button-selected-keybinding-fg-idle": "$grey-40",
 
 
         # Command Strip
@@ -354,31 +377,11 @@ MEDIASMITH = Theme(
         "keybinding-bullet": "$grey-30",
         "logo": "$grey-60"
 
-
-------------------
-
-
-        "node-selected-idle-bg":  "$grey-20",
-        "node-selected-idle-fg":  "$grey-30",
-
-        "text-idle":  "$grey-30",   # "dim the rest" = a dimmer grey at rest
-        "text-hidden-idle":  "$grey-30",
-
-        "scrollbar-thumb-idle":  "$grey-30",
-        "scrollbar-thumb-focus": "$primary",
-        "scrollbar-track": "transparent",
-
-        "button-idle-bg":  "$grey-30",
-        "button-idle-fg":  "$grey-70",
-        "button-focus-bg": "$primary",   # ← my picks below; aesthetics are
-        "button-focus-fg": "$black",     #   yours — change freely
-
-
     },
 )
 ```
 
-Note from Nick: the following block of code no longer maps to exact variables. Consider it an example from Previous Claude.
+Note from Nick: the following block of code no longer maps to exact variables. Consider it an example from Previous Claude, written before I finished writing my color variables.
 
 ```css
 /* ── STATE ─ WHEN each look applies. Rule of the pane hierarchy: a view
