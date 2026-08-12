@@ -383,7 +383,17 @@ class LibraryTree(DirectoryTree):
 
     def render_label(self, node, base_style, style):
         label = super().render_label(node, base_style, style)
-        if node.data is not None and str(node.data.path) in self._selected:
+        if node.data is None:
+            return label
+        if Path(node.data.path).name.startswith("."):
+            # hidden files dim to the theme's node-hidden pair; a token
+            # lookup, not a hex — colors live in theme.py only
+            token = ("node-hidden-fg-focus" if self.has_focus
+                     else "node-hidden-fg-idle")
+            color = self.app.get_css_variables().get(token)
+            if color:
+                label.stylize(Style(color=color))
+        if str(node.data.path) in self._selected:
             label.stylize("reverse")
         return label
 

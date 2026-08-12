@@ -18,6 +18,7 @@ from textual.widgets import Input, Static
 
 from .browser import LibraryTree, PathInput, TreeView
 from .details import DetailsView
+from .theme import MEDIASMITH
 
 
 class ThinScrollBarRender(ScrollBarRender):
@@ -113,35 +114,63 @@ class MediasmithApp(App):
 
     CSS = """
     #body { layout: horizontal; height: 1fr; }
+    /* -- STATE: when each palette look applies (see theme.py — the
+       PALETTE). A view is "focused" when it owns focus; details counts a
+       focused child field (:focus-within). Rest = the dim idle look. */
     /* The Tree View is ONE bordered pane; Path Input is a sub-view boxed
        inside it (notes/mockups/path-input.txt). Focus on either child
        lights the pane. */
-    TreeView { width: 38%; min-width: 30; border: round $surface-lighten-2; }
-    TreeView:focus-within { border: round $accent; }
+    TreeView { width: 38%; min-width: 30; border: round $border-fg-idle; }
+    TreeView:focus-within { border: round $border-fg-focus; }
     PathInput { height: 3; margin: 0 1; background: $surface;
-              border: round $surface-lighten-2; }
-    PathInput:focus { border: round $accent; }
-    /* one cell wide to match the thin thumb glyphs; track blends into
-       each pane's own background */
+              border: round $border-fg-idle; color: $text-fg-idle; }
+    PathInput:focus { border: round $border-fg-focus;
+                      color: $text-fg-focus; }
+    /* one cell wide to match the thin thumb glyphs */
     LibraryTree, DetailsView { scrollbar-size-vertical: 1; }
-    LibraryTree { scrollbar-background: $surface;
-                  scrollbar-background-hover: $surface;
-                  scrollbar-background-active: $surface;
-                  scrollbar-corner-color: $surface; }
+    /* text + scrollbar ride the same idle/focus flip */
+    LibraryTree, DetailsView {
+        color: $text-fg-idle;
+        scrollbar-color: $scrollbar-color-idle;
+        scrollbar-color-hover: $scrollbar-color-hover-idle;
+        scrollbar-color-active: $scrollbar-color-active-idle;
+        scrollbar-background: $scrollbar-track-idle;
+        scrollbar-background-hover: $scrollbar-track-idle;
+        scrollbar-background-active: $scrollbar-track-idle;
+        scrollbar-corner-color: $scrollbar-track-idle;
+    }
+    LibraryTree:focus, DetailsView:focus, DetailsView:focus-within {
+        color: $text-fg-focus;
+        scrollbar-color: $scrollbar-color-focus;
+        scrollbar-color-hover: $scrollbar-color-hover-focus;
+        scrollbar-color-active: $scrollbar-color-active-focus;
+        scrollbar-background: $scrollbar-track-focus;
+        scrollbar-background-hover: $scrollbar-track-focus;
+        scrollbar-background-active: $scrollbar-track-focus;
+    }
     /* Tree's default :focus tints the pane 5% lighter, which the track
        can't follow (no scrollbar-background-tint exists); drop the tint
-       so pane and track stay identical — focus still shows via the
-       accent border. */
+       so pane and track stay identical — focus shows via the border. */
+    LibraryTree { background: transparent; }
     LibraryTree:focus { background-tint: transparent; }
-    DetailsView { scrollbar-background: $background;
-                  scrollbar-background-hover: $background;
-                  scrollbar-background-active: $background; }
     LibraryTree { height: 1fr; padding: 0 1; }
+    /* the selected node (tree cursor) swaps with the pane's focus */
+    LibraryTree > .tree--cursor { background: $node-selected-bg-idle; }
+    LibraryTree:focus > .tree--cursor {
+        background: $node-selected-bg-focus; }
     /* While the path bar edits, no node is "selected": hide the cursor. */
     LibraryTree.-editing > .tree--cursor { background: transparent;
                                            text-style: none; }
-    DetailsView { width: 1fr; border: round $surface-lighten-2; padding: 0 1; }
-    DetailsView:focus, DetailsView:focus-within { border: round $accent; }
+    DetailsView { width: 1fr; border: round $border-fg-idle; padding: 0 1; }
+    DetailsView:focus, DetailsView:focus-within {
+        border: round $border-fg-focus; }
+    /* buttons ride the pane's idle/focus flip; the arrow-key-selected
+       button carries the selected pair */
+    ActionButton { background: $button-bg-idle; color: $button-fg-idle; }
+    DetailsView:focus-within ActionButton { background: $button-bg-focus;
+                                            color: $button-fg-focus; }
+    ActionButton:focus { background: $button-selected-bg-focus;
+                         color: $button-selected-fg-focus; }
     .panel { height: auto; margin-top: 1; }
     .dtitle { text-style: bold; padding: 1 0 0 0; }
     #row-fname { height: 1; margin-top: 1; }
@@ -150,20 +179,25 @@ class MediasmithApp(App):
     .fmark { width: 2; color: $success; }
     EditForm { height: auto; }
     .frow { height: 1; }
-    .fkey { color: $text-muted; }
+    /* field labels ride the pane's idle/focus flip */
+    .fkey { color: $label-fg-idle; }
+    DetailsView:focus-within .fkey { color: $label-fg-focus; }
     .fval { background: transparent; width: 1fr; }
-    .fval-static { color: $text; }
+    .fval-static { color: $text-fg-idle; }
+    DetailsView:focus-within .fval-static { color: $text-fg-focus; }
     .cover { width: auto; height: 16; margin: 1 0 0 0; }
     /* pixel dimensions printed under a cover (album art, book cover) */
-    .cover-dims { height: 1; color: $text-muted; }
+    .cover-dims { height: 1; color: $label-fg-idle; }
+    DetailsView:focus-within .cover-dims { color: $label-fg-focus; }
     /* the audio art is a form field: image top-aligned with its label,
        left-aligned with the input column */
     #row-art { height: auto; }
-    #art-none { color: $text-disabled; }
+    #art-none { color: $label-fg-idle; }
+    DetailsView:focus-within #art-none { color: $label-fg-focus; }
     /* 1fr, not auto: a width-auto image inside a width-auto container
        resolves to 0 (no reference width for the aspect computation) */
     ArtField { width: 1fr; height: auto; }
-    ArtField:focus { outline: round $accent; }
+    ArtField:focus { outline: round $border-fg-focus; }
     #cover-audio { margin: 0; }
     #row-art-buttons { height: auto; margin-top: 1; }
     #row-art-path { height: 1; margin-top: 1; }
@@ -171,39 +205,44 @@ class MediasmithApp(App):
     /* book cover: a path input toggled under the cover (art-path twin) */
     #book-cover-div { height: auto; margin-top: 1; }
     #book-cover-path { background: transparent; }
-    #book-cover-hint { height: 1; color: $text-muted; }
+    #book-cover-hint { height: 1; color: $label-fg-idle; }
+    DetailsView:focus-within #book-cover-hint { color: $label-fg-focus; }
     #pane-bar { margin-top: 1; }
     #shift-div { height: auto; margin-top: 1; }
     #shift-row { height: 1; }
     #shift-control { width: auto; }
     ShiftControl:focus { text-style: reverse; }
-    #shift-hint { height: 1; color: $text-muted; }
+    #shift-hint { height: 1; color: $label-fg-idle; }
+    DetailsView:focus-within #shift-hint { color: $label-fg-focus; }
     /* the resize wizard div — same block shape as #shift-div */
     #resize-div { height: auto; margin-top: 1; }
     #resize-row { height: 1; }
     .resize-num { width: 7; background: transparent; }
-    #resize-x { width: 3; color: $text-muted; text-align: center; }
+    #resize-x { width: 3; color: $label-fg-idle; text-align: center; }
+    DetailsView:focus-within #resize-x { color: $label-fg-focus; }
     #resize-link { margin-left: 2; }
     #resize-bar { margin-top: 1; }
     /* the gif wizard div — same block shape as resize */
     #gif-div { height: auto; margin-top: 1; }
     #gif-row { height: 1; }
-    .wsep { width: auto; color: $text-muted; padding: 0 1; }
+    .wsep { width: auto; color: $label-fg-idle; padding: 0 1; }
+    DetailsView:focus-within .wsep { color: $label-fg-focus; }
     #gif-bar { margin-top: 1; }
     #plan-preview { height: auto; margin-top: 1; }
     #plan-tree { height: auto; }
     /* the editable split-omnibus form (shares .frow/.fkey/.fval) */
     #panel-omnibus { height: auto; margin-top: 1; }
-    .omni-source { color: $text-muted; height: auto; }
+    .omni-source { color: $label-fg-idle; height: auto; }
+    DetailsView:focus-within .omni-source { color: $label-fg-focus; }
     .omni-book { height: auto; margin-top: 1; }
     .omni-head { text-style: bold; }
-    #ctxrow { height: 1; background: $surface; color: $text-muted; }
+    #ctxrow { height: 1; background: $surface; color: $keybinding; }
     #strip-left { width: 38%; min-width: 30; padding-left: 1; }
     #strip-right { width: 1fr; padding-left: 1; }
     #strip { dock: bottom; height: 1; background: $surface;
-             color: $text-muted; padding-left: 1; }
+             color: $keybinding; padding-left: 1; }
     #strip-global { width: 1fr; }
-    #strip-logo { width: auto; }
+    #strip-logo { width: auto; color: $logo; }
     /* -- narrow (phone) breakpoint: one column at a time. Which column
        shows follows the pane hierarchy: -details-open swaps the details
        column in ("view" keeps the tree focused — no accent border;
@@ -222,7 +261,7 @@ class MediasmithApp(App):
     .-narrow #strip-left { width: 1fr; min-width: 0; }
     ConfirmSave { align: center middle; }
     #confirm-box { width: auto; height: auto; padding: 1 2;
-                   background: $surface; border: round $accent; }
+                   background: $surface; border: round $border-fg-focus; }
     #confirm-msg { margin-bottom: 1; }
     #confirm-buttons { width: auto; height: auto; }
     #confirm-buttons Button { margin-right: 2; }
@@ -230,6 +269,10 @@ class MediasmithApp(App):
 
     def __init__(self, start_dir: Path, images: str = "auto"):
         super().__init__()
+        # registered before run so the CSS below parses with the theme's
+        # variables in scope — every color in the app is a theme token
+        self.register_theme(MEDIASMITH)
+        self.theme = "mediasmith"
         self.start_dir = start_dir
         self.images = images
         self.show_hidden = True

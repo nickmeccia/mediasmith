@@ -29,13 +29,14 @@ from textual.message import Message
 from textual.widget import Widget
 from textual.widgets import Button
 
-KEY_STYLE = "$text-accent"
-"""Markup style for the ``^x`` keybinding inside a button label."""
-
-FOCUS_KEY_STYLE = "#ffe6c2"
-"""The chord color while a button is focused (arrow-key selected): a light
-orange that stays legible on the orange focus background (see ActionButton
-CSS), where the accent color would vanish."""
+# Markup styles for the ``^x`` keybinding inside a button label — all
+# theme tokens (theme.py). Which one applies is state: the button's own
+# focus (arrow-key selected) wins, then the owning pane's idle/focus flip.
+# Markup can't ride CSS pseudo-classes, so the label is recolored from
+# Python (watch_has_focus / set_pane_focus).
+KEY_STYLE = "$button-keybinding-fg-focus"
+IDLE_KEY_STYLE = "$button-keybinding-fg-idle"
+SELECTED_KEY_STYLE = "$button-selected-keybinding-fg-focus"
 
 # ctrl+<char> chords the terminal or the app already owns; binding an
 # action to one of these would shadow typing or core chrome.
@@ -148,24 +149,34 @@ LAYOUT_MAP.setdefault(FlowLayout.name, FlowLayout)
 
 
 class ActionButton(Button):
-    """A Button carrying its Action spec; label per the button pattern."""
+    """A Button carrying its Action spec; label per the button pattern.
 
-    # arrow-key selection lands as focus: an orange highlight, with the
-    # chord recolored so it stays legible where the accent would vanish
-    DEFAULT_CSS = """
-    ActionButton:focus {
-        background: orange;
-        color: black;
-        text-style: bold;
-    }
+    Background/foreground ride the pane's idle/focus flip in CSS
+    (app.py); the chord color inside the label is markup, so the same
+    flip is mirrored here via ``set_pane_focus`` (called by the owning
+    view when focus crosses its edge). Arrow-key selection lands as
+    :focus and carries the selected pair; text-style stays CSS-side.
     """
+
+    DEFAULT_CSS = """
+    ActionButton:focus { text-style: bold; }
+    """
+
+    _pane_focus = False
+    """Whether the owning view is focused — the idle/focus half of the
+    chord-color decision (the button's own focus wins over both)."""
 
     def __init__(self, spec: Action) -> None:
         self.spec = spec
         self._word = spec.word
-        super().__init__(self._content(KEY_STYLE),
+        super().__init__(self._content(IDLE_KEY_STYLE),
                          id=spec.button_id or f"act-{spec.name}",
                          compact=True)
+
+    def _key_style(self) -> str:
+        if self.has_focus:
+            return SELECTED_KEY_STYLE
+        return KEY_STYLE if self._pane_focus else IDLE_KEY_STYLE
 
     def _content(self, key_style: str) -> Content:
         return Content.from_markup(
@@ -183,12 +194,16 @@ class ActionButton(Button):
         """Relabel with a new word (the move button's lift/place toggle),
         keeping the chord color that matches the current focus state."""
         self._word = word
-        self._apply_label(FOCUS_KEY_STYLE if self.has_focus else KEY_STYLE)
+        self._apply_label(self._key_style())
+
+    def set_pane_focus(self, value: bool) -> None:
+        """The owning view's focus flipped: dim or light the chord."""
+        if value != self._pane_focus:
+            self._pane_focus = value
+            self._apply_label(self._key_style())
 
     def watch_has_focus(self, value: bool) -> None:
-        # arrow-key selection lands as focus; recolor the chord so it
-        # reads on the orange highlight, restore the accent on blur
-        self._apply_label(FOCUS_KEY_STYLE if value else KEY_STYLE)
+        self._apply_label(self._key_style())
 
 
 class ActionBar(Widget):

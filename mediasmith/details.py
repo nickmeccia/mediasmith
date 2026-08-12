@@ -845,6 +845,9 @@ class DetailsView(VerticalScroll, can_focus=True):
                         row_id="row-audio-info")
 
     def on_mount(self) -> None:
+        # chord colors inside button labels are markup, not CSS: mirror
+        # the pane's focus-within flip onto them by hand (theme.py)
+        self.watch(self.screen, "focused", self._sync_button_chrome)
         for panel in PANELS:
             self.query_one(f"#panel-{panel}").display = False
         self.query_one("#row-fname").display = False
@@ -857,6 +860,14 @@ class DetailsView(VerticalScroll, can_focus=True):
         self.query_one("#gif-div").display = False
         self.query_one("#resize-div").display = False
         self._sync_pane_bar()
+
+    def _sync_button_chrome(self, focused) -> None:
+        """Focus crossed the pane's edge (or moved inside it): recolor
+        every button's printed chord to the matching idle/focus token."""
+        inside = focused is not None and (focused is self
+                                          or self in focused.ancestors)
+        for button in self.query(ActionButton):
+            button.set_pane_focus(inside)
 
     # -- value plumbing ----------------------------------------------------------
 
