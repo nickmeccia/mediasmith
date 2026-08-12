@@ -16,8 +16,8 @@ from textual.containers import Horizontal, Vertical
 from textual.scrollbar import ScrollBar, ScrollBarRender
 from textual.widgets import Input, Static
 
-from .browser import LibraryTree, PathBar
-from .details import DetailsPane
+from .browser import LibraryTree, PathInput, TreeView
+from .details import DetailsView
 
 
 class ThinScrollBarRender(ScrollBarRender):
@@ -105,7 +105,7 @@ class MediasmithApp(App):
         Binding("ctrl+underscore", "focus_path", "path", show=False,
                 priority=True),
         Binding("ctrl+full_stop", "toggle_hidden", "hidden", show=False),
-        # folder CRUD is app-dispatched in on_key: new folder on ^e (a pane
+        # folder CRUD is app-dispatched in on_key: new directory on ^e (a pane
         # button chord reused across kinds), trash on ctrl+delete (its own
         # chord — see on_key). The old ⌘⇧N / ⌘⌫ Finder chords are gone (they
         # never reached Nick's terminal — macOS eats ⌘ before the TUI does).
@@ -113,13 +113,17 @@ class MediasmithApp(App):
 
     CSS = """
     #body { layout: horizontal; height: 1fr; }
-    #left { width: 38%; min-width: 30; }
-    PathBar { height: 3; background: $surface;
+    /* The Tree View is ONE bordered pane; Path Input is a sub-view boxed
+       inside it (notes/mockups/path-input.txt). Focus on either child
+       lights the pane. */
+    TreeView { width: 38%; min-width: 30; border: round $surface-lighten-2; }
+    TreeView:focus-within { border: round $accent; }
+    PathInput { height: 3; margin: 0 1; background: $surface;
               border: round $surface-lighten-2; }
-    PathBar:focus { border: round $accent; }
+    PathInput:focus { border: round $accent; }
     /* one cell wide to match the thin thumb glyphs; track blends into
        each pane's own background */
-    LibraryTree, DetailsPane { scrollbar-size-vertical: 1; }
+    LibraryTree, DetailsView { scrollbar-size-vertical: 1; }
     LibraryTree { scrollbar-background: $surface;
                   scrollbar-background-hover: $surface;
                   scrollbar-background-active: $surface;
@@ -129,17 +133,15 @@ class MediasmithApp(App):
        so pane and track stay identical — focus still shows via the
        accent border. */
     LibraryTree:focus { background-tint: transparent; }
-    DetailsPane { scrollbar-background: $background;
+    DetailsView { scrollbar-background: $background;
                   scrollbar-background-hover: $background;
                   scrollbar-background-active: $background; }
-    LibraryTree { height: 1fr; border: round $surface-lighten-2;
-                  padding: 0 1; }
-    LibraryTree:focus { border: round $accent; }
+    LibraryTree { height: 1fr; padding: 0 1; }
     /* While the path bar edits, no node is "selected": hide the cursor. */
     LibraryTree.-editing > .tree--cursor { background: transparent;
                                            text-style: none; }
-    DetailsPane { width: 1fr; border: round $surface-lighten-2; padding: 0 1; }
-    DetailsPane:focus, DetailsPane:focus-within { border: round $accent; }
+    DetailsView { width: 1fr; border: round $surface-lighten-2; padding: 0 1; }
+    DetailsView:focus, DetailsView:focus-within { border: round $accent; }
     .panel { height: auto; margin-top: 1; }
     .dtitle { text-style: bold; padding: 1 0 0 0; }
     #row-fname { height: 1; margin-top: 1; }
@@ -207,14 +209,16 @@ class MediasmithApp(App):
        column in ("view" keeps the tree focused — no accent border;
        "focus" is the usual editable descend); -path-open summons the
        path bar above the tree rather than replacing it. */
-    .-narrow #left { width: 1fr; min-width: 0; }
-    .-narrow PathBar { display: none; }
-    .-narrow.-path-open PathBar { display: block; }
-    .-narrow DetailsPane { display: none; }
-    .-narrow.-details-open DetailsPane { display: block; }
+    .-narrow TreeView { width: 1fr; min-width: 0; }
+    .-narrow PathInput { display: none; }
+    .-narrow.-path-open PathInput { display: block; }
+    .-narrow DetailsView { display: none; }
+    .-narrow.-details-open DetailsView { display: block; }
     /* width 0, not display none: in "view" the tree keeps focus while
        hidden, and hiding a focused widget makes Textual drop focus */
-    .-narrow.-details-open #left { width: 0; }
+    /* width 0 AND border none: the pane's own border would otherwise
+       hold 2 cells open even at width 0 */
+    .-narrow.-details-open TreeView { width: 0; border: none; }
     .-narrow #strip-left { width: 1fr; min-width: 0; }
     ConfirmSave { align: center middle; }
     #confirm-box { width: auto; height: auto; padding: 1 2;
@@ -239,10 +243,8 @@ class MediasmithApp(App):
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="body"):
-            with Vertical(id="left"):
-                yield PathBar(value=str(self.start_dir))
-                yield LibraryTree(self.start_dir)
-            yield DetailsPane(images=self.images)
+            yield TreeView(self.start_dir)
+            yield DetailsView(images=self.images)
         with Horizontal(id="ctxrow"):
             yield Static("", id="strip-left")
             yield Static("", id="strip-right")
@@ -261,8 +263,8 @@ class MediasmithApp(App):
         focus, on the line above the global strip, aligned to its column."""
         left = self.query_one("#strip-left", Static)
         right = self.query_one("#strip-right", Static)
-        details = self.query_one(DetailsPane)
-        in_left = isinstance(focused, (PathBar, LibraryTree))
+        details = self.query_one(DetailsView)
+        in_left = isinstance(focused, (PathInput, LibraryTree))
         in_details = focused is not None and (
             focused is details or details in focused.ancestors)
         left.visible = in_left
@@ -272,7 +274,7 @@ class MediasmithApp(App):
                           f"^n place here · esc cancel")
         else:
             tree_strip = STRIP_TREE
-        left.update(STRIP_PATH if isinstance(focused, PathBar) else tree_strip)
+        left.update(STRIP_PATH if isinstance(focused, PathInput) else tree_strip)
         right.visible = in_details
         right.update(STRIP_DETAILS)
         # the logo yields before it collides with the global commands
@@ -290,7 +292,7 @@ class MediasmithApp(App):
             self.screen.add_class("-details-open")
         elif in_left and not self._details_viewing:
             self.screen.remove_class("-details-open")
-        self.screen.set_class(isinstance(focused, PathBar), "-path-open")
+        self.screen.set_class(isinstance(focused, PathInput), "-path-open")
 
     def on_resize(self, event) -> None:
         # a breakpoint flip changes no focus: resync the classes/strips
@@ -321,7 +323,7 @@ class MediasmithApp(App):
         # any open details column — Textual refuses to focus a non-displayed
         # widget and drops focus entirely when a focused one is hidden
         self.screen.add_class("-path-open")
-        self.query_one(PathBar).focus()
+        self.query_one(PathInput).focus()
         self._details_viewing = False
         self.screen.remove_class("-details-open")
 
@@ -332,7 +334,7 @@ class MediasmithApp(App):
     def action_focus_tree(self) -> None:
         self.query_one(LibraryTree).focus()
 
-    # -- pending move (^n lift/place — DetailsPane.action_move drives) ---------
+    # -- pending move (^n lift/place — DetailsView.action_move drives) ---------
 
     def begin_lift(self, paths: list[Path]) -> None:
         self.lifted = list(paths)
@@ -348,7 +350,7 @@ class MediasmithApp(App):
     def cancel_lift(self) -> None:
         self.notify("move cancelled", title="move")
         self.end_lift()
-        self.query_one(DetailsPane)._sync_pane_bar()
+        self.query_one(DetailsView)._sync_pane_bar()
 
     def on_key(self, event: events.Key) -> None:
         # Any ^x chord printed on a visible action button fires it, no
@@ -356,7 +358,7 @@ class MediasmithApp(App):
         # the tree focused, yet their buttons still need their keys.
         if len(self.screen_stack) > 1:          # a modal owns the keys
             return
-        details = self.query_one(DetailsPane)
+        details = self.query_one(DetailsView)
         # Trash: ctrl+delete on ANY selection (file or folder), app-dispatched
         # because no single-char chord can name it. Both the forward-delete and
         # the Mac backspace-labeled "delete" send it, depending on terminal;
@@ -366,7 +368,7 @@ class MediasmithApp(App):
             if isinstance(self.focused, Input) or details.plan_preview_open():
                 return
             event.stop()
-            details.action_trash()
+            details.action_delete()
             return
         action = details.action_for_key(event.key)
         if action is not None:
@@ -382,18 +384,18 @@ class MediasmithApp(App):
             return
         if event.key == "ctrl+e":
             event.stop()
-            details.action_new_folder()
-
-    def on_library_tree_focused(self, ev: LibraryTree.Focused) -> None:
-        self.query_one(PathBar).value = str(ev.path)
-        self.query_one(DetailsPane).preview(ev.path)
+            details.action_new_directory()
 
     def on_library_tree_selected(self, ev: LibraryTree.Selected) -> None:
-        self.query_one(PathBar).value = str(ev.paths[-1])
-        self.query_one(DetailsPane).preview_bulk(ev.paths)   # live, debounced
+        self.query_one(PathInput).value = str(ev.path)
+        self.query_one(DetailsView).preview(ev.path)
 
-    async def on_details_pane_saved(self, ev: DetailsPane.Saved) -> None:
-        self.query_one(PathBar).value = str(ev.new)
+    def on_library_tree_bulk_selected(self, ev: LibraryTree.BulkSelected) -> None:
+        self.query_one(PathInput).value = str(ev.paths[-1])
+        self.query_one(DetailsView).preview_bulk(ev.paths)   # live, debounced
+
+    async def on_details_view_saved(self, ev: DetailsView.Saved) -> None:
+        self.query_one(PathInput).value = str(ev.new)
         if not ev.renamed:
             return
         tree = self.query_one(LibraryTree)
@@ -418,8 +420,8 @@ class MediasmithApp(App):
         if target is not None:
             tree._move_cursor(target.line)
 
-    async def on_details_pane_file_created(self,
-                                           ev: DetailsPane.FileCreated) -> None:
+    async def on_details_view_file_created(self,
+                                           ev: DetailsView.FileCreated) -> None:
         # a new sibling appeared (conversion, cover export…): re-list its
         # folder in place; cursor and expansion are untouched
         tree = self.query_one(LibraryTree)
@@ -427,15 +429,15 @@ class MediasmithApp(App):
         if parent is not None:
             await tree.reload_node(parent)
 
-    async def on_details_pane_folder_changed(
-            self, ev: DetailsPane.FolderChanged) -> None:
+    async def on_details_view_folder_changed(
+            self, ev: DetailsView.FolderChanged) -> None:
         tree = self.query_one(LibraryTree)
         node = tree._node_for(ev.path)
         if node is not None:
             await tree.reload_node(node)
 
-    async def on_details_pane_folder_created(
-            self, ev: DetailsPane.FolderCreated) -> None:
+    async def on_details_view_folder_created(
+            self, ev: DetailsView.FolderCreated) -> None:
         # Finder's flow: show it, cursor on it, straight into the rename
         tree = self.query_one(LibraryTree)
         parent = tree._node_for(ev.path.parent)
@@ -447,13 +449,13 @@ class MediasmithApp(App):
         target = tree._node_for(ev.path)
         if target is not None:
             tree._move_cursor(target.line)
-        details = self.query_one(DetailsPane)
+        details = self.query_one(DetailsView)
         details.preview(ev.path, immediate=True)
         self.reveal_details()                   # narrow: display, then focus
         details.focus()
 
-    async def on_details_pane_book_sorted(
-            self, ev: DetailsPane.BookSorted) -> None:
+    async def on_details_view_book_sorted(
+            self, ev: DetailsView.BookSorted) -> None:
         # the ebook moved into a brand-new wrapper folder beside where it
         # was: re-list that directory in place, expand the wrapper, cursor
         # on the book, then descend into its (editable) details — new-
@@ -470,12 +472,12 @@ class MediasmithApp(App):
         target = tree._node_for(ev.path)
         if target is not None:
             tree._move_cursor(target.line)
-        details = self.query_one(DetailsPane)
+        details = self.query_one(DetailsView)
         details.preview(ev.path, immediate=True)
         self.reveal_details()                   # narrow: display, then focus
         details.focus()
 
-    async def on_details_pane_trashed(self, ev: DetailsPane.Trashed) -> None:
+    async def on_details_view_deleted(self, ev: DetailsView.Deleted) -> None:
         tree = self.query_one(LibraryTree)
         if ev.path == Path(tree.path):          # trashed the context row:
             await tree.anchor(ev.path.parent)   # climb out of the dead root

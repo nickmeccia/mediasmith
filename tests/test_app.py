@@ -4,8 +4,8 @@ from pathlib import Path
 
 from mediasmith import adapters
 from mediasmith.app import LOGO, LOGO_MIN_WIDTH, MediasmithApp
-from mediasmith.browser import LibraryTree, PathBar, parse_view
-from mediasmith.details import ConfirmSave, DetailsPane, EditForm
+from mediasmith.browser import LibraryTree, PathInput, TreeView, parse_view
+from mediasmith.details import ConfirmSave, DetailsView, EditForm
 
 
 async def settle(pilot, seconds=0.4):
@@ -18,7 +18,7 @@ async def test_details_follow_highlight(media_tree):
         await pilot.pause()
         await pilot.press("down", "down", "down", "right")   # Books, Empty, Movies… expand
         await settle(pilot)
-        details = app.query_one(DetailsPane)
+        details = app.query_one(DetailsView)
         assert details.path is not None
 
 
@@ -34,7 +34,7 @@ async def test_audio_panel_shows_tags(media_tree):
         await settle(pilot)
         await pilot.press("down")
         await settle(pilot)
-        details = app.query_one(DetailsPane)
+        details = app.query_one(DetailsView)
         assert details.kind == "audio"
         assert app.query_one("#panel-audio").display is True
         form = app.query_one("#form-audio", EditForm)
@@ -45,7 +45,7 @@ async def test_album_art_shows_dimensions(media_tree):
     app = MediasmithApp(media_tree)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
-        details = app.query_one(DetailsPane)
+        details = app.query_one(DetailsView)
         # the first track carries an 8×8 cover; the second has none
         details.preview(media_tree / "Music" / "01 Song One.mp3",
                         immediate=True)
@@ -63,7 +63,7 @@ async def test_book_cover_shows_dimensions(media_tree):
     app = MediasmithApp(media_tree)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
-        details = app.query_one(DetailsPane)
+        details = app.query_one(DetailsView)
         details.preview(media_tree / "Books" / "Dune.epub", immediate=True)
         await settle(pilot)
         assert details.kind == "book"
@@ -76,7 +76,7 @@ async def test_pathbar_tab_completes(media_tree):
     app = MediasmithApp(media_tree)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
-        bar = app.query_one(PathBar)
+        bar = app.query_one(PathInput)
         bar.focus()
         await pilot.pause()          # let the Focus event land before typing
         bar.value = str(media_tree / "Mu")
@@ -94,7 +94,7 @@ async def test_other_file_is_editable(media_tree):
         tree = app.query_one(LibraryTree)
         await pilot.press("down", "n")               # notes.txt (kind: other)
         await settle(pilot)
-        assert app.query_one(DetailsPane).can_edit()
+        assert app.query_one(DetailsView).can_edit()
         for key in ("tab", "enter"):
             await pilot.press(key)                   # descend into rename
             await pilot.pause()
@@ -108,7 +108,7 @@ async def test_details_escape_returns_to_browser(media_tree):
     app = MediasmithApp(media_tree)
     async with app.run_test(size=(120, 40)) as pilot:
         await settle(pilot)
-        details = app.query_one(DetailsPane)
+        details = app.query_one(DetailsView)
         details.focus()          # anchor folder: editable, lands on fname
         await pilot.pause()
         assert app.focused.id == "fname"
@@ -128,10 +128,10 @@ async def _goto_first_song(app, pilot):
     await settle(pilot)
     await pilot.press("down")                        # an audio file
     await settle(pilot)                              # details debounce
-    assert app.query_one(DetailsPane).kind == "audio"
+    assert app.query_one(DetailsView).kind == "audio"
 
 
-async def test_tab_to_details_when_editable(media_tree):
+async def test_tab_edit_when_editable(media_tree):
     app = MediasmithApp(media_tree)
     async with app.run_test(size=(120, 40)) as pilot:
         tree = app.query_one(LibraryTree)
@@ -149,7 +149,7 @@ async def test_folder_panel_counts(media_tree):
     app = MediasmithApp(media_tree)
     async with app.run_test(size=(120, 40)) as pilot:
         await settle(pilot)                          # cursor on the anchor
-        details = app.query_one(DetailsPane)
+        details = app.query_one(DetailsView)
         assert details.kind == "folder"
         counts = app.query_one("#folder-counts")
         assert "5 folders" in str(counts.render())
@@ -160,7 +160,7 @@ async def test_pathbar_focus_puts_cursor_at_end(media_tree):
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         await pilot.press("ctrl+slash")
-        bar = app.query_one(PathBar)
+        bar = app.query_one(PathInput)
         assert app.focused is bar
         assert bar.cursor_position == len(bar.value)
         sel = bar.selection
@@ -321,10 +321,10 @@ async def test_ctrl_slash_focuses_pathbar(media_tree):
     app = MediasmithApp(media_tree)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
-        bar = app.query_one(PathBar)
+        bar = app.query_one(PathInput)
         await pilot.press("ctrl+slash")            # kitty-protocol name
         assert app.focused is bar
-        app.query_one(DetailsPane).focus()
+        app.query_one(DetailsView).focus()
         await pilot.press("ctrl+underscore")       # legacy-terminal name
         assert app.focused is bar
 
@@ -373,7 +373,7 @@ async def test_typing_filters_tree(media_tree):
     app = MediasmithApp(media_tree)
     async with app.run_test(size=(120, 40)) as pilot:
         await settle(pilot)
-        bar = app.query_one(PathBar)
+        bar = app.query_one(PathInput)
         tree = app.query_one(LibraryTree)
         bar.focus()
         await pilot.pause()          # let the Focus event land before typing
@@ -388,7 +388,7 @@ async def test_slash_boundary_is_noop(media_tree):
     app = MediasmithApp(media_tree)
     async with app.run_test(size=(120, 40)) as pilot:
         await settle(pilot)
-        bar = app.query_one(PathBar)
+        bar = app.query_one(PathInput)
         tree = app.query_one(LibraryTree)
         bar.focus()
         await pilot.pause()          # let the Focus event land before typing
@@ -412,7 +412,7 @@ async def test_blur_commits_filter_to_top_match(media_tree):
     app = MediasmithApp(media_tree)
     async with app.run_test(size=(120, 40)) as pilot:
         await settle(pilot)
-        bar = app.query_one(PathBar)
+        bar = app.query_one(PathInput)
         tree = app.query_one(LibraryTree)
         bar.focus()
         await pilot.pause()          # let the Focus event land before typing
@@ -430,7 +430,7 @@ async def test_enter_completes_to_top_match(media_tree):
     app = MediasmithApp(media_tree)
     async with app.run_test(size=(120, 40)) as pilot:
         await settle(pilot)
-        bar = app.query_one(PathBar)
+        bar = app.query_one(PathInput)
         tree = app.query_one(LibraryTree)
         bar.focus()
         await pilot.pause()          # let the Focus event land before typing
@@ -448,7 +448,7 @@ async def test_no_matches_shows_empty_tree(media_tree):
     app = MediasmithApp(media_tree)
     async with app.run_test(size=(120, 40)) as pilot:
         await settle(pilot)
-        bar = app.query_one(PathBar)
+        bar = app.query_one(PathInput)
         tree = app.query_one(LibraryTree)
         bar.focus()
         await pilot.pause()          # let the Focus event land before typing
@@ -463,7 +463,7 @@ async def test_input_focus_clears_selection(media_tree):
         await settle(pilot)
         await pilot.press("down")
         await settle(pilot)
-        details = app.query_one(DetailsPane)
+        details = app.query_one(DetailsView)
         assert details.path is not None
         await pilot.press("ctrl+slash")
         tree = app.query_one(LibraryTree)
@@ -475,7 +475,7 @@ async def test_ghost_suggestion_is_top_match(media_tree):
     app = MediasmithApp(media_tree)
     async with app.run_test(size=(120, 40)) as pilot:
         await settle(pilot)
-        bar = app.query_one(PathBar)
+        bar = app.query_one(PathInput)
         bar.focus()
         await pilot.pause()          # let the Focus event land before typing
         bar.value = str(media_tree / "Mu")
@@ -515,7 +515,7 @@ async def test_enter_on_complete_dir_anchors_into_it(media_tree):
     app = MediasmithApp(media_tree)
     async with app.run_test(size=(120, 40)) as pilot:
         await settle(pilot)
-        bar = app.query_one(PathBar)
+        bar = app.query_one(PathInput)
         tree = app.query_one(LibraryTree)
         bar.focus()
         await pilot.pause()          # let the Focus event land before typing
@@ -534,7 +534,7 @@ async def test_escape_deletes_partial_segment(media_tree):
     app = MediasmithApp(media_tree)
     async with app.run_test(size=(120, 40)) as pilot:
         await settle(pilot)
-        bar = app.query_one(PathBar)
+        bar = app.query_one(PathInput)
         tree = app.query_one(LibraryTree)
         bar.focus()
         await pilot.pause()          # let the Focus event land before typing
@@ -600,7 +600,7 @@ async def test_ctrl_s_saves_tags(media_tree):
         await pilot.pause(0.5)                     # save runs in a thread
         path = media_tree / "Music" / "01 Song One.mp3"
         assert adapters.read_details(path).fields["title"] == "Song Won"
-        details = app.query_one(DetailsPane)
+        details = app.query_one(DetailsView)
         assert not details.dirty                   # baseline moved with the save
         assert app.focused is not app.query_one(LibraryTree)   # ^s keeps focus
 
@@ -660,7 +660,7 @@ async def test_esc_dirty_confirm_keep_editing(media_tree):
         assert not isinstance(app.screen, ConfirmSave)
         form = app.query_one("#form-audio", EditForm)
         assert form.values()["title"] == "Edited"    # edit kept, still editing
-        details = app.query_one(DetailsPane)
+        details = app.query_one(DetailsView)
         assert details.dirty
 
 
@@ -688,7 +688,7 @@ async def test_rename_via_details(media_tree):
         old = media_tree / "Music" / "01 Song One.mp3"
         new = media_tree / "Music" / "01 First Song.mp3"
         assert new.exists() and not old.exists()
-        assert app.query_one(PathBar).value == str(new)
+        assert app.query_one(PathInput).value == str(new)
         tree = app.query_one(LibraryTree)
         assert str(tree.cursor_node.label) == "01 First Song.mp3"
 
@@ -701,7 +701,7 @@ async def test_book_panel_is_editable(media_tree):
         await settle(pilot)
         await pilot.press("down")                    # Dune.epub
         await settle(pilot)
-        details = app.query_one(DetailsPane)
+        details = app.query_one(DetailsView)
         assert details.kind == "book"
         await pilot.press("enter", "down")           # title input
         form = app.query_one("#form-book", EditForm)
@@ -720,7 +720,7 @@ async def _goto_dune(app, pilot):
     await settle(pilot)
     await pilot.press("down")                    # Dune.epub
     await settle(pilot)
-    assert app.query_one(DetailsPane).kind == "book"
+    assert app.query_one(DetailsView).kind == "book"
 
 
 async def test_book_offers_conversions_minus_own_format(media_tree):
@@ -774,7 +774,7 @@ async def test_book_cover_prefill_falls_back_to_cover_image(media_tree):
         await settle(pilot)
         await pilot.press("down", "down")          # past cover.jpg → Dune.epub
         await settle(pilot)
-        assert app.query_one(DetailsPane).kind == "book"
+        assert app.query_one(DetailsView).kind == "book"
         await pilot.press("ctrl+f")
         await pilot.pause(0.2)
         assert app.query_one("#book-cover-path").value == \
@@ -873,7 +873,7 @@ async def test_split_omnibus_opens_editable_form_focused(media_tree):
         await _goto_omni(app, pilot, media_tree)
         await pilot.press("ctrl+e")              # split omnibus
         await pilot.pause(0.6)
-        details = app.query_one(DetailsPane)
+        details = app.query_one(DetailsView)
         assert details._omnibus_editing
         # the pane holds focus, on the first (author) field, pre-filled
         assert app.focused is app.query_one("#omni-author")
@@ -923,7 +923,7 @@ async def test_split_omnibus_escape_cancels(media_tree):
         await _goto_omni(app, pilot, media_tree)
         await pilot.press("ctrl+e")
         await pilot.pause(0.6)
-        details = app.query_one(DetailsPane)
+        details = app.query_one(DetailsView)
         assert details.plan_preview_open()
         await pilot.press("escape")              # from the focused form
         await settle(pilot)
@@ -1069,7 +1069,7 @@ async def test_folderize_preview_apply_flow(media_tree):
         await _goto_folder(app, pilot, "Inbox")
         await pilot.press("ctrl+l")              # fo^lderize → plan preview
         await pilot.pause(0.6)
-        details = app.query_one(DetailsPane)
+        details = app.query_one(DetailsView)
         assert details.plan_preview_open()
         assert app.query_one("#plan-preview").display
         assert set(_bar_names(app)) == {"plan_apply", "plan_cancel"}
@@ -1091,7 +1091,7 @@ async def test_folderize_escape_cancels_preview(media_tree):
         await _goto_folder(app, pilot, "Inbox")
         await pilot.press("ctrl+l")
         await pilot.pause(0.6)
-        details = app.query_one(DetailsPane)
+        details = app.query_one(DetailsView)
         assert details.plan_preview_open()
         await pilot.press("escape")              # tree keeps focus: esc = cancel
         await settle(pilot)
@@ -1228,7 +1228,7 @@ async def test_opt_shift_arrows_select_words(media_tree):
         sel = field.selection
         assert sel.start == sel.end
 
-        bar = app.query_one(PathBar)                 # same in the path bar
+        bar = app.query_one(PathInput)                 # same in the path bar
         bar.focus()
         await pilot.pause()
         await pilot.press("alt+shift+left")
@@ -1280,7 +1280,7 @@ async def test_action_key_inert_when_bar_hidden(media_tree):
     app = MediasmithApp(media_tree)
     async with app.run_test(size=(120, 40)) as pilot:
         await settle(pilot)                          # cursor on a folder
-        assert app.query_one(DetailsPane).kind == "folder"
+        assert app.query_one(DetailsView).kind == "folder"
         await pilot.press("ctrl+o")                  # no audio bar on show
         assert app.focused is app.query_one(LibraryTree)
         assert not app.query_one("#row-art-path").display
@@ -1296,7 +1296,7 @@ async def test_art_path_method(media_tree):
         assert app.query_one("#row-art-path").display
         field.value = str(media_tree / "Pics" / "photo.png")
         await pilot.press("enter")
-        details = app.query_one(DetailsPane)
+        details = app.query_one(DetailsView)
         assert details.dirty                         # pending art
         assert not app.query_one("#row-art-path").display
         await pilot.press("ctrl+s")
@@ -1314,7 +1314,7 @@ async def test_art_path_rejects_non_image(media_tree):
         await pilot.press("enter", "ctrl+o")
         app.focused.value = str(media_tree / "notes.txt")
         await pilot.press("enter")
-        details = app.query_one(DetailsPane)
+        details = app.query_one(DetailsView)
         assert not details.dirty                     # rejected, no pending art
         assert app.focused.id == "art-path"          # still correcting
 
@@ -1326,7 +1326,7 @@ async def test_art_path_esc_cancels_to_buttons(media_tree):
         await pilot.press("enter", "ctrl+o", "escape")
         assert app.focused.id == "art-btn-path"
         assert not app.query_one("#row-art-path").display
-        assert not app.query_one(DetailsPane).dirty
+        assert not app.query_one(DetailsView).dirty
 
 
 async def test_art_fetch_method(media_tree, monkeypatch):
@@ -1345,7 +1345,7 @@ async def test_art_fetch_method(media_tree, monkeypatch):
         await _goto_first_song(app, pilot)
         await pilot.press("enter", "ctrl+f")
         await pilot.pause(0.5)                       # worker round trip
-        details = app.query_one(DetailsPane)
+        details = app.query_one(DetailsView)
         assert details._pending_art == art_a
         await pilot.press("ctrl+f")                  # repeat: next candidate
         await pilot.pause(0.5)
@@ -1410,7 +1410,7 @@ async def test_shift_down_selects_and_shows_bulk_form(media_tree):
         await _goto_first_song(app, pilot)           # cursor on song one
         await pilot.press("shift+down")              # extend to song two
         await _bulk_settle(pilot)
-        details = app.query_one(DetailsPane)
+        details = app.query_one(DetailsView)
         assert details.paths is not None and len(details.paths) == 2
         form = app.query_one("#form-audio", EditForm)
         assert form.values()["artist"] == "The Band"     # unanimous
@@ -1432,7 +1432,7 @@ async def test_plain_move_collapses_selection(media_tree):
         await pilot.press("up")                      # plain move: collapse
         await settle(pilot)
         assert tree._selection_paths() == []
-        assert app.query_one(DetailsPane).paths is None
+        assert app.query_one(DetailsView).paths is None
 
 
 async def test_selection_confined_to_siblings(media_tree):
@@ -1456,7 +1456,7 @@ async def test_bulk_edit_applies_to_all(media_tree):
         await pilot.press("enter")                   # descend into the form
         form = app.query_one("#form-audio", EditForm)
         assert app.focused is form.inputs()[0]       # no fname stop in bulk
-        details = app.query_one(DetailsPane)
+        details = app.query_one(DetailsView)
         # edit a unanimous field and a mixed one
         album_input = form.inputs()[3]               # title,artist,albumartist,album
         album_input.focus()
@@ -1492,7 +1492,7 @@ async def test_bulk_save_keeps_focus(media_tree):
         await pilot.press("ctrl+s")
         await pilot.pause(0.8)                       # save + re-read settle
         assert app.focused is not None               # focus never dropped
-        details = app.query_one(DetailsPane)
+        details = app.query_one(DetailsView)
         assert details in app.focused.ancestors      # …and stayed in the pane
 
 
@@ -1525,7 +1525,7 @@ async def test_album_folder_shows_bulk_form(media_tree):
         await pilot.press("down")
         await pilot.press("m", "u")                  # cursor on Music (album-like)
         await _bulk_settle(pilot)
-        details = app.query_one(DetailsPane)
+        details = app.query_one(DetailsView)
         assert details.paths is not None and len(details.paths) == 2
         assert details.kind == "audio"
         assert details.can_edit()
@@ -1574,15 +1574,15 @@ async def test_narrow_starts_tree_only(media_tree):
         await settle(pilot)
         assert app.screen.has_class("-narrow")
         assert app.query_one(LibraryTree).display
-        assert not app.query_one(PathBar).display
-        assert not app.query_one(DetailsPane).display
+        assert not app.query_one(PathInput).display
+        assert not app.query_one(DetailsView).display
 
 
 async def test_narrow_path_bar_summons_above_tree(media_tree):
     app = MediasmithApp(media_tree)
     async with app.run_test(size=(60, 40)) as pilot:
         await settle(pilot)
-        bar = app.query_one(PathBar)
+        bar = app.query_one(PathInput)
         tree = app.query_one(LibraryTree)
         await pilot.press("ctrl+slash")
         assert app.focused is bar
@@ -1606,15 +1606,15 @@ async def test_narrow_other_descends_editable(media_tree):
         await settle(pilot)
         await pilot.press("enter")                   # descend into rename
         await pilot.pause()
-        details = app.query_one(DetailsPane)
+        details = app.query_one(DetailsView)
         assert details.display
-        assert app.query_one("#left").region.width == 0   # narrow: swapped in
+        assert app.query_one(TreeView).region.width == 0   # narrow: swapped in
         assert app.focused.id == "fname"             # focus, not a bare view
         assert app.focused.value == "notes.txt"
         await pilot.press("escape")                  # ascend: tree swaps back
         await pilot.pause()
         assert not details.display
-        assert app.query_one("#left").region.width > 0
+        assert app.query_one(TreeView).region.width > 0
         assert app.focused is tree
 
 
@@ -1626,7 +1626,7 @@ async def test_details_follow_cursor(media_tree):
         await settle(pilot)
         await pilot.press("down", "n")               # notes.txt
         await settle(pilot)
-        details = app.query_one(DetailsPane)
+        details = app.query_one(DetailsView)
         assert details.path == media_tree / "notes.txt"
         await pilot.press("down")                    # Pics — cursor still in tree
         await settle(pilot)
@@ -1641,14 +1641,14 @@ async def test_narrow_editable_descends_with_focus(media_tree):
         await pilot.press("enter")                   # focus, orange border
         await pilot.pause()
         assert app.focused.id == "fname"
-        assert app.query_one(DetailsPane).display
-        assert app.query_one("#left").region.width == 0
+        assert app.query_one(DetailsView).display
+        assert app.query_one(TreeView).region.width == 0
         await pilot.press("escape")                  # ascend: tree swaps back
         await pilot.pause()
         tree = app.query_one(LibraryTree)
         assert app.focused is tree
-        assert not app.query_one(DetailsPane).display
-        assert app.query_one("#left").region.width > 0
+        assert not app.query_one(DetailsView).display
+        assert app.query_one(TreeView).region.width > 0
 
 
 async def test_narrow_path_bar_summons_over_view(media_tree):
@@ -1660,10 +1660,10 @@ async def test_narrow_path_bar_summons_over_view(media_tree):
         await pilot.press("enter")                   # viewing details
         await pilot.press("ctrl+slash")              # summon the path bar
         await pilot.pause()
-        bar = app.query_one(PathBar)
+        bar = app.query_one(PathInput)
         assert app.focused is bar
-        assert bar.display and app.query_one("#left").region.width > 0
-        assert not app.query_one(DetailsPane).display
+        assert bar.display and app.query_one(TreeView).region.width > 0
+        assert not app.query_one(DetailsView).display
 
 
 async def test_wide_enter_focuses_any_kind(media_tree):
@@ -1677,14 +1677,14 @@ async def test_wide_enter_focuses_any_kind(media_tree):
         await settle(pilot)
         await pilot.press("enter")
         await pilot.pause()
-        details = app.query_one(DetailsPane)
+        details = app.query_one(DetailsView)
         assert app.focused.id == "fname"             # descended into rename
         assert details.display
-        assert app.query_one("#left").display        # wide: left column stays
+        assert app.query_one(TreeView).display        # wide: left column stays
         await pilot.press("escape")                  # ascend back to the tree
         await pilot.pause()
         assert app.focused is tree
-        assert details.display and app.query_one("#left").display
+        assert details.display and app.query_one(TreeView).display
 
 
 async def test_artist_folder_does_not_bulk(media_tree):
@@ -1692,7 +1692,7 @@ async def test_artist_folder_does_not_bulk(media_tree):
     app = MediasmithApp(media_tree)
     async with app.run_test(size=(120, 40)) as pilot:
         await settle(pilot)                          # anchor folder has subdirs
-        details = app.query_one(DetailsPane)
+        details = app.query_one(DetailsView)
         assert details.paths is None
         assert details.kind == "folder"              # plain counts view
         assert app.query_one("#panel-folder").display
@@ -1705,7 +1705,7 @@ async def _goto_notes(app, pilot):
     await settle(pilot)
     await pilot.press("down", "n")               # notes.txt
     await settle(pilot)
-    assert app.query_one(DetailsPane).path == app.start_dir / "notes.txt"
+    assert app.query_one(DetailsView).path == app.start_dir / "notes.txt"
 
 
 async def test_move_lift_place_flow(media_tree):
@@ -1736,7 +1736,7 @@ async def test_move_survives_pathbar_jump(media_tree):
         await pilot.press("ctrl+n")
         await pilot.pause()
         await pilot.press("ctrl+slash")
-        bar = app.query_one(PathBar)
+        bar = app.query_one(PathInput)
         bar.value = str(media_tree / "Pics")
         await settle(pilot)
         await pilot.press("enter")
@@ -1841,7 +1841,7 @@ async def test_move_button_label_flips(media_tree):
         assert "place" not in str(button.label)
 
 
-# -- fix multi-artist (folder action, folderize's pattern) ----------------------
+# -- strip multi-artist (folder action, folderize's pattern) ----------------------
 
 
 def _make_tangled(media_tree):
@@ -1863,9 +1863,9 @@ async def test_multiartist_button_only_where_tangled(media_tree):
     app = MediasmithApp(media_tree)
     async with app.run_test(size=(120, 40)) as pilot:
         await _goto_folder(app, pilot, "Tangle")
-        assert "fix_multi_artist" in _bar_names(app)
+        assert "strip_multi_artist" in _bar_names(app)
         await _goto_folder(app, pilot, "Music")  # untangled: no button
-        assert "fix_multi_artist" not in _bar_names(app)
+        assert "strip_multi_artist" not in _bar_names(app)
 
 
 async def test_multiartist_preview_apply_rewrites_tags(media_tree):
@@ -1875,7 +1875,7 @@ async def test_multiartist_preview_apply_rewrites_tags(media_tree):
         await _goto_folder(app, pilot, "Tangle")
         await pilot.press("ctrl+x")              # fi^x multi-artist
         await pilot.pause(0.6)
-        details = app.query_one(DetailsPane)
+        details = app.query_one(DetailsView)
         assert details.plan_preview_open()
         assert set(_bar_names(app)) == {"plan_apply", "plan_cancel"}
         preview = str(app.query_one("#plan-tree").render())
@@ -1887,7 +1887,7 @@ async def test_multiartist_preview_apply_rewrites_tags(media_tree):
         assert d.fields["albumartist"] == "Jax Jones"
         assert not details.plan_preview_open()
         await pilot.pause(0.6)                   # re-probe: nothing left
-        assert "fix_multi_artist" not in _bar_names(app)
+        assert "strip_multi_artist" not in _bar_names(app)
 
 
 async def test_multiartist_escape_cancels(media_tree):
@@ -1897,7 +1897,7 @@ async def test_multiartist_escape_cancels(media_tree):
         await _goto_folder(app, pilot, "Tangle")
         await pilot.press("ctrl+x")
         await pilot.pause(0.6)
-        details = app.query_one(DetailsPane)
+        details = app.query_one(DetailsView)
         assert details.plan_preview_open()
         await pilot.press("escape")              # tree keeps focus: esc = cancel
         await settle(pilot)
@@ -1926,7 +1926,7 @@ async def _goto_alien(app, pilot):
     await settle(pilot)
     await pilot.press("down")                        # Alien.1979.mkv
     await settle(pilot)
-    assert app.query_one(DetailsPane).kind == "video"
+    assert app.query_one(DetailsView).kind == "video"
 
 
 async def test_video_offers_subtitle_actions(media_tree):
@@ -1967,7 +1967,7 @@ async def test_shift_div_nudge_and_save(media_tree):
         await _goto_alien(app, pilot)
         await pilot.press("ctrl+v")                  # open the shift div
         await pilot.pause(0.5)                       # load worker
-        details = app.query_one(DetailsPane)
+        details = app.query_one(DetailsView)
         assert details._shift_open
         assert app.query_one("#shift-div").display
         assert app.focused.id == "shift-control"
@@ -1993,7 +1993,7 @@ async def test_shift_arrow_steps(media_tree):
         await _goto_alien(app, pilot)
         await pilot.press("ctrl+v")
         await pilot.pause(0.5)
-        details = app.query_one(DetailsPane)
+        details = app.query_one(DetailsView)
         await pilot.press("shift+right")             # ±1s
         assert details._shift_target_ms == 1000
         await pilot.press("pageup")                  # ±10s
@@ -2014,7 +2014,7 @@ async def test_shift_esc_pending_confirms(media_tree):
         assert isinstance(app.screen, ConfirmSave)
         await pilot.press("d")                       # discard
         await pilot.pause()
-        details = app.query_one(DetailsPane)
+        details = app.query_one(DetailsView)
         assert not details._shift_open               # div closed
         assert srt_path.read_text() == original      # nothing written
         assert app.focused is app.query_one(LibraryTree)
@@ -2030,7 +2030,7 @@ async def test_shift_esc_pending_save_writes(media_tree):
         await pilot.press("right", "escape", "s")    # modal → save
         await pilot.pause(0.6)
         assert "00:00:01,100" in srt_path.read_text()
-        details = app.query_one(DetailsPane)
+        details = app.query_one(DetailsView)
         assert not details._shift_open               # released: closed out
         assert app.focused is app.query_one(LibraryTree)
 
@@ -2042,7 +2042,7 @@ async def test_shift_toggle_pinned_while_pending(media_tree):
         await pilot.press("ctrl+v")
         await pilot.pause(0.5)
         await pilot.press("right", "ctrl+v")         # toggle off refused
-        details = app.query_one(DetailsPane)
+        details = app.query_one(DetailsView)
         assert details._shift_open
         assert app.focused.id == "shift-control"
         await pilot.press("left", "ctrl+v")          # clean again: closes
@@ -2059,7 +2059,7 @@ async def test_shift_esc_clean_closes(media_tree):
         await pilot.pause(0.5)
         await pilot.press("escape")
         await pilot.pause()
-        details = app.query_one(DetailsPane)
+        details = app.query_one(DetailsView)
         assert not details._shift_open
         assert not app.query_one("#shift-div").display
         assert app.focused is app.query_one(LibraryTree)
@@ -2198,7 +2198,7 @@ async def _goto_photo(app, pilot):
     await settle(pilot)
     await pilot.press("down")                    # photo.png
     await settle(pilot)
-    assert app.query_one(DetailsPane).kind == "image"
+    assert app.query_one(DetailsView).kind == "image"
 
 
 async def test_image_is_renameable(media_tree):
@@ -2262,7 +2262,7 @@ async def test_image_convert_overwrites_on_second_press(media_tree):
         await settle(pilot)
         await pilot.press("down", "down")            # past photo.jpg → photo.png
         await settle(pilot)
-        assert app.query_one(DetailsPane).kind == "image"
+        assert app.query_one(DetailsView).kind == "image"
         await pilot.press("ctrl+p")                  # convert to jpg — refuses
         await pilot.pause(0.4)
         assert existing.read_bytes() == b"placeholder"
@@ -2308,7 +2308,7 @@ async def test_resize_apply_creates_file(media_tree):
         target = media_tree / "Pics" / "photo (4x2).png"
         assert target.exists()
         assert Image.open(target).size == (4, 2)
-        details = app.query_one(DetailsPane)
+        details = app.query_one(DetailsView)
         assert details._resize_open                  # div stays for more
 
 
@@ -2419,7 +2419,7 @@ async def test_sort_preview_and_apply(media_tree):
         await _goto_folder(app, pilot, "Books")
         await pilot.press("ctrl+o")                  # s^ort
         await pilot.pause(0.6)
-        details = app.query_one(DetailsPane)
+        details = app.query_one(DetailsView)
         assert details.plan_preview_open()
         assert set(_bar_names(app)) == {"plan_apply", "plan_cancel"}
         await pilot.press("ctrl+a")                  # apply
@@ -2438,7 +2438,7 @@ async def test_sort_escape_cancels(media_tree):
         await _goto_folder(app, pilot, "Books")
         await pilot.press("ctrl+o")
         await pilot.pause(0.6)
-        details = app.query_one(DetailsPane)
+        details = app.query_one(DetailsView)
         assert details.plan_preview_open()
         await pilot.press("escape")
         await settle(pilot)
@@ -2457,7 +2457,7 @@ async def test_sort_single_ebook_wraps_renames_and_reselects(media_tree):
         book = wrapper / "Herbert, Frank - Dune.epub"
         assert book.exists()                         # renamed + wrapped
         assert not (media_tree / "Books" / "Dune.epub").exists()
-        details = app.query_one(DetailsPane)
+        details = app.query_one(DetailsView)
         assert details.path == book                  # same book still shown
         assert details.kind == "book"
         assert app.focused is app.query_one("#fname")  # editable, filename focused
@@ -2478,7 +2478,7 @@ async def test_sort_single_ebook_refuses_overwrite(media_tree):
         await settle(pilot)
         await pilot.press("down", "down")            # past the wrapper → Dune.epub
         await settle(pilot)
-        assert app.query_one(DetailsPane).kind == "book"
+        assert app.query_one(DetailsView).kind == "book"
         await pilot.press("ctrl+o")
         await pilot.pause(0.8)
         assert (wrapper / "Herbert, Frank - Dune.epub").read_bytes() \
@@ -2536,7 +2536,7 @@ async def test_rename_context_row_reanchors(media_tree):
         await settle(pilot)
         await pilot.press("up")                      # the context row
         await settle(pilot)
-        details = app.query_one(DetailsPane)
+        details = app.query_one(DetailsView)
         assert details.path == media_tree.parent
         await pilot.press("enter")                   # descend into rename
         assert app.focused.id == "fname"
@@ -2556,13 +2556,13 @@ async def test_folder_offers_new_and_trash_buttons(media_tree):
     async with app.run_test(size=(120, 40)) as pilot:
         await _goto_folder(app, pilot, "Empty")
         names = _bar_names(app)
-        assert "new_folder" in names and "trash" in names
+        assert "new_directory" in names and "delete" in names
         await _goto_notes(app, pilot)                # kind: other — neither
         names = _bar_names(app)
-        assert "new_folder" not in names and "trash" not in names
+        assert "new_directory" not in names and "delete" not in names
 
 
-async def test_new_folder_creates_and_descends(media_tree):
+async def test_new_directory_creates_and_descends(media_tree):
     app = MediasmithApp(media_tree)
     async with app.run_test(size=(120, 40)) as pilot:
         await _goto_folder(app, pilot, "Empty")
@@ -2576,7 +2576,7 @@ async def test_new_folder_creates_and_descends(media_tree):
         assert str(tree.cursor_node.label) == "untitled folder"
 
 
-async def test_new_folder_on_file_targets_its_parent(media_tree):
+async def test_new_directory_on_file_targets_its_parent(media_tree):
     app = MediasmithApp(media_tree)
     async with app.run_test(size=(120, 40)) as pilot:
         await _goto_notes(app, pilot)                # a file: its folder
@@ -2585,7 +2585,7 @@ async def test_new_folder_on_file_targets_its_parent(media_tree):
         assert (media_tree / "untitled folder").is_dir()
 
 
-async def test_new_folder_names_dont_collide(media_tree):
+async def test_new_directory_names_dont_collide(media_tree):
     (media_tree / "Empty" / "untitled folder").mkdir()
     app = MediasmithApp(media_tree)
     async with app.run_test(size=(120, 40)) as pilot:
@@ -2627,7 +2627,7 @@ async def test_trash_works_on_a_file(media_tree, monkeypatch):
     app = MediasmithApp(media_tree)
     async with app.run_test(size=(120, 40)) as pilot:
         await _goto_first_song(app, pilot)           # an audio FILE
-        song = app.query_one(DetailsPane).path
+        song = app.query_one(DetailsView).path
         assert song is not None and song.is_file()
         await pilot.press("ctrl+delete")
         await pilot.pause(0.8)
@@ -2704,7 +2704,7 @@ async def test_gif_apply_creates_sibling(media_tree, monkeypatch):
         assert target.exists()
         tree = app.query_one(LibraryTree)
         assert tree._node_for(target) is not None
-        assert app.query_one(DetailsPane)._gif_open  # div stays for more
+        assert app.query_one(DetailsView)._gif_open  # div stays for more
 
 
 async def test_gif_honors_offline(media_tree, monkeypatch):

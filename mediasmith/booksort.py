@@ -46,7 +46,7 @@ def _dest_name(source: Path, folder_name: str) -> str:
 
 def sorted_path(book: Path, folder_name: str) -> Path:
     """Where ``book`` lands after being wrapped into ``folder_name`` — the
-    renamed file inside the new folder, beside where it started."""
+    renamed file inside the new directory, beside where it started."""
     return book.parent / folder_name / _dest_name(book, folder_name)
 
 

@@ -83,7 +83,7 @@ def action_markup(word: str, key: str | None,
     swaps the chord color (focus recolors it — see FOCUS_KEY_STYLE)."""
     if key is None:
         return _escape(word)
-    index = word.lower().find(key.lower())
+    index = word.lower().find(key.lower()) if len(key) == 1 else -1
     if index >= 0:
         return (f"{_escape(word[:index])}"
                 f"[{key_style}]^{word[index]}[/]"
@@ -193,7 +193,7 @@ class ActionButton(Button):
 
 class ActionBar(Widget):
     """One wrapping row of ActionButtons. Post a ``Triggered`` on press;
-    the owner (DetailsPane) maps action names to handlers."""
+    the owner (DetailsView) maps action names to handlers."""
 
     DEFAULT_CSS = """
     ActionBar { width: 1fr; height: auto; }

@@ -78,7 +78,7 @@ PANE_ACTIONS = [
     # which ever shares a view with a book or folder; splices to "s^ort"
     Action("sort", "sort", "o"),
     Action("folderize", "folderize", "l"),
-    Action("fix_multi_artist", "fix multi-artist", "x"),
+    Action("strip_multi_artist", "strip multi-artist", "x"),
     # while any plan preview is up, these two own the bar
     Action("plan_apply", "apply", "a"),
     Action("plan_cancel", "cancel"),            # esc cancels too
@@ -101,16 +101,16 @@ PANE_ACTIONS = [
     Action("convert_tiff", "convert to tiff", "f"),
     Action("resize", "resize", "e"),
     Action("rotate", "rotate", "o"),
-    # new folder: ^e via CONTEXTUAL REUSE (2026-08-08 — the ⌘ chords didn't
+    # new directory: ^e via CONTEXTUAL REUSE (2026-08-08 — the ⌘ chords didn't
     # survive Nick's terminal). ^e is split-omnibus (book) / resize (image);
     # none share a view with a folder, and the letter isn't Input-eaten, so
     # the chord fires even while a folder's rename field is focused.
-    Action("new_folder", "new folder", "e"),
+    Action("new_directory", "new directory", "e"),
     # trash moved OFF ^t (it collided with extract-cover) to ctrl+delete,
     # dispatched by the app (App.on_key), not action_for_key — no single
     # char can name it. The button prints "^del"; the chord works on ANY
     # selection, file or folder (2026-08-08 fix — it was folder-only).
-    Action("trash", "trash", key_label="del"),
+    Action("delete", "delete", key_label="DEL"),
     # Move (proposal M1): ONE stateful chord — ^n lifts the selection,
     # ^n places it at the highlighted spot; the label flips to match.
     # Single-key because the ctrl-letter pool is exhausted (see QA-TODO).
@@ -266,7 +266,7 @@ class FieldInput(Input):
 
     def action_left_or_release(self) -> None:
         if self.cursor_position == 0:
-            self.screen.query_one(DetailsPane).action_release()
+            self.screen.query_one(DetailsView).action_release()
         else:
             self.action_cursor_left()
 
@@ -304,7 +304,7 @@ class ArtPathInput(FieldInput):
         self.cursor_position = len(self.value)
 
     def action_cancel(self) -> None:
-        pane = self.screen.query_one(DetailsPane)
+        pane = self.screen.query_one(DetailsView)
         pane._hide_art_path()
         pane._art_buttons()[0].focus()
 
@@ -348,7 +348,7 @@ class CoverPathInput(FieldInput):
         self.cursor_position = len(self.value)
 
     def action_cancel(self) -> None:
-        self.screen.query_one(DetailsPane)._hide_book_cover_path()
+        self.screen.query_one(DetailsView)._hide_book_cover_path()
 
     def action_left_or_release(self) -> None:
         if self.cursor_position == 0:
@@ -388,10 +388,10 @@ class ShiftControl(Static, can_focus=True):
     ]
 
     def action_nudge(self, delta_ms: int) -> None:
-        self.screen.query_one(DetailsPane)._shift_nudge(delta_ms)
+        self.screen.query_one(DetailsView)._shift_nudge(delta_ms)
 
     def action_close(self) -> None:
-        self.screen.query_one(DetailsPane)._shift_close()
+        self.screen.query_one(DetailsView)._shift_close()
 
 
 class EditForm(Vertical):
@@ -495,7 +495,7 @@ class OmniInput(FieldInput):
     BINDINGS = [Binding("ctrl+a", "omni_apply", show=False)]
 
     def action_omni_apply(self) -> None:
-        self.screen.query_one(DetailsPane).action_plan_apply()
+        self.screen.query_one(DetailsView).action_plan_apply()
 
 
 class OmnibusForm(Vertical):
@@ -615,7 +615,7 @@ class ConfirmSave(ModalScreen[str]):
         self._decide(choice)
 
 
-class DetailsPane(VerticalScroll, can_focus=True):
+class DetailsView(VerticalScroll, can_focus=True):
 
     BINDINGS = [
         Binding("escape", "release", "back", show=False),
@@ -667,7 +667,7 @@ class DetailsPane(VerticalScroll, can_focus=True):
             super().__init__()
             self.path = path
 
-    class Trashed(Message):
+    class Deleted(Message):
         """``path`` went to the Trash; the tree should re-list its parent
         and move the cursor off the dead row."""
 
@@ -676,7 +676,7 @@ class DetailsPane(VerticalScroll, can_focus=True):
             self.path = path
 
     class BookSorted(Message):
-        """A single ebook was renamed and wrapped into its own new folder
+        """A single ebook was renamed and wrapped into its own new directory
         (``Author Sort - Title/``); ``path`` is where it landed. The tree
         should re-list, expand the wrapper, and drop the cursor on the
         book — editable, like new-folder's flow one level deeper."""
@@ -1332,9 +1332,9 @@ class DetailsPane(VerticalScroll, can_focus=True):
             if self._sort_ready:                # probe: unwrapped books
                 names.add("sort")
             if self._multiartist_ready:
-                names.add("fix_multi_artist")
+                names.add("strip_multi_artist")
             if self._plan_root() is not None:   # a folder is on show
-                names |= {"new_folder", "trash"}
+                names |= {"new_directory", "delete"}
             if self._video_target() is not None:
                 names |= {"get_subs", "watch", "download_posters", "gif"}
                 if self._video_srt is not None:
@@ -2022,7 +2022,7 @@ class DetailsPane(VerticalScroll, can_focus=True):
         elif self._multiartist_plan is not None:
             plan = self._multiartist_plan
             self._multiartist_plan = None
-            self.notify("fixing…", title="fix multi-artist")
+            self.notify("stripping…", title="strip multi-artist")
             self._multiartist_exec_worker(plan)
         elif self._omnibus_plan is not None:
             plan = self._omnibus_plan
@@ -2114,7 +2114,7 @@ class DetailsPane(VerticalScroll, can_focus=True):
         if self.path == root:
             self.preview(root, immediate=True)  # fresh counts, fresh probe
 
-    # -- fix multi-artist ---------------------------------------------------------
+    # -- strip multi-artist ---------------------------------------------------------
 
     @work(thread=True, exclusive=True, group="multiartist-probe")
     def _probe_multiartist(self, root: Path) -> None:
@@ -2127,11 +2127,11 @@ class DetailsPane(VerticalScroll, can_focus=True):
             self._multiartist_ready = True
             self._sync_pane_bar()
 
-    def action_fix_multi_artist(self) -> None:
+    def action_strip_multi_artist(self) -> None:
         root = self._plan_root()
         if root is None or not self._multiartist_ready:
             return
-        self.notify("scanning…", title="fix multi-artist")
+        self.notify("scanning…", title="strip multi-artist")
         self._multiartist_plan_worker(root)
 
     @work(thread=True, exclusive=True, group="multiartist-plan")
@@ -2144,12 +2144,12 @@ class DetailsPane(VerticalScroll, can_focus=True):
         if self.path != root:                   # selection moved on
             return
         if plan.empty:
-            self.notify("no tangled artists", title="fix multi-artist")
+            self.notify("no tangled artists", title="strip multi-artist")
             self._multiartist_ready = False
             self._sync_pane_bar()
             return
         self._multiartist_plan = plan
-        self._show_plan_preview(f"fix multi-artist in {root.name}/",
+        self._show_plan_preview(f"strip multi-artist in {root.name}/",
                                 render_multiartist_plan(plan))
 
     @work(thread=True, exclusive=True, group="multiartist-exec")
@@ -2165,7 +2165,7 @@ class DetailsPane(VerticalScroll, can_focus=True):
         if errors:
             path, reason = errors[0]
             parts.append(f"{len(errors)} failed — {path.name}: {reason}")
-        self.notify(" · ".join(parts), title="fix multi-artist", timeout=8,
+        self.notify(" · ".join(parts), title="strip multi-artist", timeout=8,
                     severity="warning" if errors else "information")
         # tags changed in place — no tree structure change, just re-read
         if self.path == root:
@@ -2259,7 +2259,7 @@ class DetailsPane(VerticalScroll, can_focus=True):
     # The fourth plan-shaped action (booksort.py) — folderize's exact
     # shape on the shared plan_apply/plan_cancel pair. On a single epub the
     # same engine runs one-file and immediately (no preview): rename + wrap,
-    # then reveal the book in its new folder, still editable (BookSorted).
+    # then reveal the book in its new directory, still editable (BookSorted).
     # One _sort_ready flag serves both contexts — they never coexist.
 
     @work(thread=True, exclusive=True, group="sort-probe")
@@ -2520,33 +2520,33 @@ class DetailsPane(VerticalScroll, can_focus=True):
             self.post_message(self.FolderChanged(parent))
         self._sync_pane_bar()
 
-    # -- folder CRUD: new folder / trash (rename rides the editable form) ----------
+    # -- folder CRUD: new directory / trash (rename rides the editable form) ----------
     # Chords are the buttons' own ^e / ^t, dispatched app-wide while the
     # buttons show (folder views). The chord works with ANY selection — a
     # highlighted folder is the target, a highlighted file means its folder.
 
-    def action_new_folder(self) -> None:
+    def action_new_directory(self) -> None:
         target = self._place_target()
         if target is None:
             return
-        self._new_folder_worker(target)
+        self._new_directory_worker(target)
 
     @work(thread=True, exclusive=True, group="new-folder")
-    def _new_folder_worker(self, parent: Path) -> None:
+    def _new_directory_worker(self, parent: Path) -> None:
         # one mkdir — but NAS rule: no filesystem op on the UI thread
         try:
             folder = adapters.create_folder(parent)
         except OSError as error:
             self.app.call_from_thread(
-                self.notify, str(error), title="new folder", severity="error")
+                self.notify, str(error), title="new directory", severity="error")
             return
-        self.app.call_from_thread(self._new_folder_done, folder)
+        self.app.call_from_thread(self._new_directory_done, folder)
 
-    def _new_folder_done(self, folder: Path) -> None:
+    def _new_directory_done(self, folder: Path) -> None:
         fs.clear_cache()
         self.post_message(self.FolderCreated(folder))
 
-    def _trash_target(self) -> Path | None:
+    def _delete_target(self) -> Path | None:
         """What ^del removes: the highlighted item itself — file OR folder
         (or an album-like folder shown as its contents). A shift-range bulk
         selection has no single target, so it is left alone."""
@@ -2554,32 +2554,32 @@ class DetailsPane(VerticalScroll, can_focus=True):
             return self.path
         return None
 
-    def action_trash(self) -> None:
-        root = self._trash_target()
+    def action_delete(self) -> None:
+        root = self._delete_target()
         if root is None:
             return
         if os.environ.get(artfetch.OFFLINE_ENV):
             # the fuzz gate presses everything — it must not fill the
             # REAL Trash with scratch folders
-            self.notify("trash disabled (MEDIASMITH_OFFLINE set)",
-                        title="trash", severity="warning")
+            self.notify("delete disabled (MEDIASMITH_OFFLINE set)",
+                        title="delete", severity="warning")
             return
-        self._trash_worker(root)
+        self._delete_worker(root)
 
-    @work(thread=True, exclusive=True, group="trash")
-    def _trash_worker(self, path: Path) -> None:
+    @work(thread=True, exclusive=True, group="delete")
+    def _delete_worker(self, path: Path) -> None:
         try:
             adapters.trash(path)
         except Exception as error:
             self.app.call_from_thread(
-                self.notify, str(error), title="trash", severity="error")
+                self.notify, str(error), title="delete", severity="error")
             return
-        self.app.call_from_thread(self._trashed, path)
+        self.app.call_from_thread(self._deleted, path)
 
-    def _trashed(self, path: Path) -> None:
-        self.notify(f"{path.name} moved to Trash", title="trash")
+    def _deleted(self, path: Path) -> None:
+        self.notify(f"{path.name} moved to Trash", title="delete")
         fs.clear_cache()
-        self.post_message(self.Trashed(path))
+        self.post_message(self.Deleted(path))
 
     # -- subtitles: get / clean / shift / watch on a video file --------------------
     # The engine work lives in subsync.py (dl+sync, the tuned v1 policy)

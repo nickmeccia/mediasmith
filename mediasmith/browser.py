@@ -1,4 +1,7 @@
-"""Left pane: pathsmith-style path bar + the library tree."""
+"""Tree View: the left pane — Path Input (a sub-view) above the library
+tree. The views form a chain of command (see CLAUDE.md): the path input
+is a subview OF the tree view, not a sibling zone, so the container owns
+the pane border, the focus state, and (eventually) tree-level state."""
 
 from __future__ import annotations
 
@@ -10,6 +13,7 @@ from rich.text import Text
 from textual import events, work
 from textual._segment_tools import line_pad
 from textual.binding import Binding
+from textual.containers import Vertical
 from textual.geometry import Region, Size
 from textual.message import Message
 from textual.strip import Strip
@@ -18,7 +22,7 @@ from textual.widgets import DirectoryTree, Input
 from textual.worker import get_current_worker
 
 from . import fs
-from .details import WORD_BINDINGS, DetailsPane
+from .details import WORD_BINDINGS, DetailsView
 
 TYPE_SEARCH_SECONDS = 1.0   # Finder-style: pause this long and the buffer resets
 
@@ -39,7 +43,7 @@ def parse_view(value: str) -> tuple[Path, str | None]:
 class PathSuggester(Suggester):
     """Ghost text: the rest of the top match for the current value."""
 
-    def __init__(self, bar: PathBar) -> None:
+    def __init__(self, bar: PathInput) -> None:
         # case_sensitive=True so we receive the raw value; matching is
         # case-insensitive inside _matches. No cache: listings change.
         super().__init__(use_cache=False, case_sensitive=True)
@@ -54,7 +58,7 @@ class PathSuggester(Suggester):
         return value + first.name[prefix_len:] + ("/" if first.is_dir() else "")
 
 
-class PathBar(Input):
+class PathInput(Input):
     """Full path of the selection; when focused, a live filter for the tree."""
 
     BINDINGS = [
@@ -85,7 +89,7 @@ class PathBar(Input):
         # cursor itself can't be removed: cursor_line=-1 gets clamped to 0.)
         self.cursor_position = len(self.value)
         self.app.query_one(LibraryTree).add_class("-editing")
-        self.app.query_one(DetailsPane).clear()
+        self.app.query_one(DetailsView).clear()
 
     async def action_cancel(self) -> None:
         """Esc: delete the incomplete segment, hand focus to the browser."""
@@ -145,7 +149,7 @@ class PathBar(Input):
               and node.data is not None):
             # Selection survives an edit-free visit; resync details/value.
             # (Skipped mid-anchor: the restore will place the cursor itself.)
-            tree.post_message(tree.Focused(Path(node.data.path)))
+            tree.post_message(tree.Selected(Path(node.data.path)))
 
     async def on_input_submitted(self, ev: Input.Submitted) -> None:
         """Enter: autocomplete an incomplete path, hand focus to the browser."""
@@ -170,13 +174,13 @@ class LibraryTree(DirectoryTree):
     """DirectoryTree with cached (NAS-friendly) listings and fold keys."""
 
     BINDINGS = [
-        Binding("right", "fold_open", "expand", show=False),
-        Binding("left", "fold_close", "collapse", show=False),
+        Binding("right", "expand", "expand", show=False),
+        Binding("left", "collapse", "collapse", show=False),
         # Pane hierarchy: the browser controls the details view. tab/enter
         # hand focus down — only when the selection is editable. (These also
         # shadow the Screen's tab cycling and the Tree's enter=select.)
-        Binding("tab", "to_details", "details", show=False),
-        Binding("enter", "to_details", "details", show=False),
+        Binding("tab", "edit", "details", show=False),
+        Binding("enter", "edit", "details", show=False),
         Binding("shift+tab", "stay", show=False),   # home base: no cycling out
         # narrow "view" (details shown, tree focused): esc swaps it back out
         Binding("escape", "close_view", show=False),
@@ -303,14 +307,14 @@ class LibraryTree(DirectoryTree):
                 return None
         return node
 
-    class Focused(Message):
+    class Selected(Message):
         """The cursor landed on a path (highlight, not selection)."""
 
         def __init__(self, path: Path) -> None:
             super().__init__()
             self.path = path
 
-    class Selected(Message):
+    class BulkSelected(Message):
         """A multi-file selection changed (shift-extension)."""
 
         def __init__(self, paths: list[Path]) -> None:
@@ -366,9 +370,9 @@ class LibraryTree(DirectoryTree):
         self._selected = frozenset(str(p) for p in paths)
         self.refresh()
         if len(paths) > 1:
-            self.post_message(self.Selected(paths))
+            self.post_message(self.BulkSelected(paths))
         elif (node := self.cursor_node) is not None and node.data is not None:
-            self.post_message(self.Focused(Path(node.data.path)))
+            self.post_message(self.Selected(Path(node.data.path)))
 
     def _clear_selection(self) -> None:
         if self._sel_anchor is None:
@@ -410,16 +414,16 @@ class LibraryTree(DirectoryTree):
             return list(paths)
         return [p for p in paths if not p.name.startswith(".")]
 
-    def action_fold_open(self) -> None:
+    def action_expand(self) -> None:
         node = self.cursor_node
         if node is None:
             return
         if node.allow_expand:
             node.expand()
         else:
-            self.action_to_details()   # right on a file: edit, same as enter
+            self.action_edit()   # right on a file: edit, same as enter
 
-    async def action_fold_close(self) -> None:
+    async def action_collapse(self) -> None:
         node = self.cursor_node
         if node is None:
             return
@@ -434,8 +438,8 @@ class LibraryTree(DirectoryTree):
         elif node.parent is not None:
             self._move_cursor(node.parent.line)   # scroll so it re-centers
 
-    def action_to_details(self) -> None:
-        details = self.app.query_one(DetailsPane)
+    def action_edit(self) -> None:
+        details = self.app.query_one(DetailsView)
         node = self.cursor_node
         selection = self._selection_paths()
         # skip the debounce: a keypress within 150ms of landing on the
@@ -456,7 +460,7 @@ class LibraryTree(DirectoryTree):
             self.app.view_details()
 
     def action_close_view(self) -> None:
-        details = self.app.query_one(DetailsPane)
+        details = self.app.query_one(DetailsView)
         if details.plan_preview_open():         # esc backs out of a plan
             details.action_plan_cancel()
             return
@@ -481,7 +485,7 @@ class LibraryTree(DirectoryTree):
         await self._apply_restore()
         node = self.cursor_node
         if node is not None and node.data is not None:
-            self.post_message(self.Focused(Path(node.data.path)))
+            self.post_message(self.Selected(Path(node.data.path)))
 
     def action_cursor_up(self) -> None:
         # Home base: the browser never gives up focus implicitly.
@@ -790,4 +794,19 @@ class LibraryTree(DirectoryTree):
             return
         self._clear_selection()
         if ev.node.data is not None and not self.has_class("-editing"):
-            self.post_message(self.Focused(Path(ev.node.data.path)))
+            self.post_message(self.Selected(Path(ev.node.data.path)))
+
+
+class TreeView(Vertical):
+    """The Tree View: Path Input above the library tree, one bordered
+    pane. The border and focus state live HERE — the container is the
+    view; the input and the tree are what it shows. (:focus-within
+    lights the pane whichever of the two owns focus.)"""
+
+    def __init__(self, start_dir: Path, **kw) -> None:
+        super().__init__(**kw)
+        self._start_dir = start_dir
+
+    def compose(self):
+        yield PathInput(value=str(self._start_dir))
+        yield LibraryTree(self._start_dir)
