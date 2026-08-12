@@ -74,11 +74,15 @@ commit message names its item. Update this file as you go.
 - [x] 10. **CLAUDE.md updated** (diagram, hierarchy, rules 5, cookbook,
       roadmap session-3 entry, QA-ledger pointer).
 
-## Remaining for whoever picks this up
+## Done — verification record
 
-- Fuzz gate at the end (snapshot copy!) — see CLAUDE.md for the rsync
-  command; new chords are already in tests/fuzz.py KEYS.
-- Nick's QA pass drives everything else: notes/qa/todo-2.md.
+- Full pytest suite: 361 passed, 0 failed (2026-08-12, post-item-9).
+- Fuzz gate (snapshot copy, new chords in KEYS): **0 deaths / 6 seeds**.
+- Queue complete: todo-4 (all 8 items) + todo-5 executed and committed
+  (62913ca → fc7e165). Nothing left to hand off except Nick's QA pass:
+  **notes/qa/todo-2.md** holds every rename and judgment call awaiting
+  him, and the visual pass (theme dimming, strip wrapping, path input
+  inside the tree pane) is his by design.
 
 ## Working rules
 
