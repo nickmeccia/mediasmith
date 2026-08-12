@@ -504,6 +504,12 @@ async def test_hidden_files_shown_and_toggleable(media_tree):
         media = tree.root.children[0]             # reload rebuilt the nodes
         names = [c.data.path.name for c in media.children]
         assert ".config" not in names
+        # ^. is a tree-state strip command: inert while details is focused
+        await _goto_first_song(app, pilot)
+        await pilot.press("enter")
+        await pilot.press("ctrl+full_stop")
+        await pilot.pause()
+        assert app.show_hidden is False           # unchanged from details
 
 
 async def test_enter_without_edit_returns_to_browser(media_tree):

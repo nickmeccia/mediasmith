@@ -1,7 +1,7 @@
 **Context for this File** -- The goal for this entire `todo-4.md` file is to standardize, organize, and simplify the mental model through which the user understands the capabilities of this application through the user interface, and to standardize, organize, and simplify the codebase to match this same mental model.
 
 
-- [ ] Move Path Input Inside Tree View
+- [x] Move Path Input Inside Tree View
 
 I would like to reconsider the zones of this app according to the following diagram:
 
@@ -29,14 +29,14 @@ Currently, this app considers Path Input to be a zone separate from Tree View an
 - CLAUDE.md needs to be updated to reflect this change.
 
 
-- [ ] Terms of Art
+- [x] Terms of Art
 
 I created a new "terms of art" file, which CLAUDE.md instructed you to read when I started this session. I want to be able to communicate accurately and efficiently to Future Claudes, and precise diction will help me immensely in crafting clear instructions.
 
 Please refactor the code according to this terms of art file, so that our conversations can align around these specific terms. Note that many terms of art rename existing concepts and commands; please also consider the remainder of this file as context for parsing ambiguity present in the terms of art file alone. If you still encounter ambiguity--or unearth refactoring or UI decisions which need to be made--please discuss with me.
 
 
--[ ] Command Strip & Keybinding Refactor
+-[x] Command Strip & Keybinding Refactor
 
 Mediasmith currently has three command strips:
 
@@ -148,7 +148,7 @@ Please refactor the Mediasmith command strips into one one command strip, which 
 - If a keybinding is not shown in a particular state, its associated command should not be available for the user to execute. For example: `^/` should only trigger focus to the path input from the Tree view. Pressing this command in Details view should do nothing.
 
 
-- [ ] Command Strip Responsive Styles
+- [x] Command Strip Responsive Styles
 
 Now that the command strip is one line which changes on context, please follow these responsive rules:
 
@@ -185,14 +185,14 @@ Now that the command strip is one line which changes on context, please follow t
 ```
 
 
-- [ ] New Feature: Copy
+- [x] New Feature: Copy
 
 By renaming `^n move` to `^x cut` and moving the command from Details view to Tree view, I have introduced the idea of a clipboard to Tree view. However, if users are able to cut & paste files, it follows that they should be able to copy files, too.
 
 Please add a feature to copy nodes in Tree view, following the patterns of "cut".
 
 
-- [ ] Button Refactor
+- [x] Button Refactor
 
 I would like to refactor the names, order, and presence of all the buttons available in Details view.
 
@@ -268,7 +268,7 @@ Please consider the order of the buttons in each respective list to be the order
 - move ^n --> Please remove this button and disable this command from Details view (see "Command Strip & Keybinding Refactor" above)
 
 
-- [ ] Focus
+- [x] Focus
 
 A Previous Claude casually wrote this message while making changes:
 
@@ -279,7 +279,7 @@ According to the new `terms-of-art.md` (above), the user should not be able to a
 For this checklist item, would you please lock down this behavior between all views and sub-views?
 
 
-- [ ] Color Theme Stylesheet
+- [x] Color Theme Stylesheet
 
 I would like to collect all colors defined in this app in a single file, like a stylesheet, where each color is a hex code assigned to a variable name. Please refactor all existing colors, and in the future do not hardcode color values anywhere in the app -- only use variables from this stylesheet instead.
 

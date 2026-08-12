@@ -342,6 +342,9 @@ class MediasmithApp(App):
         self.screen.remove_class("-details-open")
 
     def action_toggle_hidden(self) -> None:
+        # a tree-state strip command: inert anywhere else (todo-4)
+        if not isinstance(self.focused, LibraryTree):
+            return
         self.show_hidden = not self.show_hidden
         self.query_one(LibraryTree).reload()
 

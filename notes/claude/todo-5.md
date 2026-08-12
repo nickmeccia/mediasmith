@@ -1,5 +1,5 @@
 
-- [ ] Bug: No focus after bulk update mp3 metadata
+- [x] Bug: No focus after bulk update mp3 metadata
       Steps to reproduce:
       - Select folder node in Tree View which contains mp3 files
       - Press enter to edit folder in Details View
