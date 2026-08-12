@@ -1,6 +1,181 @@
 # QA to-do — 2026-07-15/16 session 2 (images · folders · standardize ·
 # sort · video→gif — the queue is BUILT OUT)
 
+## Old
+
+- [ ] The "download posters" setup instructions are incorrect.
+- [ ] Book edit form now exposes "author sort" (creator opf:file-as) and
+      "series no." (calibre:series_index). Confirm ✓-mark/save/clear behave on
+      both new fields, and check the book/audio label columns still align at
+      phone width (widest is now "albumartist"/"author sort", both 11).
+- [ ] "number" field labels renamed to "no." (track no., disc no., series no.)
+      — display only; keys unchanged (audio keys are mutagen tag names).
+- [ ] Album art and book covers now print their pixel dimensions beneath
+      the image ("600 × 600", muted). Shows only when a cover is present
+      (hidden on no-cover / (mixed) bulk); images-off still shows the dims.
+      Format uses " × " to match the image panel's dimensions field — OK, or
+      want plain "600x600"?
+- [ ] Action buttons highlight orange on arrow-key focus, with the chord
+      recolored to light orange (#ffe6c2) so it stays legible; word goes
+      black/bold. QA the contrast on real buttons — the light-orange chord
+      vs. a light grey was the open call.
+
+## Rename any file kind (2026-08-11, your ask)
+
+- [ ] EDITABLE_KINDS is now every kind (frozenset(PANELS)) — video and
+      "other" (plain files) join audio/book/image/folder. They edit as a
+      filename-only form, modeled on the folder panel: the #fname input
+      leads, read-only details sit below, and ^s (or the save button)
+      writes the rename. No metadata form for these two, so rename IS the
+      whole edit.
+- [ ] CONSEQUENCE — there is no longer a read-only kind. enter/→/⇥ on a
+      video or a plain file now DESCEND into the rename field (before, they
+      were a no-op on wide / a focus-less "view" on narrow). The narrow
+      "view without focus" path (app.view_details / _details_viewing) now
+      only fires for UNREADABLE selections; harmless, left in place.
+- [ ] Video's contextual chords are unaffected: ^k/^u/^v/^w/^d/^g still
+      fire app-wide from the tree (App.on_key → action_for_key), so the
+      default flow (highlight video, press the chord) is unchanged. New:
+      the pane's "save" button now leads the video action bar (it's the
+      rename write). NB while the #fname field HAS focus, the Input eats
+      some of those letters — press esc back to the tree to use them, same
+      as the audio/book tag fields already do.
+- [ ] Tests updated to the new model: test_other_file_is_editable,
+      test_narrow_other_descends_editable, test_details_follow_cursor,
+      test_wide_enter_focuses_any_kind (were the old read-only guards).
+- [ ] KNOWN EDGE (unfixed, decide if it matters): on a video, a PENDING
+      subtitle shift wins ^s — if you nudge a shift AND rename in the same
+      descent, ^s writes the shift and the rename is dropped (that leg of
+      _start_save returns early). Rare sequence; flagged not fixed.
+
+## Tree: guides + collapse-level (2026-08-08, your two asks)
+
+- [ ] Guide tint no longer bleeds down the subtree. Highlight a folder
+      whose subdirectories are ALSO expanded: only the cursor's DIRECT
+      children get blue ├─/╰─ connectors; nested grandchildren keep grey
+      connectors. The blue │ still runs down the direct-child column
+      (that's the boundary of the direct children, kept on purpose).
+- [ ] Done by reimplementing DirectoryTree._render_line in browser.py
+      with ONE change: the selected guide style is no longer sticky down
+      the path (see the flagged line + the per-iteration guide_style
+      reset). Fragile vs. Textual upgrades — if guides look wrong after a
+      bump, re-diff against textual/widgets/_tree.py::_render_line.
+- [ ] NEW CHORD — collapse the whole level: shift+← flattens the cursor's
+      folder level — its node, its siblings, and all their offspring —
+      back to a plain sibling list; cursor stays put. (← still collapses
+      one node.) KEY IS A PLACEHOLDER — rename at will. No conflict with
+      the shift-subs wizard's shift+← (that's scoped to its div's focus).
+- [ ] shift+← now prints in the tree command strip ("⇧← collapse").
+
+## Tree: expand/collapse no longer strands the view (2026-08-08, your bug)
+
+- [ ] Repro was: expand a node and the view jumps to the top row instead
+      of staying on the cursor; or descend + come back + collapse and the
+      cursor snaps to the top. Cause: the centered-scroll invariant
+      (scroll_y == cursor_line) wasn't re-asserted after a structural
+      change — a fit↔overflow flip, or a scroll that landed while the
+      layout was mid-reflow (pane height transiently 0), left it stranded.
+      node.collapse() also never re-scrolled at all.
+- [ ] Fix: on_tree_node_expanded / on_tree_node_collapsed re-center the
+      cursor via call_after_refresh (runs AFTER the load-driven scroll, so
+      it corrects a bad landing instead of racing it). Verified with an
+      A/B: forced desync self-corrects with the fix, stays stranded
+      without. Couldn't reproduce the *expand* variant synthetically —
+      please re-test that one specifically in your real tree.
+
+## Trash: works on files now + moved to ctrl+del (2026-08-08, your bug)
+
+- [ ] Trash used to no-op on files — it targeted _plan_root() (folders /
+      album-bulk only). Now it trashes the highlighted item itself, file
+      OR folder (adapters.trash / send2trash handles both). Shift-range
+      multi-selections have no single target — left alone (unchanged).
+- [ ] Key moved ^t → ctrl+del. This ENDS the ^t collision with extract-
+      cover (books): ^t is now extract-cover only; trash is ctrl+del.
+- [ ] Which physical key? On a Mac the "delete"-labeled key is really
+      backspace, and forward-delete is fn+delete. So the app accepts BOTH
+      ctrl+delete and ctrl+backspace for trash — whichever your terminal
+      sends. Confirm ctrl+del fires in Ghostty; tell me if only one of
+      the two variants works.
+- [ ] Guarded: neither variant trashes while a text field is focused (a
+      folder's rename form uses ctrl+backspace as word-delete) — the
+      button still trashes there.
+- [ ] The trash BUTTON still shows only on folder/album views (prints
+      "^del trash"); on file panes there's no button but the chord works
+      (same as ^e new-folder). Say if you want a visible trash button on
+      file panes too.
+- [ ] Re: your ⌘⌫ question — it almost certainly never reached the app.
+      macOS claims ⌘ (Command) for system/app shortcuts, and terminals
+      (Ghostty included) don't forward ⌘+key to the TUI unless you add an
+      explicit keybind in config. So BOTH were true: ⌘⌫ didn't arrive AND
+      the feature was folder-only. ctrl-based chords do reach Ghostty
+      (Kitty keyboard protocol), so ctrl+del is the right home for it.
+
+## Overwrite: second-press escape hatch (2026-08-08, your bug)
+
+- [ ] A produce action that would clobber an existing file now REFUSES
+      ONCE ("X already exists — press again to overwrite") and, on the
+      same key pressed again on the same file, overwrites. Browsing away
+      (or a different action) disarms.
+- [ ] Covered: book convert (^p/^b/^y), extract cover (^t), create opf
+      (^g), image convert (^p/^g/^b/^f), image resize (^a in the div),
+      make gif (^a in the div).
+- [ ] NOT covered (deliberately — different UX, flag if you want them):
+      · standardize "(clean)" siblings (batch/stream — already-clean
+        books are filtered, not refused);
+      · plan-based folderize / sort / split-omnibus (they refuse
+        PER-FILE inside a preview — overwriting there wants a per-row
+        toggle, not one key);
+      · rename (overwriting a different file by renaming onto it is a
+        clobber of the wrong kind — left refusing);
+      · move (proposal M1 — refuses per item).
+- [ ] Confirm the wording/gesture feels right; is one confirming press
+      enough, or do you want a visible "armed" indicator?
+
+## Keys: ⌘ → ctrl migration (2026-08-08, your bug — ⌘ didn't reach term)
+
+- [ ] new folder: ⌘⇧N → ^e · trash: ⌘⌫ → ^t. Both print on their
+      folder buttons now ("n^ew folder" / "^trash") and dispatch like
+      every other action. CONTEXTUAL REUSE: ^e is also split-omnibus
+      (book) / resize (image), ^t is extract-cover (book) — a visible
+      button wins, so on those views the chord does that instead.
+- [ ] new-folder still works on ANY selection (a file → its parent),
+      via an on_key fallback when no ^e button is showing; trash stays
+      folder-only (no-op elsewhere, as before).
+- [ ] first/last row: ⌘↑ / ⌘↓ → ^↑ / ^↓ (ctrl+up/down).
+- [ ] show-hidden: the ⌘⇧. duplicate is gone; ^. (ctrl+full_stop)
+      remains — verify ^. actually toggles hidden in your terminal (it's
+      the one chord I didn't touch; tell me if it's also dead).
+- [ ] The fuzz gate now exercises new-folder/trash for the first time
+      (^e/^t were already in its KEYS) — write-jailed, so its scratch
+      tree is where any "untitled folder" lands.
+
+## Book cover: add/replace (^f cover — on every epub, 2026-08-07)
+
+- [ ] Button "cover" in the epub button group (your call: for now it
+      lives with the other actions; you want ALL cover tasks moved next
+      to the cover art later — parked).
+- [ ] Press → a path input opens under the cover, pre-filled by
+      priority: (1) a sibling image sharing the book's stem
+      (Dune.epub → Dune.jpg/png…), (2) a cover.* image, (3) else the
+      book's own directory. Tab-completes the filesystem (image files +
+      dirs), like the audio art-path. ⏎ applies (writes), esc cancels.
+- [ ] Writes into the epub: replaces the existing cover in place
+      (re-encoded to its format — png stays png, jpg stays jpg) or adds
+      a cover.jpg + manifest/meta when the book had none. Refresh shows
+      the new art. Open in a reader to confirm it took.
+- [ ] KEY: ^f is a placeholder — CONTEXTUAL REUSE of art-fetch (audio) /
+      convert-tiff (image); neither ever shows on a book. Rename at will.
+- [ ] Divergence from audio art (which stays PENDING until ^s): the book
+      cover WRITES ON APPLY (it's an action button, not a metadata
+      field). Reconcile if you'd rather it join the ✓/save flow.
+- [ ] Edge parked: a book whose existing cover is an exotic format
+      (gif/webp/svg) is re-encoded png-or-jpeg by href extension — jpg/
+      png (the ~universal case) are exact; a gif-declared cover could
+      mis-match. Rare; flag if you hit one.
+- [ ] NEXT (your stated direction): move cover manipulation (this +
+      extract-cover) OUT of the button group to sit beside the cover
+      image; richer file-pick (tree browser) later.
+
 ## Video → gif (make ^gif — ^g on any video)
 
 - [ ] ^g toggles the div: fps [12] · width [480] · ^apply; ⏎ in a
@@ -37,20 +212,49 @@
 - [ ] Parked: v1's --style override isn't surfaced; if detection
       misses on a real book, that becomes a wizard-div option
 
-## Sort (sor^t — ^t on folders with loose book files)
+## Sort (s^ort — MOVED ^t → ^o; now on a single ebook too)
 
-- [ ] Button appears on folders holding a loose epub not already in
-      its own "Author Sort - Title/" wrapper; absent on wrapper
-      folders themselves (sorting a wrapped book is a no-op by design)
-- [ ] Press: preview lists each wrapper and the files moving in
-      (formats grouped by stem; opf/cover ride along only when the
-      folder holds exactly one book); ^a applies, esc cancels
-- [ ] Try it on a real 02 Sort dump: existing wrapper folders are
-      reused, name collisions refuse per file
-- [ ] Files keep their names — want the epub renamed to match the
-      folder (v1 did)? Say the word.
-- [ ] A mobi/azw3 with no epub sibling is skipped with a reason —
-      right call, or should it wrap by stem-as-name?
+- [ ] KEY MOVED: sort was ^t, now ^o. ^t collided with extract-cover
+      once sort landed on a single epub (both show at once). ^o is a
+      contextual reuse of rotate (image) / art-path (audio) — neither
+      ever shares a book/folder view. Rename the placeholder at will.
+- [ ] RENAME NOW ON (you asked): both flows rename every book file to
+      the folder name + suffix; sidecars (metadata.opf, cover.*) keep
+      their canonical names.
+- [ ] SERIES NAMING (2026-08-07): a book with a calibre series + numeric
+      index is named "Author Sort - Series - NN - Title" (NN = two-digit,
+      e.g. "Jemisin, N. K. - The Broken Earth - 01 - The Fifth Season");
+      a fractional index keeps its decimal ("02.5"). No series (or a
+      non-numeric index) → "Author Sort - Title". Both file AND folder
+      take this name. Verify against a real series dump on the NAS.
+- [ ] Folder flow (unchanged shape): button on folders holding a loose
+      epub not already in its "Author Sort - Title/" wrapper; absent on
+      wrapper folders; preview lists each wrapper + files (formats
+      grouped by stem; opf/cover ride along only for a lone book);
+      ^a applies, esc cancels; existing folders reused, collisions
+      refuse per file.
+- [ ] NEW single-ebook flow: navigate to an ebook, ⏎ into details, press
+      sort (or the button). It renames + wraps THAT file only (siblings
+      left behind), no preview, then re-reveals the book inside its new
+      folder — still selected and editable (filename focused). Refuses
+      to overwrite an existing file in the wrapper.
+- [ ] Single-ebook button is epub-only (mobi/azw3 have no readable
+      metadata) and hidden once the book already sits in its earned
+      folder — right calls?
+- [ ] A mobi/azw3 with no epub sibling is skipped with a reason (folder
+      flow) — right call, or should it wrap by stem-as-name?
+
+## ⚠ Fuzz death (2026-08-07): pane ←/→ indexed a hidden button — fixed
+
+Seed 12 died: `ValueError: list.index(x): x not in list` in
+`action_pane_left`/`action_pane_right`. A focused ActionButton
+(act-new_folder) was hidden by a context change (a probe fill-in or a
+debounced re-preview calling `set_visible`) while it still held focus;
+the next ←/→ did `row.index(focused)` on the now-visible-only list it
+was no longer in. Both handlers now guard `focused in row` first and
+fall through (← ascends, → no-ops) — the same defensive shape
+`_move_nav` already had. Latent since the action bars existed; the
+sort-on-a-book context churn just made it reachable.
 
 ## ⚠ Fuzz deaths: solved (ConfirmSave double-dismiss) + gate hardened
 
@@ -227,6 +431,30 @@ the tree, the buttons always work.
 - [ ] Press: preview lists each detected book, chapter counts, and
       the output filenames; ^a writes them beside the source, esc
       backs out untouched
+- [ ] SERIES NOW SET (2026-08-07, you asked): an omnibus IS a series,
+      so each split is tagged calibre:series = the omnibus's own title
+      and series_index = its 1-based position, and named to match —
+      "Author Sort - <Omnibus Title> - NN - <Book>.epub". A split book
+      is therefore born correctly named + tagged; sorting it later is a
+      no-op.
+- [ ] EDITABLE SPLIT FORM (2026-08-07, your feedback): pressing split no
+      longer drops straight to a read-only preview with no focus. It now
+      opens an EDITABLE form in the details pane (pane focused, lands on
+      the author field), following the single-ebook edit layout:
+        · shared fields: author, author sort, series
+        · per book: title, series no.
+      All pre-filled from the NCX/OPF guesses; the user corrects them
+      (e.g. title "Book01 The Fifth Season" → "The Fifth Season", series
+      cruft "…(book 1-3)" → "The Broken Earth") BEFORE anything writes.
+      ^a (=^apply, works while a field is focused) writes; esc cancels
+      and ascends to the tree. This SUPERSEDES the verbatim-series cruft
+      worry — you fix it inline now.
+- [ ] Scope calls to sanity-check: (a) an omnibus with >20 books falls
+      back to the OLD read-only preview (no inline edit) — pool cap, fine?
+      (b) series no. is a plain integer field; fractional inserts (2.5)
+      aren't offered in the form (engine still supports them). (c) the
+      form never touches publisher/language/date/pubdate — inherited
+      from the omnibus. Want any of those editable too?
 - [ ] Outputs open in your reader: front matter present, only the
       book's own chapters, TOC has chapters at the root (the omnibus
       book-title level is dropped)

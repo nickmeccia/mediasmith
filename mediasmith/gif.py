@@ -46,13 +46,13 @@ def _run_ffmpeg(argv: list[str]) -> None:
 def make_gif(video: Path, fps: int = DEFAULT_FPS,
              width: int = DEFAULT_WIDTH,
              start: float | None = None, duration: float | None = None,
-             runner=None) -> Path:
-    """Render ``video`` to a sibling GIF. Raises on bad options,
-    existing targets, and ffmpeg failures."""
+             runner=None, overwrite: bool = False) -> Path:
+    """Render ``video`` to a sibling GIF. Raises on bad options, ffmpeg
+    failures, and (unless ``overwrite``) an existing target."""
     if fps < 1 or width < 1:
         raise ValueError("fps and width must be positive")
     target = gif_target(video)
-    if target.exists():
+    if target.exists() and not overwrite:
         raise FileExistsError(f"{target.name} already exists")
     run = runner or _run_ffmpeg
     clip: list[str] = []
@@ -65,9 +65,10 @@ def make_gif(video: Path, fps: int = DEFAULT_FPS,
         palette = Path(tmp) / "palette.png"
         run(["ffmpeg", "-v", "error", *clip, "-i", str(video),
              "-vf", f"{filters},palettegen", "-y", str(palette)])
-        # -n belt-and-braces: the exists() check above races nothing in
+        # -y/-n belt-and-braces: the exists() check above races nothing in
         # the UI (one worker), but ffmpeg must never prompt on stdin
-        run(["ffmpeg", "-v", "error", "-n", *clip, "-i", str(video),
+        run(["ffmpeg", "-v", "error", "-y" if overwrite else "-n",
+             *clip, "-i", str(video),
              "-i", str(palette),
              "-filter_complex", f"{filters} [x]; [x][1:v] paletteuse",
              str(target)])

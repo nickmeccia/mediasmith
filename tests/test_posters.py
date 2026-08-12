@@ -23,8 +23,9 @@ def png(color, size=(30, 40)) -> bytes:
     return buf.getvalue()
 
 
-def poster_entry(path: str, width=1000, height=1500) -> dict:
-    return {"file_path": path, "width": width, "height": height}
+def poster_entry(path: str, width=1000, height=1500, lang="en") -> dict:
+    return {"file_path": path, "width": width, "height": height,
+            "iso_639_1": lang}
 
 
 class FakeTMDB:
@@ -164,6 +165,40 @@ def test_run_happy_path_saves_posters(tmp_path):
     assert (last.folder / "b.png").exists()
     labels = [e.label for e in events if isinstance(e, posters.Identified)]
     assert labels == ["Alien (1979)"]
+
+
+def test_run_keeps_english_and_textless_drops_other_languages(tmp_path):
+    video = tmp_path / "Alien.1979.mkv"
+    video.touch()
+    # three visually distinct images so dedup keeps them all
+    def ramp(mul, sub):
+        art = Image.new("L", (64, 64))
+        art.putdata([(y * mul - x * sub) % 256 for y in range(64)
+                     for x in range(64)])
+        buf = io.BytesIO()
+        art.save(buf, format="PNG")
+        return buf.getvalue()
+    entries = [poster_entry("/en.png", lang="en"),
+               poster_entry("/none.png", lang=None),
+               poster_entry("/fr.png", lang="fr")]
+    images = {"/en.png": png("red"), "/none.png": ramp(7, 3),
+              "/fr.png": ramp(5, 11)}
+    tmdb = make_tmdb(ALIEN, entries, images)
+    _, last = drain(posters.run(video, fetch=tmdb, api_key="k"))
+    assert isinstance(last, posters.Done) and last.saved == 2
+    assert (last.folder / "en.png").exists()
+    assert (last.folder / "none.png").exists()       # textless key art kept
+    assert not (last.folder / "fr.png").exists()      # other language dropped
+
+
+def test_run_no_english_posters_fails(tmp_path):
+    video = tmp_path / "Alien.1979.mkv"
+    video.touch()
+    tmdb = make_tmdb(ALIEN, [poster_entry("/fr.png", lang="fr")],
+                     {"/fr.png": png("green")})
+    _, last = drain(posters.run(video, fetch=tmdb, api_key="k"))
+    assert isinstance(last, posters.Failed)
+    assert "no English posters" in last.reason
 
 
 def test_run_collapses_near_duplicates(tmp_path):

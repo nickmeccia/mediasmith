@@ -44,9 +44,15 @@ def make_mp3(path: Path, tags: dict[str, str] | None = None,
 
 
 def make_epub(path: Path, title="Dune", author="Frank Herbert",
-              series: str | None = "Dune", cover: bytes | None = None) -> Path:
+              series: str | None = "Dune", cover: bytes | None = None,
+              author_sort: str | None = None,
+              series_index: str | None = None) -> Path:
     series_meta = (f'<meta name="calibre:series" content="{series}"/>'
                    if series else "")
+    if series_index:
+        series_meta += (f'<meta name="calibre:series_index" '
+                        f'content="{series_index}"/>')
+    file_as = f' opf:file-as="{author_sort}"' if author_sort else ""
     cover_manifest = ('<item id="cover-image" href="cover.png" '
                       'media-type="image/png"/>' if cover is not None else "")
     # one real chapter: keeps the epub convertible (ebook-convert rejects
@@ -59,7 +65,7 @@ def make_epub(path: Path, title="Dune", author="Frank Herbert",
 <package xmlns="http://www.idpf.org/2007/opf" version="2.0">
   <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
     <dc:title>{title}</dc:title>
-    <dc:creator>{author}</dc:creator>
+    <dc:creator{file_as}>{author}</dc:creator>
     <dc:publisher>Chilton Books</dc:publisher>
     <dc:language>en</dc:language>
     <dc:date>1965-08-01</dc:date>

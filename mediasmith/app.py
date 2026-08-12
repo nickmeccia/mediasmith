@@ -14,7 +14,7 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.scrollbar import ScrollBar, ScrollBarRender
-from textual.widgets import Static
+from textual.widgets import Input, Static
 
 from .browser import LibraryTree, PathBar
 from .details import DetailsPane
@@ -71,7 +71,8 @@ NARROW_COLUMNS = 80
 """Below this many cells the columns swap instead of sharing the row."""
 
 STRIP_GLOBAL = " ^/ path · ^. hidden · ^q quit"
-STRIP_TREE = " ↑↓ ←→ move · type jump · ⏎ edit · ^r refresh · ⌘⇧n new · ⌘⌫ trash"
+STRIP_TREE = (" ↑↓ ←→ move · ⇧← collapse · type jump · ⏎ edit · "
+              "^r refresh · ^e new · ^del trash")
 
 LOGO = "𜵎𜵎▖𜷇🯦𜷇▌𜵅𜷃𜵈𜷓𜴀𜵎𜵎▖𜵅𜶍▐𜶓"
 """Octant-glyph wordmark (see notes/octant.py) — right edge of the
@@ -103,15 +104,11 @@ class MediasmithApp(App):
         Binding("ctrl+slash", "focus_path", "path", show=False, priority=True),
         Binding("ctrl+underscore", "focus_path", "path", show=False,
                 priority=True),
-        # ctrl+. plus the Finder chord cmd+shift+. — kitty protocol only.
         Binding("ctrl+full_stop", "toggle_hidden", "hidden", show=False),
-        Binding("super+shift+full_stop", "toggle_hidden", "hidden",
-                show=False),
-        # folder CRUD rides Finder's chords (the ctrl pool is spent, and
-        # these two show on every kind so contextual reuse can't help);
-        # kitty protocol only — the pane buttons are the fallback
-        Binding("super+shift+n", "new_folder", "new folder", show=False),
-        Binding("super+backspace", "trash_selection", "trash", show=False),
+        # folder CRUD is app-dispatched in on_key: new folder on ^e (a pane
+        # button chord reused across kinds), trash on ctrl+delete (its own
+        # chord — see on_key). The old ⌘⇧N / ⌘⌫ Finder chords are gone (they
+        # never reached Nick's terminal — macOS eats ⌘ before the TUI does).
     ]
 
     CSS = """
@@ -155,6 +152,8 @@ class MediasmithApp(App):
     .fval { background: transparent; width: 1fr; }
     .fval-static { color: $text; }
     .cover { width: auto; height: 16; margin: 1 0 0 0; }
+    /* pixel dimensions printed under a cover (album art, book cover) */
+    .cover-dims { height: 1; color: $text-muted; }
     /* the audio art is a form field: image top-aligned with its label,
        left-aligned with the input column */
     #row-art { height: auto; }
@@ -167,6 +166,10 @@ class MediasmithApp(App):
     #row-art-buttons { height: auto; margin-top: 1; }
     #row-art-path { height: 1; margin-top: 1; }
     #art-path { background: transparent; }
+    /* book cover: a path input toggled under the cover (art-path twin) */
+    #book-cover-div { height: auto; margin-top: 1; }
+    #book-cover-path { background: transparent; }
+    #book-cover-hint { height: 1; color: $text-muted; }
     #pane-bar { margin-top: 1; }
     #shift-div { height: auto; margin-top: 1; }
     #shift-row { height: 1; }
@@ -187,6 +190,11 @@ class MediasmithApp(App):
     #gif-bar { margin-top: 1; }
     #plan-preview { height: auto; margin-top: 1; }
     #plan-tree { height: auto; }
+    /* the editable split-omnibus form (shares .frow/.fkey/.fval) */
+    #panel-omnibus { height: auto; margin-top: 1; }
+    .omni-source { color: $text-muted; height: auto; }
+    .omni-book { height: auto; margin-top: 1; }
+    .omni-head { text-style: bold; }
     #ctxrow { height: 1; background: $surface; color: $text-muted; }
     #strip-left { width: 38%; min-width: 30; padding-left: 1; }
     #strip-right { width: 1fr; padding-left: 1; }
@@ -324,16 +332,6 @@ class MediasmithApp(App):
     def action_focus_tree(self) -> None:
         self.query_one(LibraryTree).focus()
 
-    def action_new_folder(self) -> None:
-        if len(self.screen_stack) > 1:          # a modal owns the keys
-            return
-        self.query_one(DetailsPane).action_new_folder()
-
-    def action_trash_selection(self) -> None:
-        if len(self.screen_stack) > 1:
-            return
-        self.query_one(DetailsPane).action_trash()
-
     # -- pending move (^n lift/place — DetailsPane.action_move drives) ---------
 
     def begin_lift(self, paths: list[Path]) -> None:
@@ -359,10 +357,32 @@ class MediasmithApp(App):
         if len(self.screen_stack) > 1:          # a modal owns the keys
             return
         details = self.query_one(DetailsPane)
+        # Trash: ctrl+delete on ANY selection (file or folder), app-dispatched
+        # because no single-char chord can name it. Both the forward-delete and
+        # the Mac backspace-labeled "delete" send it, depending on terminal;
+        # accept both. Never while a text field is focused — that key is the
+        # rename form's word-delete, which must survive; the button still trashes.
+        if event.key in ("ctrl+delete", "ctrl+backspace"):
+            if isinstance(self.focused, Input) or details.plan_preview_open():
+                return
+            event.stop()
+            details.action_trash()
+            return
         action = details.action_for_key(event.key)
         if action is not None:
             event.stop()
             details.trigger(action)
+            return
+        # New-folder fallback: ^e works on ANY selection, not just the folder
+        # views where its button (and so the contextual dispatch above) lives —
+        # ^e on a file makes a folder in its parent, matching the old ⌘⇧N. A
+        # visible ^e button always wins first; a plan preview / split form owns
+        # its own keys, so skip it there.
+        if details.plan_preview_open():
+            return
+        if event.key == "ctrl+e":
+            event.stop()
+            details.action_new_folder()
 
     def on_library_tree_focused(self, ev: LibraryTree.Focused) -> None:
         self.query_one(PathBar).value = str(ev.path)
@@ -424,6 +444,29 @@ class MediasmithApp(App):
             if parent.allow_expand and not parent.is_expanded:
                 await tree._add_to_load_queue(parent)
                 parent.expand()
+        target = tree._node_for(ev.path)
+        if target is not None:
+            tree._move_cursor(target.line)
+        details = self.query_one(DetailsPane)
+        details.preview(ev.path, immediate=True)
+        self.reveal_details()                   # narrow: display, then focus
+        details.focus()
+
+    async def on_details_pane_book_sorted(
+            self, ev: DetailsPane.BookSorted) -> None:
+        # the ebook moved into a brand-new wrapper folder beside where it
+        # was: re-list that directory in place, expand the wrapper, cursor
+        # on the book, then descend into its (editable) details — new-
+        # folder's reveal, one level deeper (ev.path is the book itself)
+        tree = self.query_one(LibraryTree)
+        directory = tree._node_for(ev.path.parent.parent)   # the old dir
+        if directory is not None:
+            await tree.reload_node(directory)
+        wrapper = tree._node_for(ev.path.parent)
+        if (wrapper is not None and wrapper.allow_expand
+                and not wrapper.is_expanded):
+            await tree._add_to_load_queue(wrapper)
+            wrapper.expand()
         target = tree._node_for(ev.path)
         if target is not None:
             tree._move_cursor(target.line)

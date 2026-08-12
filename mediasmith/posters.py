@@ -240,6 +240,13 @@ def run(video: Path, *, fetch: Fetch = default_fetch,
         yield Failed(f"no posters available for {label}")
         return
 
+    # English or textless — keep iso_639_1 == "en" plus language-neutral
+    # key art (iso_639_1 == null); other languages are dropped.
+    posters = [p for p in posters if p.get("iso_639_1") in ("en", None)]
+    if not posters:
+        yield Failed(f"no English posters available for {label}")
+        return
+
     # highest resolution first, so dedup keeps the best copy of each look
     posters.sort(key=lambda p: p.get("width", 0) * p.get("height", 0),
                  reverse=True)

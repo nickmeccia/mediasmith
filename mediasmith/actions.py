@@ -32,6 +32,11 @@ from textual.widgets import Button
 KEY_STYLE = "$text-accent"
 """Markup style for the ``^x`` keybinding inside a button label."""
 
+FOCUS_KEY_STYLE = "#ffe6c2"
+"""The chord color while a button is focused (arrow-key selected): a light
+orange that stays legible on the orange focus background (see ActionButton
+CSS), where the accent color would vanish."""
+
 # ctrl+<char> chords the terminal or the app already owns; binding an
 # action to one of these would shadow typing or core chrome.
 # Audited 2026-07-15 against Textual 8's real bindings (QA-TODO "key
@@ -51,6 +56,10 @@ class Action:
     word: str                   # the label text, e.g. "save"
     key: str | None = None      # single char, bound as ctrl+<key>
     button_id: str | None = None
+    key_label: str | None = None
+    """What the button prints when there is no single-char ``key`` — for a
+    chord the ctrl+<char> shape can't express (trash → ``^del``). Display
+    only; such chords are dispatched by the app, not ``action_for_key``."""
 
     def __post_init__(self) -> None:
         if self.key is not None:
@@ -67,17 +76,19 @@ def _escape(text: str) -> str:
     return text.replace("[", r"\[")
 
 
-def action_markup(word: str, key: str | None) -> str:
+def action_markup(word: str, key: str | None,
+                  key_style: str = KEY_STYLE) -> str:
     """The label markup: ``^`` + the key char in the accent color,
-    spliced into the word when the char is part of it."""
+    spliced into the word when the char is part of it. ``key_style``
+    swaps the chord color (focus recolors it — see FOCUS_KEY_STYLE)."""
     if key is None:
         return _escape(word)
     index = word.lower().find(key.lower())
     if index >= 0:
         return (f"{_escape(word[:index])}"
-                f"[{KEY_STYLE}]^{word[index]}[/]"
+                f"[{key_style}]^{word[index]}[/]"
                 f"{_escape(word[index + 1:])}")
-    return f"[{KEY_STYLE}]^{key}[/] {_escape(word)}"
+    return f"[{key_style}]^{key}[/] {_escape(word)}"
 
 
 class FlowLayout(Layout):
@@ -139,12 +150,45 @@ LAYOUT_MAP.setdefault(FlowLayout.name, FlowLayout)
 class ActionButton(Button):
     """A Button carrying its Action spec; label per the button pattern."""
 
+    # arrow-key selection lands as focus: an orange highlight, with the
+    # chord recolored so it stays legible where the accent would vanish
+    DEFAULT_CSS = """
+    ActionButton:focus {
+        background: orange;
+        color: black;
+        text-style: bold;
+    }
+    """
+
     def __init__(self, spec: Action) -> None:
-        super().__init__(Content.from_markup(action_markup(spec.word,
-                                                           spec.key)),
+        self.spec = spec
+        self._word = spec.word
+        super().__init__(self._content(KEY_STYLE),
                          id=spec.button_id or f"act-{spec.name}",
                          compact=True)
-        self.spec = spec
+
+    def _content(self, key_style: str) -> Content:
+        return Content.from_markup(
+            action_markup(self._word, self.spec.key or self.spec.key_label,
+                          key_style))
+
+    def _apply_label(self, key_style: str) -> None:
+        # set_reactive + refresh, not `self.label = …`: Content.__eq__
+        # compares plain text only, so a recolor of the same word is seen
+        # as "no change" by the label reactive and skipped. Bypass it.
+        self.set_reactive(Button.label, self._content(key_style))
+        self.refresh()
+
+    def set_word(self, word: str) -> None:
+        """Relabel with a new word (the move button's lift/place toggle),
+        keeping the chord color that matches the current focus state."""
+        self._word = word
+        self._apply_label(FOCUS_KEY_STYLE if self.has_focus else KEY_STYLE)
+
+    def watch_has_focus(self, value: bool) -> None:
+        # arrow-key selection lands as focus; recolor the chord so it
+        # reads on the orange highlight, restore the accent on blur
+        self._apply_label(FOCUS_KEY_STYLE if value else KEY_STYLE)
 
 
 class ActionBar(Widget):

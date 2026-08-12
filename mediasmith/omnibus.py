@@ -18,8 +18,10 @@ How a split works (v1's model, unchanged):
   - the sliced NCX drops the book-title level: its chapters become
     root entries.
 
-Output epubs land beside the source, "Author Sort - Title.epub",
-refuse-overwrite per book.
+Output epubs land beside the source, tagged as book N of the omnibus's
+own title (an omnibus IS a series) and named to match — "Author Sort -
+Series - NN - Title.epub" via text.compose_book_name; refuse-overwrite
+per book.
 """
 
 from __future__ import annotations
@@ -32,7 +34,7 @@ from html import escape
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
-from .text import infer_author_sort, sanitize_filename
+from .text import compose_book_name, infer_author_sort
 
 # top-level navPoint labels that are front/back matter, never books
 BOILERPLATE = {
@@ -53,7 +55,8 @@ BOILERPLATE = {
 class BookSplit:
     label: str                  # the book's title (its navPoint label)
     chapters: int               # leaf navPoints beneath it
-    filename: str               # "Author Sort - Title.epub"
+    series_index: int           # 1-based position in the omnibus = series #
+    filename: str               # "Author Sort - Series - NN - Title.epub"
     spine: tuple[str, ...]      # zip-absolute hrefs, front matter included
     toc: tuple[dict, ...]       # navPoint dicts for the sliced NCX
 
@@ -272,21 +275,55 @@ def build_plan(path: Path) -> OmnibusPlan:
     ends = starts[1:] + [len(all_spine)]
     front_matter = all_spine[:starts[0]] if starts else []
 
+    # an omnibus IS a series: its own title names the series, each
+    # constituent's 1-based position is its series index (Nick, 2026-08-07).
+    # Metadata + output filename both route through compose_book_name, so a
+    # split book is born correctly named AND correctly tagged — later sorting
+    # it is a no-op, not a rename.
+    series = data['title']
     splits = tuple(
         BookSplit(
             label=np['label'],
             chapters=leaf_count(np),
-            filename=(sanitize_filename(f"{author_sort} - {np['label']}")
+            series_index=i,
+            filename=(compose_book_name(author_sort, np['label'], series, i)
                       + ".epub"),
             spine=tuple(front_matter + all_spine[start:end]),
             toc=tuple(np['children'] if np['children'] else [np]),
         )
-        for np, start, end in zip(located, starts, ends))
+        for i, (np, start, end) in enumerate(zip(located, starts, ends), 1))
 
     return OmnibusPlan(
         source=path, title=data['title'], author=author,
         author_sort=author_sort, language=data['language'],
         opf_dir=opf_dir, manifest=data['manifest'], books=splits)
+
+
+def with_edits(plan: OmnibusPlan, author: str, author_sort: str,
+               series: str,
+               edits: list[tuple[str, str]]) -> OmnibusPlan:
+    """A copy of ``plan`` carrying the user's corrections from the split
+    form: shared author / author sort / series, and per book a title and
+    series-index string (one ``(title, index)`` per book, in plan order).
+    Filenames are recomputed through ``compose_book_name`` so the output
+    matches the edited metadata. Blank fields fall back to the plan's
+    guess; a non-numeric index keeps the book's original position."""
+    from dataclasses import replace
+    author = author or plan.author
+    author_sort = author_sort or plan.author_sort
+    books = []
+    for book, (title, index_str) in zip(plan.books, edits):
+        title = title or book.label
+        try:
+            index = int(index_str)
+        except (TypeError, ValueError):
+            index = book.series_index
+        books.append(replace(
+            book, label=title, series_index=index,
+            filename=compose_book_name(author_sort, title, series or None,
+                                       index) + ".epub"))
+    return replace(plan, author=author, author_sort=author_sort,
+                   title=series, books=tuple(books))
 
 
 def execute(plan: OmnibusPlan) -> tuple[list[Path], list[tuple[str, str]]]:
@@ -321,7 +358,7 @@ _OPF = '''\
     <dc:creator opf:file-as="{author_sort}" opf:role="aut">{author}</dc:creator>
     <dc:language>{language}</dc:language>
     <dc:identifier id="BookId">urn:uuid:{uid}</dc:identifier>
-  </metadata>
+{series_meta}  </metadata>
   <manifest>
 {manifest_items}    <item id="_ncx_" href="{ncx_name}" media-type="application/x-dtbncx+xml"/>
   </manifest>
@@ -424,10 +461,21 @@ def _write_book_epub(z_in: zipfile.ZipFile, plan: OmnibusPlan,
     spine_lines = [f'    <itemref idref="{escape(href_to_id[h])}"/>\n'
                    for h in book.spine if h in href_to_id]
 
+    # an omnibus is a series: tag each output as book N of the omnibus's
+    # own title (calibre <meta>, so sort/readers pick it up)
+    series_meta = ''
+    if plan.title:
+        series_meta = (
+            f'    <meta name="calibre:series" '
+            f'content="{escape(plan.title)}"/>\n'
+            f'    <meta name="calibre:series_index" '
+            f'content="{book.series_index}"/>\n')
+
     opf_content = _OPF.format(
         title=escape(book.label), author=escape(plan.author),
         author_sort=escape(plan.author_sort), language=plan.language,
-        uid=uid, manifest_items=''.join(manifest_lines),
+        uid=uid, series_meta=series_meta,
+        manifest_items=''.join(manifest_lines),
         spine_items=''.join(spine_lines), ncx_name=ncx_name)
 
     order = [1]

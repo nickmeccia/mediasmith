@@ -43,7 +43,9 @@ KEYS = ([b"\x1b[B"] * 5 + [b"\x1b[A"] * 3
            b"\x10", b"\x02", b"\x19",    # ^p ^b ^y: converts (books are
                                          # OFFLINE-guarded; images run)
            b"\x14", b"\x07",             # ^t ^g: extract cover, create opf
-           b"\x1b[1;2C", b"\x1b[1;2D",   # shift+→/←: shift-div nudges
+           b"\x1b[3;5~",                 # ctrl+del: trash (OFFLINE-guarded)
+           b"\x1b[1;2C", b"\x1b[1;2D",   # shift+→/←: shift-div nudges /
+                                         # shift+←: collapse the tree level
            b"\x1b[5~", b"\x1b[6~"])      # pgup/pgdn: ±10s nudges
 
 # seeds alternate through these; narrow exercises the phone column swap

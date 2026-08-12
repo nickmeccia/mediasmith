@@ -24,20 +24,32 @@ from pathlib import Path
 from textual import work
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.content import Content
 from textual.css.query import NoMatches
 from textual.message import Message
 from textual.screen import ModalScreen
 from textual.widgets import Button, Checkbox, Input, Label, Static
 
-from . import (adapters, artfetch, booksort, calibre, folderize, fs, gif,
-               imageops, kinds, multiartist, omnibus, posters, srt,
+from . import (adapters, artfetch, booksort, calibre, epub, folderize, fs,
+               gif, imageops, kinds, multiartist, omnibus, posters, srt,
                standardize, subsync)
-from .actions import Action, ActionBar, ActionButton, action_markup
+from .actions import Action, ActionBar, ActionButton
 from .images import image_widget
 
 PANELS = [kinds.AUDIO, kinds.VIDEO, kinds.BOOK, kinds.IMAGE,
           kinds.FOLDER, kinds.OTHER]
+
+
+def _image_size(data: bytes | None) -> tuple[int, int] | None:
+    """Pixel dimensions of encoded image bytes, or None if undecodable.
+    PIL reads the header lazily — no full decode for the size."""
+    if not data:
+        return None
+    try:
+        from PIL import Image as PILImage
+        return PILImage.open(io.BytesIO(data)).size
+    except Exception:
+        return None
+
 
 PANE_ACTIONS = [
     # the one bar at the pane's foot, composed once with the full palette;
@@ -47,6 +59,11 @@ PANE_ACTIONS = [
     Action("convert_mobi", "convert to mobi", "b"),
     Action("convert_azw3", "convert to azw3", "y"),
     Action("extract_cover", "extract cover", "t"),
+    # add/replace the epub cover from a path (mirrors audio art-path).
+    # ^f reused from art-fetch (audio) / convert-tiff (image) — neither
+    # ever shares a view with a book; not Input-eaten, so it fires while a
+    # metadata field is focused. Placeholder key (Nick renames).
+    Action("book_cover", "cover", "f"),
     Action("create_opf", "create opf", "g"),
     # ^e recovered from RESERVED_KEYS (2026-07-15 audit — see actions.py);
     # while a tag field is focused the Input eats ^e (end-of-line), so
@@ -55,8 +72,11 @@ PANE_ACTIONS = [
     # ^d reused from download-posters (video-only — never shares a view
     # with books or folders)
     Action("standardize", "standardize", "d"),
-    # ^t reused from extract-cover (single-epub-only, never a folder)
-    Action("sort", "sort", "t"),
+    # sort rides both a folder AND a single epub now, so it can't share
+    # extract-cover's ^t (both show on one epub). ^o is free here —
+    # reused from rotate (image-only) / art-path (audio-only), neither of
+    # which ever shares a view with a book or folder; splices to "s^ort"
+    Action("sort", "sort", "o"),
     Action("folderize", "folderize", "l"),
     Action("fix_multi_artist", "fix multi-artist", "x"),
     # while any plan preview is up, these two own the bar
@@ -81,11 +101,16 @@ PANE_ACTIONS = [
     Action("convert_tiff", "convert to tiff", "f"),
     Action("resize", "resize", "e"),
     Action("rotate", "rotate", "o"),
-    # folders: no free letters and no reusable ones either (these show
-    # on every folder), so the chords are Finder's own — ⌘⇧N / ⌘⌫ as
-    # App bindings (kitty protocol) — and the buttons carry the phone
-    Action("new_folder", "new folder"),
-    Action("trash", "trash"),
+    # new folder: ^e via CONTEXTUAL REUSE (2026-08-08 — the ⌘ chords didn't
+    # survive Nick's terminal). ^e is split-omnibus (book) / resize (image);
+    # none share a view with a folder, and the letter isn't Input-eaten, so
+    # the chord fires even while a folder's rename field is focused.
+    Action("new_folder", "new folder", "e"),
+    # trash moved OFF ^t (it collided with extract-cover) to ctrl+delete,
+    # dispatched by the app (App.on_key), not action_for_key — no single
+    # char can name it. The button prints "^del"; the chord works on ANY
+    # selection, file or folder (2026-08-08 fix — it was folder-only).
+    Action("trash", "trash", key_label="del"),
     # Move (proposal M1): ONE stateful chord — ^n lifts the selection,
     # ^n places it at the highlighted spot; the label flips to match.
     # Single-key because the ctrl-letter pool is exhausted (see QA-TODO).
@@ -94,11 +119,12 @@ PANE_ACTIONS = [
 
 MOVE_WORDS = {False: "move", True: "place here"}
 
-EDITABLE_KINDS: frozenset[str] = frozenset({kinds.AUDIO, kinds.BOOK,
-                                            kinds.IMAGE, kinds.FOLDER})
-"""Kinds whose details can take focus for editing. Images and plain
-folders edit as a filename-only form (no metadata fields) — rename is
-the edit. Album-like folders never reach here: they descend into the
+EDITABLE_KINDS: frozenset[str] = frozenset(PANELS)
+"""Every kind whose details can take focus for editing — which is all of
+them: every selection can at least be renamed. Audio and book carry a
+metadata form; image, plain folder, video, and other edit as a
+filename-only form (no fields) — rename is the edit, modeled on the
+folder panel. Album-like folders never reach here: they descend into the
 bulk form of their contents before the folder panel is consulted."""
 
 DEBOUNCE_SECONDS = 0.15
@@ -294,6 +320,47 @@ class ArtPathInput(FieldInput):
             self.parent.display = False
 
 
+class CoverPathInput(FieldInput):
+    """Book cover method: type a path to an image to write into the epub,
+    tab-completing against the filesystem (directories and image files).
+    Enter applies (writes the cover); esc (or ← at the start) cancels.
+    Mirrors ArtPathInput; the book cover has no online-fetch method yet."""
+
+    BINDINGS = [
+        Binding("tab", "complete", show=False, priority=True),
+        Binding("escape", "cancel", show=False),
+    ]
+
+    def _matches(self) -> list[fs.CachedPath]:
+        base, prefix = os.path.split(self.value)
+        prefix = prefix.lower()
+        return [child for child in fs.cached_children(base or "/")
+                if child.name.lower().startswith(prefix)
+                and (child.is_dir()
+                     or kinds.kind_of(child, is_dir=False) == kinds.IMAGE)]
+
+    def action_complete(self) -> None:
+        matches = self._matches()
+        if not matches:
+            return
+        first = matches[0]
+        self.value = str(first) + ("/" if first.is_dir() else "")
+        self.cursor_position = len(self.value)
+
+    def action_cancel(self) -> None:
+        self.screen.query_one(DetailsPane)._hide_book_cover_path()
+
+    def action_left_or_release(self) -> None:
+        if self.cursor_position == 0:
+            self.action_cancel()
+        else:
+            self.action_cursor_left()
+
+    def on_blur(self) -> None:
+        if self.parent is not None:
+            self.parent.display = False
+
+
 SHIFT_HINT = "←→ 0.1s · ⇧←→ 1s · ⇞⇟ 10s · ^s write · esc close"
 
 
@@ -362,12 +429,14 @@ class EditForm(Vertical):
         "apply this to every file"."""
         self._names = list(fields)[:self._pool]
         self._mixed = mixed
-        width = max((len(n) for n in self._names), default=0) + LABEL_GUTTER
+        labels = adapters.FIELD_LABELS
+        width = max((len(labels.get(n, n)) for n in self._names),
+                    default=0) + LABEL_GUTTER
         self.label_width = width
         for i, row in enumerate(self._rows()):
             if i < len(self._names):
                 name = self._names[i]
-                row.query_one(Label).update(f"{name:<{width}}")
+                row.query_one(Label).update(f"{labels.get(name, name):<{width}}")
                 field = row.query_one(Input)
                 field.value = fields[name]
                 field.placeholder = "(mixed)" if name in mixed else "-"
@@ -415,6 +484,94 @@ class EditForm(Vertical):
     def inputs(self) -> list[Input]:
         rows = self._rows()
         return [rows[i].query_one(Input) for i in range(len(self._names))]
+
+
+class OmniInput(FieldInput):
+    """A split-form field that forwards ^a to the ^apply chord. A plain
+    Input binds ctrl+a to cursor-home and eats it, so the printed ^apply
+    wouldn't fire while a field is focused — unlike ^s (save), whose letter
+    Input doesn't grab. Home key still homes the cursor."""
+
+    BINDINGS = [Binding("ctrl+a", "omni_apply", show=False)]
+
+    def action_omni_apply(self) -> None:
+        self.screen.query_one(DetailsPane).action_plan_apply()
+
+
+class OmnibusForm(Vertical):
+    """The editable split-omnibus plan: three shared fields — author,
+    author sort, series — then one (title, series no.) block per
+    constituent book, so the user corrects the NCX's guesses (which mangle
+    titles like "Book01 The Fifth Season") BEFORE a single file is written.
+
+    Composed ONCE with a fixed pool of book blocks (the compose-once rule);
+    ``set_plan`` only swaps values and shows/hides blocks — never rebuilt."""
+
+    POOL = 20   # constituent books per omnibus; more falls back to preview
+
+    GLOBAL = [("author", "omni-author"),
+              ("author sort", "omni-author-sort"),
+              ("series", "omni-series")]
+
+    def compose(self):
+        width = len("series no.") + LABEL_GUTTER
+        yield Static("", id="omni-source", classes="omni-source")
+        for label, wid in self.GLOBAL:
+            with Horizontal(classes="frow"):
+                yield Label(f"{label:<{width}}", classes="fkey")
+                yield OmniInput(id=wid, compact=True, classes="fval")
+        for i in range(self.POOL):
+            with Vertical(classes="omni-book", id=f"omni-book-{i}"):
+                yield Label("", id=f"omni-head-{i}", classes="omni-head")
+                with Horizontal(classes="frow"):
+                    yield Label(f"{'title':<{width}}", classes="fkey")
+                    yield OmniInput(id=f"omni-title-{i}", compact=True,
+                                    classes="fval")
+                with Horizontal(classes="frow"):
+                    yield Label(f"{'series no.':<{width}}", classes="fkey")
+                    yield OmniInput(id=f"omni-no-{i}", compact=True,
+                                    type="integer", classes="fval")
+
+    def on_mount(self) -> None:
+        for block in self.query(".omni-book"):
+            block.display = False
+
+    def set_plan(self, plan) -> None:
+        self.query_one("#omni-source", Static).update(plan.source.name)
+        self.query_one("#omni-author", Input).value = plan.author
+        self.query_one("#omni-author-sort", Input).value = plan.author_sort
+        self.query_one("#omni-series", Input).value = plan.title
+        for i in range(self.POOL):
+            block = self.query_one(f"#omni-book-{i}")
+            if i < len(plan.books):
+                book = plan.books[i]
+                self.query_one(f"#omni-head-{i}", Label).update(f"Book {i + 1}")
+                self.query_one(f"#omni-title-{i}", Input).value = book.label
+                self.query_one(f"#omni-no-{i}", Input).value = str(
+                    book.series_index)
+                block.display = True
+            else:
+                block.display = False
+
+    def inputs(self, count: int) -> list[Input]:
+        """Every focusable field top-to-bottom: the three shared fields,
+        then each shown book's title and series-no — the ↑↓/⇥ walk order."""
+        items = [self.query_one(f"#{wid}", Input) for _, wid in self.GLOBAL]
+        for i in range(count):
+            items.append(self.query_one(f"#omni-title-{i}", Input))
+            items.append(self.query_one(f"#omni-no-{i}", Input))
+        return items
+
+    def edits(self, count: int) -> tuple[str, str, str, list[tuple[str, str]]]:
+        """What ``apply`` reads: (author, author sort, series, [(title,
+        series-no) per book]) — raw strings, parsed by omnibus.with_edits."""
+        g = {wid: self.query_one(f"#{wid}", Input).value.strip()
+             for _, wid in self.GLOBAL}
+        books = [(self.query_one(f"#omni-title-{i}", Input).value.strip(),
+                  self.query_one(f"#omni-no-{i}", Input).value.strip())
+                 for i in range(count)]
+        return (g["omni-author"], g["omni-author-sort"], g["omni-series"],
+                books)
 
 
 class ConfirmSave(ModalScreen[str]):
@@ -518,6 +675,16 @@ class DetailsPane(VerticalScroll, can_focus=True):
             super().__init__()
             self.path = path
 
+    class BookSorted(Message):
+        """A single ebook was renamed and wrapped into its own new folder
+        (``Author Sort - Title/``); ``path`` is where it landed. The tree
+        should re-list, expand the wrapper, and drop the cursor on the
+        book — editable, like new-folder's flow one level deeper."""
+
+        def __init__(self, path: Path) -> None:
+            super().__init__()
+            self.path = path
+
     def can_edit(self) -> bool:
         """Focus may enter this pane only when the shown kind is editable."""
         return self.kind in EDITABLE_KINDS and self._readable
@@ -540,6 +707,7 @@ class DetailsPane(VerticalScroll, can_focus=True):
         self._book_cover = False    # shown book has an extractable cover
         self._omnibus_ready = False     # probe: this epub holds ≥2 books
         self._omnibus_plan: omnibus.OmnibusPlan | None = None
+        self._omnibus_editing = False   # the editable split form is on show
         self._folderize_ready = False   # probe: this folder has work to do
         self._folderize_plan: folderize.FolderizePlan | None = None
         self._standardize_ready = False     # probe: uncleaned epubs below
@@ -556,6 +724,9 @@ class DetailsPane(VerticalScroll, can_focus=True):
         self._shift_entries: list[srt.Entry] | None = None  # ORIGINAL parse
         self._shift_target_ms = 0   # pending total shift (the display)
         self._shift_applied_ms = 0  # total already written this session
+        # refuse-overwrite escape hatch: (action title, source) armed by a
+        # refusal; the next same-action press on the same file overwrites
+        self._overwrite_arm: tuple[str, Path] | None = None
 
     # -- static layout ---------------------------------------------------------
 
@@ -580,6 +751,7 @@ class DetailsPane(VerticalScroll, can_focus=True):
                 yield Static("-", id="art-none", classes="fval-static")
                 with ArtField(id="art-field"):
                     yield image_widget(self.images, id="cover-audio")
+                    yield Label("", id="cover-audio-dims", classes="cover-dims")
                 yield Static("", id="art-mark", classes="fmark")
             with Horizontal(id="row-art-buttons"):
                 yield Label("", id="art-buttons-pad", classes="fkey")
@@ -623,6 +795,12 @@ class DetailsPane(VerticalScroll, can_focus=True):
         with Vertical(id="panel-book", classes="panel"):
             yield EditForm(12, id="form-book")
             yield image_widget(self.images, id="cover-book")
+            yield Label("", id="cover-book-dims", classes="cover-dims")
+            # cover method: a path input toggled by the ^f cover button
+            # (mirrors audio art-path). Enter applies, esc cancels.
+            with Vertical(id="book-cover-div"):
+                yield CoverPathInput(id="book-cover-path", compact=True)
+                yield Static("⏎ apply · esc cancel", id="book-cover-hint")
 
         with Vertical(id="panel-image", classes="panel"):
             width = len("dimensions") + LABEL_GUTTER
@@ -654,9 +832,15 @@ class DetailsPane(VerticalScroll, can_focus=True):
             yield self._row("size", "other-size", width)
             yield self._row("type", "other-type", width)
 
+        # not a kind panel: a transient editable form shown while a split
+        # is being set up (books ≤ pool); the pane holds focus so metadata
+        # is corrected before the write
+        with Vertical(id="panel-omnibus"):
+            yield OmnibusForm(id="omnibus-form")
+
         yield ActionBar(*PANE_ACTIONS, id="pane-bar")
         # parked below save while its final home is decided (audio only);
-        # width matches the standard audio field labels (tracknumber)
+        # width matches the widest standard audio label (albumartist, 11)
         yield self._row("info", "audio-info", 11 + LABEL_GUTTER,
                         row_id="row-audio-info")
 
@@ -667,6 +851,8 @@ class DetailsPane(VerticalScroll, can_focus=True):
         self.query_one("#row-audio-info").display = False
         self.query_one("#row-art-path").display = False
         self.query_one("#plan-preview").display = False
+        self.query_one("#panel-omnibus").display = False
+        self.query_one("#book-cover-div").display = False
         self.query_one("#shift-div").display = False
         self.query_one("#gif-div").display = False
         self.query_one("#resize-div").display = False
@@ -679,17 +865,33 @@ class DetailsPane(VerticalScroll, can_focus=True):
 
     def _set_cover(self, id: str, data: bytes | None) -> None:
         widget = self.query_one(f"#{id}")
+        size: tuple[int, int] | None = None
         if isinstance(widget, Static):     # images off / unavailable
-            return
-        try:
-            if data:
-                from PIL import Image as PILImage
-                widget.image = PILImage.open(io.BytesIO(data))
-                widget.display = True
-            else:
+            size = _image_size(data)       # dims still show where a label exists
+        else:
+            try:
+                if data:
+                    from PIL import Image as PILImage
+                    image = PILImage.open(io.BytesIO(data))
+                    widget.image = image
+                    widget.display = True
+                    size = image.size
+                else:
+                    widget.display = False
+            except Exception:
                 widget.display = False
-        except Exception:
-            widget.display = False
+        self._set_cover_dims(f"{id}-dims", size)
+
+    def _set_cover_dims(self, id: str, size: tuple[int, int] | None) -> None:
+        """Print the cover's pixel dimensions ('600 × 600') beneath it, for
+        the kinds that carry a dims label (album art, book cover)."""
+        labels = self.query(f"#{id}")
+        if not labels:
+            return
+        label = labels.first(Label)
+        if size:
+            label.update(f"{size[0]} × {size[1]}")
+        label.display = size is not None
 
     # -- selection → panels --------------------------------------------------------
 
@@ -742,6 +944,8 @@ class DetailsPane(VerticalScroll, can_focus=True):
         self._book_cover = False
         self._omnibus_ready = False
         self._omnibus_plan = None
+        self._omnibus_editing = False
+        self.query_one("#panel-omnibus").display = False
         self._folderize_ready = False
         self._folderize_plan = None
         self._standardize_ready = False
@@ -751,6 +955,8 @@ class DetailsPane(VerticalScroll, can_focus=True):
         self._multiartist_plan = None
         self.query_one("#plan-preview").display = False
         self._hide_art_path()
+        self.query_one("#book-cover-div").display = False
+        self._overwrite_arm = None      # browsing away disarms any refusal
         self._video_srt = None
         self._resize_base = None
         self._resize_hide()     # browsing away closes the divs (no pending
@@ -843,14 +1049,25 @@ class DetailsPane(VerticalScroll, can_focus=True):
             return
         self.app.call_from_thread(self._fill_bulk, paths, bulk)
 
+    def _dom_intact(self) -> bool:
+        """False when a worker callback lands after the pane's children
+        were torn down (app/test shutdown): compose-once means #dtitle is
+        always present on a live pane, so its absence is the teardown tell.
+        Guards the same race _sync_pane_bar's NoMatches catch does."""
+        try:
+            self.query_one("#dtitle")
+        except NoMatches:
+            return False
+        return True
+
     def _bulk_read_failed(self, paths: list[Path], error: Exception) -> None:
-        if self.paths == paths:
+        if self.paths == paths and self._dom_intact():
             self.query_one("#dtitle", Label).update(
                 f"{self._count_label()} — unreadable ({error})")
 
     def _fill_bulk(self, paths: list[Path], bulk: adapters.BulkDetails) -> None:
-        if self.paths != paths:             # selection moved on: drop it
-            return
+        if self.paths != paths or not self._dom_intact():
+            return                          # moved on, or torn down under us
         self.kind = bulk.kind
         self._readable = True
         self.query_one(f"#panel-{bulk.kind}").display = True
@@ -943,6 +1160,7 @@ class DetailsPane(VerticalScroll, can_focus=True):
         self._sync_pane_bar()       # extract-cover appears with the cover
         if path.suffix.lower() == ".epub":
             self._probe_omnibus(path)   # split button fills in late
+            self._probe_sort_book(path)  # sort button fills in late too
 
     def _fill_image(self, path: Path, d: adapters.ImageDetails) -> None:
         self._set("image-size", human_size(d.size))
@@ -981,6 +1199,10 @@ class DetailsPane(VerticalScroll, can_focus=True):
     def _field_inputs(self) -> list:
         """Every focusable field, top to bottom: filename first (single
         file only — bulk has no filename), the album-art slot last."""
+        if self._omnibus_editing and self._omnibus_plan is not None:
+            # the split form owns the pane's fields while it's up
+            return self.query_one(OmnibusForm).inputs(
+                len(self._omnibus_plan.books))
         if not self.can_edit():
             return []
         fields = ([] if self.paths is not None
@@ -1006,6 +1228,10 @@ class DetailsPane(VerticalScroll, can_focus=True):
 
     @property
     def dirty(self) -> bool:
+        if self._omnibus_editing:
+            # split-form edits are ephemeral plan tweaks, not file edits:
+            # esc cancels the whole split, never a save-confirm
+            return False
         if self._pending_art is not None:
             return True
         if self._shift_pending:
@@ -1035,6 +1261,8 @@ class DetailsPane(VerticalScroll, can_focus=True):
         if ev.input.id in ("resize-w", "resize-h"):     # not fields either
             self._resize_link_sync(ev.input.id)
             return
+        if ev.input.id and ev.input.id.startswith("omni-"):
+            return                          # split-form fields: no ✓ marks
         if ev.input.id != "art-path":       # method input: not a field
             self._refresh_marks()
 
@@ -1085,6 +1313,7 @@ class DetailsPane(VerticalScroll, can_focus=True):
                     if suffix == ".epub":       # the only kind we can read
                         names.add("create_opf")
                         names.add("standardize")
+                        names.add("book_cover")     # add or replace the cover
                         if self._book_cover:    # only when there is one
                             names.add("extract_cover")
                         if self._omnibus_ready:  # probe: ≥2 books inside
@@ -1181,8 +1410,12 @@ class DetailsPane(VerticalScroll, can_focus=True):
     def action_pane_left(self) -> None:
         focused = self.app.focused
         if (isinstance(focused, ActionButton)
-                and isinstance(focused.parent, ActionBar)):
-            row = focused.parent.buttons()
+                and isinstance(focused.parent, ActionBar)
+                and focused in (row := focused.parent.buttons())):
+            # focused not in row: a context change (probe fill-in, a
+            # debounced re-preview) hid this button out from under the
+            # cursor — fall through and ascend rather than index a list
+            # it's no longer in (fuzz seed 12, 2026-08-07)
             index = row.index(focused)
             if index > 0:
                 row[index - 1].focus()
@@ -1192,13 +1425,16 @@ class DetailsPane(VerticalScroll, can_focus=True):
     def action_pane_right(self) -> None:
         focused = self.app.focused
         if (isinstance(focused, ActionButton)
-                and isinstance(focused.parent, ActionBar)):
-            row = focused.parent.buttons()
-            index = row.index(focused)
+                and isinstance(focused.parent, ActionBar)
+                and focused in (row := focused.parent.buttons())):
+            index = row.index(focused)          # focused-not-in-row: no-op
             if index < len(row) - 1:
                 row[index + 1].focus()
 
     def action_release(self) -> None:
+        if self._omnibus_editing:           # esc backs out of the split
+            self.action_plan_cancel()       # (which returns focus to the tree)
+            return
         if not self.dirty:
             self.app.action_focus_tree()
             return
@@ -1255,6 +1491,10 @@ class DetailsPane(VerticalScroll, can_focus=True):
             ev.stop()
             self.action_gif_make()
             return
+        if ev.input.id == "book-cover-path":            # ⏎ applies (writes)
+            ev.stop()
+            self._apply_book_cover(ev.value)
+            return
         if ev.input.id != "art-path":
             return
         ev.stop()
@@ -1271,6 +1511,71 @@ class DetailsPane(VerticalScroll, can_focus=True):
         self._set_pending_art(data)
         self._hide_art_path()
         self.query_one("#art-field", ArtField).focus()
+
+    # -- book cover: type a path, apply writes it into the epub -----------------------
+
+    def _hide_book_cover_path(self) -> None:
+        self.query_one("#book-cover-div").display = False
+        if self.can_edit():             # return focus to the metadata fields
+            self.focus()
+
+    def _cover_prefill(self, book: Path) -> str:
+        """The path to seed the input with, by priority: a sibling image
+        sharing the book's stem, then a cover.* image, then the book's own
+        directory (so the user browses from there)."""
+        parent = book.parent
+        children = fs.cached_children(str(parent))
+
+        def image(child) -> bool:
+            return (not child.is_dir()
+                    and kinds.kind_of(child, is_dir=False) == kinds.IMAGE)
+
+        for child in children:          # 1. same name as the book file
+            if image(child) and os.path.splitext(child.name)[0] == book.stem:
+                return str(child)
+        for child in children:          # 2. a cover.* image
+            if image(child) and os.path.splitext(child.name)[0].lower() \
+                    == "cover":
+                return str(child)
+        return str(parent) + "/"        # 3. the book's directory
+
+    def action_book_cover(self) -> None:
+        if (self.kind != kinds.BOOK or self.paths is not None
+                or self.path is None
+                or self.path.suffix.lower() != ".epub"):
+            return
+        self.query_one("#book-cover-div").display = True
+        field = self.query_one("#book-cover-path", CoverPathInput)
+        field.value = self._cover_prefill(self.path)
+        field.focus()
+
+    def _apply_book_cover(self, value: str) -> None:
+        target = Path(value)
+        if kinds.kind_of(target) != kinds.IMAGE:
+            self.notify(f"{target.name or value}: not an image file",
+                        severity="warning", title="cover")
+            return
+        if self.path is None:
+            return
+        book = self.path
+        self._hide_book_cover_path()
+        self.notify("writing cover…", title="cover")
+        self._book_cover_worker(book, target)
+
+    @work(thread=True, exclusive=True, group="book-cover")
+    def _book_cover_worker(self, book: Path, image: Path) -> None:
+        try:
+            epub.set_cover(book, image.read_bytes())
+        except Exception as error:
+            self.app.call_from_thread(
+                self.notify, str(error), title="cover", severity="error")
+            return
+        self.app.call_from_thread(self._book_cover_done, book)
+
+    def _book_cover_done(self, book: Path) -> None:
+        self.notify("cover updated", title="cover")
+        if self.path == book:
+            self.preview(book, immediate=True)      # refresh the cover preview
 
     def _set_pending_art(self, data: bytes) -> None:
         self._pending_art = data
@@ -1434,9 +1739,9 @@ class DetailsPane(VerticalScroll, can_focus=True):
             return
         source = self.path
         target = source.with_suffix("." + fmt)
-        if target.exists():
-            self.notify(f"{target.name} already exists — not overwriting",
-                        severity="warning", title="convert")
+        title = f"convert to {fmt}"
+        if target.exists() and not self._take_overwrite(title, source):
+            self._arm_overwrite(title, source, f"{target.name} already exists")
             return
         if calibre.find_ebook_convert() is None:
             self.notify("Calibre not found — install it from "
@@ -1465,23 +1770,57 @@ class DetailsPane(VerticalScroll, can_focus=True):
 
     # -- produce-a-sibling actions (cover export, metadata.opf) -------------------
 
+    # -- refuse-overwrite, with a second-press escape hatch -------------------------
+    # A produce action that would clobber an existing file refuses, but arms
+    # a one-shot: pressing the SAME action on the SAME file again overwrites.
+    # Uniform across the produce-a-sibling actions (extract cover, create
+    # opf, image convert/resize, gif) and the book converts.
+
+    def _take_overwrite(self, title: str, source: Path) -> bool:
+        """Consume a pending overwrite confirmation for (title, source):
+        True when the user just re-pressed the same action on the same file
+        to confirm. One-shot."""
+        if self._overwrite_arm == (title, source):
+            self._overwrite_arm = None
+            return True
+        return False
+
+    def _arm_overwrite(self, title: str, source: Path, label: str) -> None:
+        """Refuse this overwrite but leave the door open: arm the one-shot
+        and tell the user how to force it."""
+        self._overwrite_arm = (title, source)
+        self.notify(f"{label} — press again to overwrite",
+                    severity="warning", title=title)
+
     def action_extract_cover(self) -> None:
-        self._produce("extract cover", adapters.extract_cover)
+        self._produce("extract cover",
+                      lambda p, ow: adapters.extract_cover(p, overwrite=ow))
 
     def action_create_opf(self) -> None:
-        self._produce("create opf", adapters.create_opf)
+        self._produce("create opf",
+                      lambda p, ow: adapters.create_opf(p, overwrite=ow))
 
     def _produce(self, title: str, producer) -> None:
         if (self.kind != kinds.BOOK or self.path is None
                 or self.paths is not None):
             return
-        self._produce_worker(title, producer, self.path)
+        self._run_producer(title, producer, self.path)
+
+    def _run_producer(self, title: str, producer, source: Path) -> None:
+        """Run a produce-a-sibling action, honoring an armed overwrite."""
+        overwrite = self._take_overwrite(title, source)
+        self._produce_worker(title, producer, source, overwrite)
 
     @work(thread=True, group="produce", exclusive=False)
-    def _produce_worker(self, title: str, producer, path: Path) -> None:
+    def _produce_worker(self, title: str, producer, path: Path,
+                        overwrite: bool) -> None:
         # a zip read + a write: quick, but not NAS-quick — off the UI thread
         try:
-            target = producer(path)
+            target = producer(path, overwrite)
+        except FileExistsError as error:       # arm the second-press hatch
+            self.app.call_from_thread(self._arm_overwrite, title, path,
+                                      str(error))
+            return
         except Exception as error:
             self.app.call_from_thread(self.notify, str(error), title=title,
                                       severity="warning")
@@ -1522,9 +1861,10 @@ class DetailsPane(VerticalScroll, can_focus=True):
         image = self._image_target()
         if image is None:
             return
-        self._produce_worker(f"convert to {fmt}",
-                             lambda path, f=fmt: imageops.convert(path, f),
-                             image)
+        self._run_producer(
+            f"convert to {fmt}",
+            lambda path, ow, f=fmt: imageops.convert(path, f, overwrite=ow),
+            image)
 
     def action_resize(self) -> None:
         image = self._image_target()
@@ -1602,9 +1942,10 @@ class DetailsPane(VerticalScroll, can_focus=True):
                         title="resize", severity="warning")
             return
         # the div stays open — a second size costs nothing extra
-        self._produce_worker(
+        self._run_producer(
             "resize",
-            lambda path, w=width, h=height: imageops.resize(path, w, h),
+            lambda path, ow, w=width, h=height: imageops.resize(
+                path, w, h, overwrite=ow),
             image)
 
     def action_rotate(self) -> None:
@@ -1678,9 +2019,16 @@ class DetailsPane(VerticalScroll, can_focus=True):
             self._multiartist_exec_worker(plan)
         elif self._omnibus_plan is not None:
             plan = self._omnibus_plan
+            editing = self._omnibus_editing
+            if editing:                     # fold the form's corrections in
+                plan = omnibus.with_edits(
+                    plan, *self.query_one(OmnibusForm).edits(len(plan.books)))
             self._omnibus_plan = None
+            self._omnibus_editing = False
             self.notify("splitting…", title="split omnibus")
             self._omnibus_exec_worker(plan)
+            if editing:                     # the form held focus — ascend
+                self.app.action_focus_tree()
         elif self._sort_plan is not None:
             plan = self._sort_plan
             self._sort_plan = None
@@ -1690,12 +2038,16 @@ class DetailsPane(VerticalScroll, can_focus=True):
     def action_plan_cancel(self) -> None:
         if not self.plan_preview_open():
             return
+        was_editing = self._omnibus_editing     # the split form held focus
         self._folderize_plan = None
         self._multiartist_plan = None
         self._omnibus_plan = None
+        self._omnibus_editing = False
         self._sort_plan = None
         if self.path is not None:               # restore the normal view
             self.preview(self.path, immediate=True)
+        if was_editing:                         # ascend out of the pane
+            self.app.action_focus_tree()
 
     # -- folderize --------------------------------------------------------------
 
@@ -1853,8 +2205,28 @@ class DetailsPane(VerticalScroll, can_focus=True):
             self._sync_pane_bar()
             return
         self._omnibus_plan = plan
-        self._show_plan_preview(f"split {path.name}",
-                                render_omnibus_plan(plan))
+        if len(plan.books) <= OmnibusForm.POOL:
+            # the editable form: correct the NCX's guesses before writing,
+            # with the pane focused (the user's feedback, 2026-08-07)
+            self._omnibus_editing = True
+            self._show_omnibus_form(plan)
+            self.app.reveal_details()           # narrow: display, then focus
+            self.focus()                        # lands on the author field
+        else:                                   # too many to edit inline:
+            self._show_plan_preview(f"split {path.name}",   # read-only preview
+                                    render_omnibus_plan(plan))
+
+    def _show_omnibus_form(self, plan: omnibus.OmnibusPlan) -> None:
+        for panel in PANELS:
+            self.query_one(f"#panel-{panel}").display = False
+        self.query_one("#plan-preview").display = False
+        self.query_one("#dtitle", Label).update("Split Omnibus")
+        self.query_one("#dtitle").display = True
+        self.query_one("#row-fname").display = False
+        self.query_one("#row-audio-info").display = False
+        self.query_one(OmnibusForm).set_plan(plan)
+        self.query_one("#panel-omnibus").display = True
+        self._sync_pane_bar()
 
     @work(thread=True, exclusive=True, group="omnibus-exec")
     def _omnibus_exec_worker(self, plan: omnibus.OmnibusPlan) -> None:
@@ -1878,7 +2250,10 @@ class DetailsPane(VerticalScroll, can_focus=True):
 
     # -- sort: wrap each book's files into "Author Sort - Title/" ------------------
     # The fourth plan-shaped action (booksort.py) — folderize's exact
-    # shape on the shared plan_apply/plan_cancel pair.
+    # shape on the shared plan_apply/plan_cancel pair. On a single epub the
+    # same engine runs one-file and immediately (no preview): rename + wrap,
+    # then reveal the book in its new folder, still editable (BookSorted).
+    # One _sort_ready flag serves both contexts — they never coexist.
 
     @work(thread=True, exclusive=True, group="sort-probe")
     def _probe_sort(self, root: Path) -> None:
@@ -1891,12 +2266,53 @@ class DetailsPane(VerticalScroll, can_focus=True):
             self._sort_ready = True
             self._sync_pane_bar()
 
+    @work(thread=True, exclusive=True, group="sort-book-probe")
+    def _probe_sort_book(self, book: Path) -> None:
+        if booksort.probe_book(book):
+            self.app.call_from_thread(self._sort_book_probed, book)
+
+    def _sort_book_probed(self, book: Path) -> None:
+        if self.path == book and not self.plan_preview_open():
+            self._sort_ready = True
+            self._sync_pane_bar()
+
     def action_sort(self) -> None:
+        if not self._sort_ready:
+            return
+        if (self.kind == kinds.BOOK and self.paths is None
+                and self.path is not None):
+            self.notify("reading…", title="sort")     # single ebook: no preview
+            self._sort_book_worker(self.path)
+            return
         root = self._plan_root()
-        if root is None or not self._sort_ready:
+        if root is None:
             return
         self.notify("reading…", title="sort")
         self._sort_plan_worker(root)
+
+    @work(thread=True, exclusive=True, group="sort-book-exec")
+    def _sort_book_worker(self, book: Path) -> None:
+        plan = booksort.plan_for_book(book)
+        if plan is None:
+            self.app.call_from_thread(
+                self.notify, f"{book.name}: no readable metadata",
+                title="sort", severity="warning")
+            return
+        new_path = booksort.sorted_path(book, plan.groups[0].folder_name)
+        moved, errors = booksort.execute(plan)
+        self.app.call_from_thread(self._sort_book_done, book, new_path,
+                                  moved, errors)
+
+    def _sort_book_done(self, book: Path, new_path: Path, moved: int,
+                        errors: list[tuple[Path, str]]) -> None:
+        if errors:
+            _, reason = errors[0]
+            self.notify(f"{book.name}: {reason}", title="sort",
+                        severity="error", timeout=8)
+            return
+        self.notify(f"wrapped into {new_path.parent.name}/", title="sort")
+        fs.clear_cache()                        # the subtree just changed
+        self.post_message(self.BookSorted(new_path))
 
     @work(thread=True, exclusive=True, group="sort-plan")
     def _sort_plan_worker(self, root: Path) -> None:
@@ -2011,9 +2427,8 @@ class DetailsPane(VerticalScroll, can_focus=True):
     def _relabel_move(self, lifted: bool) -> None:
         button = self.query_one("#act-move", ActionButton)
         word = MOVE_WORDS[lifted]
-        if getattr(button, "_move_word", None) != word:
-            button._move_word = word
-            button.label = Content.from_markup(action_markup(word, "n"))
+        if button._word != word:
+            button.set_word(word)
 
     def _liftable_paths(self) -> list[Path]:
         """What ^n would pick up: the highlighted folder (even when it
@@ -2099,9 +2514,9 @@ class DetailsPane(VerticalScroll, can_focus=True):
         self._sync_pane_bar()
 
     # -- folder CRUD: new folder / trash (rename rides the editable form) ----------
-    # Chords are Finder's (⌘⇧N / ⌘⌫, bound on the App); buttons show on
-    # folder views. The chord works with ANY selection — a highlighted
-    # folder is the target, a highlighted file means its folder.
+    # Chords are the buttons' own ^e / ^t, dispatched app-wide while the
+    # buttons show (folder views). The chord works with ANY selection — a
+    # highlighted folder is the target, a highlighted file means its folder.
 
     def action_new_folder(self) -> None:
         target = self._place_target()
@@ -2124,8 +2539,16 @@ class DetailsPane(VerticalScroll, can_focus=True):
         fs.clear_cache()
         self.post_message(self.FolderCreated(folder))
 
+    def _trash_target(self) -> Path | None:
+        """What ^del removes: the highlighted item itself — file OR folder
+        (or an album-like folder shown as its contents). A shift-range bulk
+        selection has no single target, so it is left alone."""
+        if self.path is not None and self.path.exists():
+            return self.path
+        return None
+
     def action_trash(self) -> None:
-        root = self._plan_root()
+        root = self._trash_target()
         if root is None:
             return
         if os.environ.get(artfetch.OFFLINE_ENV):
@@ -2367,16 +2790,14 @@ class DetailsPane(VerticalScroll, can_focus=True):
                         severity="error", timeout=10)
             return
         target = gif.gif_target(video)
-        if target.exists():
-            self.notify(f"{target.name} already exists — not overwriting",
-                        severity="warning", title="make gif")
-            return
         self.notify(f"{video.name} → {target.name} ({fps} fps, {width} px)…",
                     title="make gif")
-        # produce-a-sibling: the generic worker fits (div stays open)
-        self._produce_worker(
+        # produce-a-sibling: the generic runner fits (div stays open); an
+        # existing gif refuses once, then overwrites on a second ^apply
+        self._run_producer(
             "make gif",
-            lambda path, f=fps, w=width: gif.make_gif(path, fps=f, width=w),
+            lambda path, ow, f=fps, w=width: gif.make_gif(
+                path, fps=f, width=w, overwrite=ow),
             video)
 
     # -- shift subs: the inline wizard div ----------------------------------------

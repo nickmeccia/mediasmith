@@ -4,6 +4,11 @@ Context for Future Claude (and future Nick). This repo is a clean-slate
 rewrite; everything before it is R&D, frozen at `~/code/mediasmith-v1`
 (also on GitHub). Read this before writing any code.
 
+## Terms of Art
+
+Please read the Terms of Art document, found at 
+`./notes/claude/terms-of-art.md`.
+
 ## What this app is
 
 One fullscreen Textual TUI with a **file-browser model** — not v1's
@@ -119,7 +124,7 @@ Consequences that follow from the model (don't break them):
 
 Contextual actions are standardized; **do not invent a new shape for a
 new feature — copy one of these.** Worked examples live in commits
-830bad9 and 5591410; per-feature briefs in `notes/claude-HANDOFF.md`.
+830bad9 and 5591410; per-feature briefs in `notes/claude/handoff.md`.
 
 Adding any action, end to end:
 
@@ -127,7 +132,7 @@ Adding any action, end to end:
    (details.py). The label prints `^k` in the accent color, spliced
    into the word when the char is in it (`actions.action_markup`).
    Keys are placeholders — Nick renames them; note new ones in
-   QA-TODO. Never use `actions.RESERVED_KEYS`; avoid Input's chords
+   `notes/qa/todo.md`. Never use `actions.RESERVED_KEYS`; avoid Input's chords
    (a/c/k/u/v/w/x) when the panel has focusable fields.
 2. A visibility rule in `_sync_pane_bar` — the bar is composed ONCE
    with the full palette; context only shows/hides. Expensive
@@ -187,13 +192,13 @@ Test-driven, calibrated by layer — this replaces Nick-as-only-QA:
 2. **Editing** — ✅ audio tags + epub metadata + rename + album art
    (path entry and iTunes-API fetch, in `artfetch.py`); ✓-mark write
    manifest; ConfirmSave modal.
-3. **Engine actions** — in progress via notes/claude-TODO.md (the
-   active queue) + notes/claude-HANDOFF.md (briefs). Shipped
+3. **Engine actions** — in progress via notes/claude/todo-*.md (the
+   active queue) + notes/claude/handoff.md (briefs). Shipped
    2026-07-11: the action-button pattern, book convert/extract-cover/
    create-opf, folderize; later that day the flagship subtitle port
    (subsync.py + get/clean/shift/watch — the shift div is the wizard
    exemplar) and fix-multi-artist (plan previews share one
-   apply/cancel pair now). notes/claude-PROPOSALS.md holds the
+   apply/cancel pair now). notes/claude/proposals.md holds the
    search + Move designs (both resolved). Shipped 2026-07-15: video
    container + posters (#6), omnibus splitter (#11), Move, the logo;
    session 2 shipped the image slice (#8/#9 rename/convert/resize/
@@ -206,7 +211,7 @@ Test-driven, calibrated by layer — this replaces Nick-as-only-QA:
    action), and video→gif #13 (third wizard div; _nav_items
    generalized). The fuzz harness write-jails its child and keeps pty
    on death; its first real kill (ConfirmSave double-dismiss) is
-   fixed (see QA-TODO). **The claude-TODO queue is built out** — what
+   fixed (see QA-TODO). **The todo-*.md queue is built out** — what
    remains is Nick's QA ledger and what it spawns. ⬅ you are here
 4. **Batch operations.** Partially done ahead of schedule: shift-range
    and album-folder bulk editing shipped (2026-07-10); space-marking +
@@ -215,7 +220,7 @@ Test-driven, calibrated by layer — this replaces Nick-as-only-QA:
 5. **Responsive/mobile** — narrow-width breakpoints for tmux-from-phone;
    tree-first two-step flow on narrow screens.
 
-Session notes: `notes/QA-TODO.md` tracks what awaits Nick's manual QA
+Session notes: `notes/qa/todo.md` tracks what awaits Nick's manual QA
 pass, plus small parked UX decisions (save-button/info-row placement,
 strip wording, per-field ✓ revert).
 

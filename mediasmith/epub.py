@@ -50,6 +50,15 @@ def calibre_meta(opf: str, key: str) -> str | None:
     return unescape(m.group(1).strip()) if m else None
 
 
+def creator_file_as(opf: str) -> str | None:
+    """The author-sort string — ``opf:file-as`` on the first dc:creator — or None."""
+    m = re.search(r"<dc:creator\b([^>]*)>", opf)
+    if not m:
+        return None
+    a = re.search(r'\bfile-as="([^"]*)"', m.group(1))
+    return unescape(a.group(1).strip()) if a else None
+
+
 def find_cover_href(opf: str, opf_name: str) -> str | None:
     """Resolve the cover image's zip-relative href from the OPF, or None."""
     opf_dir = os.path.dirname(opf_name)
@@ -87,12 +96,20 @@ def find_cover_href(opf: str, opf_name: str) -> str | None:
 FIELD_TAGS = {"title": "dc:title", "author": "dc:creator",
               "publisher": "dc:publisher", "language": "dc:language",
               "date": "dc:date"}
-"""Editable book fields that map to a Dublin Core element ("series" is the
-odd one out: a calibre <meta> tag)."""
+"""Editable book fields that map straight to a Dublin Core element. The
+others are special-cased in ``write_metadata``: "series"/"series number" are
+calibre <meta> tags, "author sort" is the creator's ``opf:file-as``."""
 
 
 def _insert_into_metadata(opf: str, element: str) -> str:
     m = re.search(r"[ \t]*</(?:\w+:)?metadata>", opf)
+    if m is None:
+        return opf
+    return opf[:m.start()] + f"    {element}\n" + opf[m.start():]
+
+
+def _insert_into_manifest(opf: str, element: str) -> str:
+    m = re.search(r"[ \t]*</(?:\w+:)?manifest>", opf)
     if m is None:
         return opf
     return opf[:m.start()] + f"    {element}\n" + opf[m.start():]
@@ -128,6 +145,19 @@ def set_calibre_meta(opf: str, key: str, value: str) -> str:
                           opf, count=1)
     return _insert_into_metadata(
         opf, f'<meta name="{key}" content="{replacement}"/>')
+
+
+def set_creator_file_as(opf: str, value: str) -> str:
+    """Set or replace ``opf:file-as`` (author sort) on the first dc:creator
+    element; an empty value removes the attribute. The creator's text is left
+    untouched — only the sort attribute changes."""
+    m = re.search(r"<dc:creator\b([^>]*)>", opf)
+    if m is None:
+        return opf
+    attrs = re.sub(r'\s*(?:\w+:)?file-as="[^"]*"', "", m.group(1))
+    if value:
+        attrs += f' opf:file-as="{escape(value, quote=True)}"'
+    return opf[:m.start()] + f"<dc:creator{attrs}>" + opf[m.end():]
 
 
 def rewrite_epub(src: Path, dst: Path, overrides: dict[str, bytes]) -> None:
@@ -175,6 +205,10 @@ def write_metadata(path: Path, fields: dict[str, str]) -> None:
     for key, value in fields.items():
         if key == "series":
             opf = set_calibre_meta(opf, "calibre:series", value)
+        elif key == "series number":
+            opf = set_calibre_meta(opf, "calibre:series_index", value)
+        elif key == "author sort":
+            opf = set_creator_file_as(opf, value)
         elif key in FIELD_TAGS:
             opf = set_dc_field(opf, FIELD_TAGS[key], value)
         else:
@@ -182,6 +216,61 @@ def write_metadata(path: Path, fields: dict[str, str]) -> None:
     tmp = path.with_name(path.name + ".tmp")
     try:
         rewrite_epub(path, tmp, {name: opf.encode("utf-8")})
+        os.replace(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def _encode_cover(data: bytes, pil_format: str) -> bytes:
+    """Re-encode arbitrary image bytes to ``pil_format`` ('JPEG'/'PNG') so
+    the epub's declared cover media-type stays valid. JPEG can't carry an
+    alpha channel, so RGBA/palette images are flattened to RGB. Raises if
+    the bytes aren't a decodable image."""
+    import io
+
+    from PIL import Image
+    image = Image.open(io.BytesIO(data))
+    if pil_format == "JPEG" and image.mode not in ("RGB", "L"):
+        image = image.convert("RGB")
+    buffer = io.BytesIO()
+    image.save(buffer, format=pil_format)
+    return buffer.getvalue()
+
+
+def set_cover(path: Path, data: bytes) -> None:
+    """Set (or replace) the epub's cover image from raw image ``data``.
+
+    If the book already declares a cover, its bytes are swapped in place —
+    re-encoded to that cover's format (jpeg/png by the href's extension) so
+    the manifest and media-type stay valid. If it has none, a ``cover.jpg``
+    is added and wired up (manifest item + ``<meta name="cover">``). Written
+    beside itself and swapped in with ``os.replace``, so a failed write
+    never corrupts the original.
+    """
+    name, opf = read_opf(path)
+    if not name or opf is None:
+        raise ValueError(f"{path.name}: no OPF metadata found")
+    href = find_cover_href(opf, name)
+    overrides: dict[str, bytes] = {}
+    new_opf = opf
+    if href:
+        fmt = "PNG" if os.path.splitext(href)[1].lower() == ".png" else "JPEG"
+        overrides[href] = _encode_cover(data, fmt)
+    else:
+        opf_dir = os.path.dirname(name)
+        cover_href = "cover.jpg"
+        cover_zip = (opf_dir + "/" + cover_href) if opf_dir else cover_href
+        overrides[cover_zip] = _encode_cover(data, "JPEG")
+        new_opf = _insert_into_manifest(
+            opf, '<item id="ms-cover-image" href="cover.jpg" '
+                 'media-type="image/jpeg" properties="cover-image"/>')
+        new_opf = _insert_into_metadata(
+            new_opf, '<meta name="cover" content="ms-cover-image"/>')
+    if new_opf != opf:
+        overrides[name] = new_opf.encode("utf-8")
+    tmp = path.with_name(path.name + ".tmp")
+    try:
+        rewrite_epub(path, tmp, overrides)
         os.replace(tmp, path)
     finally:
         tmp.unlink(missing_ok=True)

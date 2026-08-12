@@ -58,9 +58,11 @@ def test_build_plan_two_books(omni):
     assert not plan.empty
     assert [b.label for b in plan.books] == ["Book 1", "Book 2"]
     assert [b.chapters for b in plan.books] == [2, 2]
+    # an omnibus is a series: title names it, position is the index
+    assert [b.series_index for b in plan.books] == [1, 2]
     assert [b.filename for b in plan.books] == [
-        "Herbert, Frank - Book 1.epub",
-        "Herbert, Frank - Book 2.epub"]
+        "Herbert, Frank - Omnibus - 01 - Book 1.epub",
+        "Herbert, Frank - Omnibus - 02 - Book 2.epub"]
 
 
 def test_plan_spines_share_front_matter_not_chapters(omni):
@@ -92,8 +94,8 @@ def test_execute_writes_valid_epubs(omni, tmp_path):
     written, errors = omnibus.execute(omnibus.build_plan(omni))
     assert errors == []
     assert [p.name for p in written] == [
-        "Herbert, Frank - Book 1.epub",
-        "Herbert, Frank - Book 2.epub"]
+        "Herbert, Frank - Omnibus - 01 - Book 1.epub",
+        "Herbert, Frank - Omnibus - 02 - Book 2.epub"]
     for out in written:
         with zipfile.ZipFile(out) as z:
             names = z.namelist()
@@ -121,13 +123,70 @@ def test_execute_output_toc_promotes_chapters(omni):
     assert [np["label"] for np in nps] == ["Chapter 1", "Chapter 2"]
 
 
+def test_with_edits_applies_corrections(omni):
+    plan = omnibus.build_plan(omni)
+    edited = omnibus.with_edits(
+        plan, "N. K. Jemisin", "Jemisin, N. K.", "The Broken Earth",
+        [("The Fifth Season", "1"), ("The Obelisk Gate", "2")])
+    assert edited.author == "N. K. Jemisin"
+    assert edited.author_sort == "Jemisin, N. K."
+    assert edited.title == "The Broken Earth"           # series
+    assert [b.label for b in edited.books] == \
+        ["The Fifth Season", "The Obelisk Gate"]
+    assert [b.series_index for b in edited.books] == [1, 2]
+    assert [b.filename for b in edited.books] == [
+        "Jemisin, N. K. - The Broken Earth - 01 - The Fifth Season.epub",
+        "Jemisin, N. K. - The Broken Earth - 02 - The Obelisk Gate.epub"]
+
+
+def test_with_edits_blank_and_bad_values_fall_back(omni):
+    plan = omnibus.build_plan(omni)
+    edited = omnibus.with_edits(plan, "", "", "Omnibus",
+                                [("", "x"), ("", "2")])
+    assert edited.author == plan.author         # blank keeps the plan's
+    assert edited.author_sort == plan.author_sort
+    assert [b.label for b in edited.books] == ["Book 1", "Book 2"]  # blank→label
+    assert [b.series_index for b in edited.books] == [1, 2]  # "x"→original
+
+
+def test_edited_split_writes_corrected_metadata(omni):
+    from mediasmith import epub as epublib
+    plan = omnibus.build_plan(omni)
+    edited = omnibus.with_edits(
+        plan, "N. K. Jemisin", "Jemisin, N. K.", "The Broken Earth",
+        [("The Fifth Season", "1"), ("The Obelisk Gate", "2")])
+    written, errors = omnibus.execute(edited)
+    assert errors == []
+    assert written[0].name == \
+        "Jemisin, N. K. - The Broken Earth - 01 - The Fifth Season.epub"
+    _, opf = epublib.read_opf(written[0])
+    assert epublib.dc_field(opf, "dc:title") == "The Fifth Season"
+    assert epublib.dc_field(opf, "dc:creator") == "N. K. Jemisin"
+    assert epublib.creator_file_as(opf) == "Jemisin, N. K."
+    assert epublib.calibre_meta(opf, "calibre:series") == "The Broken Earth"
+    assert epublib.calibre_meta(opf, "calibre:series_index") == "1"
+
+
+def test_split_books_carry_series_metadata(omni):
+    from mediasmith import booksort, epub as epublib
+    written, _ = omnibus.execute(omnibus.build_plan(omni))
+    for i, out in enumerate(written, 1):
+        _, opf = epublib.read_opf(out)
+        assert epublib.calibre_meta(opf, "calibre:series") == "Omnibus"
+        assert epublib.calibre_meta(opf, "calibre:series_index") == str(i)
+        # born correctly named: sorting the split book is a no-op
+        assert booksort.folder_name_for(out) == out.stem
+
+
 def test_execute_refuses_overwrite(omni):
     plan = omnibus.build_plan(omni)
     blocker = omni.parent / plan.books[0].filename
     blocker.write_bytes(b"precious")
     written, errors = omnibus.execute(plan)
-    assert [p.name for p in written] == ["Herbert, Frank - Book 2.epub"]
-    assert errors == [("Herbert, Frank - Book 1.epub", "already exists")]
+    assert [p.name for p in written] == [
+        "Herbert, Frank - Omnibus - 02 - Book 2.epub"]
+    assert errors == [
+        ("Herbert, Frank - Omnibus - 01 - Book 1.epub", "already exists")]
     assert blocker.read_bytes() == b"precious"
 
 

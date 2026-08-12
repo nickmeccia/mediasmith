@@ -38,7 +38,34 @@ def test_book_details(media_tree):
     assert d.fields["author"] == "Frank Herbert"
     assert d.fields["series"] == "Dune"
     assert d.fields["publisher"] == "Chilton Books"
+    assert d.fields["author sort"] == ""      # absent → empty, fillable
+    assert d.fields["series number"] == ""
     assert d.cover is not None and d.cover[:4] == b"\x89PNG"
+
+
+def test_book_author_sort_and_series_number_read(tmp_path):
+    path = make_epub(tmp_path / "Dune.epub", author_sort="Herbert, Frank",
+                     series_index="1")
+    d = adapters.read_details(path)
+    assert d.fields["author sort"] == "Herbert, Frank"
+    assert d.fields["series number"] == "1"
+
+
+def test_write_book_author_sort_and_series_number_roundtrip(media_tree):
+    # media_tree's Dune.epub has neither: exercises the add-missing path
+    # (creator gains opf:file-as, series_index meta gets inserted).
+    path = media_tree / "Books" / "Dune.epub"
+    adapters.write_details(path, {"author sort": "Herbert, Frank",
+                                  "series number": "3"})
+    d = adapters.read_details(path)
+    assert d.fields["author sort"] == "Herbert, Frank"
+    assert d.fields["series number"] == "3"
+    assert d.fields["author"] == "Frank Herbert"     # text untouched
+    # clearing removes them again
+    adapters.write_details(path, {"author sort": "", "series number": ""})
+    d = adapters.read_details(path)
+    assert d.fields["author sort"] == ""
+    assert d.fields["series number"] == ""
 
 
 def test_image_details(media_tree):

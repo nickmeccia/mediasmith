@@ -2,9 +2,13 @@
 
 Nick's convention (2026-07-16, claude-TODO "Sort" folders): every file
 belonging to one book — epub, mobi, azw3, plus the metadata.opf and
-cover.* sidecars — wraps into ONE folder named "Author Sort - Title"
-(the v1 standardize-metadata output shape, confirmed against the live
-BOOKS volume's 03 Tag & Convert).
+cover.* sidecars — wraps into ONE folder named "Author Sort - Title",
+or "Author Sort - Series - NN - Title" for a book in a series (Nick's
+spec, 2026-08-07: e.g. "Jemisin, N. K. - The Broken Earth - 01 - The
+Fifth Season"). The book files are renamed to match the folder
+("<name>.epub"); sidecars keep their canonical names. A single ebook
+can be sorted on its own (plan_for_book) through the same execute —
+that is the ebook-pane "sort" button.
 
 Folderize's shape: probe → plan → preview → execute. Formats group by
 stem (conversions land beside their source under the same stem, so the
@@ -24,10 +28,26 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import epub as epublib
-from .text import infer_author_sort, sanitize_filename
+from .text import compose_book_name, infer_author_sort
 
 BOOK_SUFFIXES = (".epub", ".mobi", ".azw3")
 SIDECAR_NAMES = ("metadata.opf", "cover.jpg", "cover.jpeg", "cover.png")
+
+
+def _dest_name(source: Path, folder_name: str) -> str:
+    """The name a file takes inside its wrapper folder: book files are
+    renamed to match the folder ("Author Sort - Title.epub"), keeping
+    only their suffix; sidecars (metadata.opf, cover.*) keep their
+    canonical names — Calibre and readers look them up by name."""
+    if source.suffix.lower() in BOOK_SUFFIXES:
+        return folder_name + source.suffix
+    return source.name
+
+
+def sorted_path(book: Path, folder_name: str) -> Path:
+    """Where ``book`` lands after being wrapped into ``folder_name`` — the
+    renamed file inside the new folder, beside where it started."""
+    return book.parent / folder_name / _dest_name(book, folder_name)
 
 
 @dataclass(frozen=True)
@@ -74,8 +94,11 @@ def _loose_books(root: Path) -> dict[str, list[Path]]:
 
 
 def folder_name_for(book: Path) -> str | None:
-    """The wrapper-folder name a book's metadata earns it, or None when
-    the metadata can't be read (only epubs have a reader)."""
+    """The wrapper-folder (and file) name a book's metadata earns it, or
+    None when the metadata can't be read (only epubs have a reader). The
+    naming convention itself lives in ``text.compose_book_name`` — series
+    books get "Author Sort - Series - NN - Title", others "Author Sort -
+    Title"."""
     if book.suffix.lower() != ".epub":
         return None
     try:
@@ -89,7 +112,10 @@ def folder_name_for(book: Path) -> str | None:
     file_as = re.search(r'opf:file-as="([^"]+)"', opf)
     author_sort = (file_as.group(1) if file_as
                    else infer_author_sort(author)) or "Unknown"
-    return sanitize_filename(f"{author_sort} - {title}")
+    return compose_book_name(
+        author_sort, title,
+        epublib.calibre_meta(opf, "calibre:series"),
+        epublib.calibre_meta(opf, "calibre:series_index"))
 
 
 def probe(root: Path) -> bool:
@@ -104,6 +130,16 @@ def probe(root: Path) -> bool:
         if name is not None and name != root.name:
             return True
     return False
+
+
+def probe_book(book: Path) -> bool:
+    """Single-book visibility: this epub earns a wrapper name that isn't
+    the folder it already sits in — so sorting it does real work. One opf
+    read; only epubs carry readable metadata."""
+    if book.suffix.lower() != ".epub":
+        return False
+    name = folder_name_for(book)
+    return name is not None and name != book.parent.name
 
 
 def build_plan(root: Path) -> SortPlan:
@@ -141,6 +177,18 @@ def build_plan(root: Path) -> SortPlan:
     return plan
 
 
+def plan_for_book(book: Path) -> SortPlan | None:
+    """A one-file sort plan: wrap just ``book`` into its earned folder,
+    leaving any stem-siblings behind (single-book intent). None when the
+    metadata can't be read. Shares ``execute`` with the folder-wide sort,
+    so the file is renamed to the folder name the same way."""
+    name = folder_name_for(book)
+    if name is None:
+        return None
+    return SortPlan(root=book.parent,
+                    groups=[BookGroup(folder_name=name, files=(book,))])
+
+
 def execute(plan: SortPlan) -> tuple[int, list[tuple[Path, str]]]:
     """Wrap every group. Existing wrapper folders are reused;
     refuse-overwrite per file. Returns (files moved, errors)."""
@@ -154,7 +202,7 @@ def execute(plan: SortPlan) -> tuple[int, list[tuple[Path, str]]]:
             errors.append((target_dir, str(error)))
             continue
         for source in group.files:
-            dest = target_dir / source.name
+            dest = target_dir / _dest_name(source, group.folder_name)
             if dest.exists():
                 errors.append((source, f"{dest.name} already exists in "
                                        f"{group.folder_name}/"))

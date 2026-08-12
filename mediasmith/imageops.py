@@ -47,16 +47,17 @@ def _save_kwargs(img, fmt: str) -> dict:
     return kwargs
 
 
-def convert(path: Path, fmt: str) -> Path:
+def convert(path: Path, fmt: str, overwrite: bool = False) -> Path:
     """Convert ``path`` to ``fmt`` beside itself. Raises on unknown
-    formats, same-format no-ops, and existing targets."""
+    formats, same-format no-ops, and (unless ``overwrite``) existing
+    targets."""
     pil_fmt = _PIL_FORMAT.get(fmt.lower())
     if pil_fmt is None:
         raise ValueError(f"no writer for .{fmt}")
     target = path.with_suffix("." + fmt.lower())
     if target == path:
         raise ValueError(f"{path.name} is already .{fmt}")
-    if target.exists():
+    if target.exists() and not overwrite:
         raise FileExistsError(f"{target.name} already exists")
     img = _open(path)
     if pil_fmt in _NO_ALPHA and img.mode in ("RGBA", "LA", "P"):
@@ -78,13 +79,14 @@ def fit_dimensions(width: int, height: int, *, new_width: int | None,
     return width, height
 
 
-def resize(path: Path, width: int, height: int) -> Path:
+def resize(path: Path, width: int, height: int,
+           overwrite: bool = False) -> Path:
     """Resize to exactly width × height, written beside the source as
-    ``name (WxH).ext``. Never overwrites."""
+    ``name (WxH).ext``. Refuses to overwrite unless ``overwrite``."""
     if width < 1 or height < 1:
         raise ValueError("dimensions must be positive")
     target = path.with_name(f"{path.stem} ({width}x{height}){path.suffix}")
-    if target.exists():
+    if target.exists() and not overwrite:
         raise FileExistsError(f"{target.name} already exists")
     img = _open(path)
     fmt = img.format or _PIL_FORMAT.get(path.suffix.lstrip(".").lower())

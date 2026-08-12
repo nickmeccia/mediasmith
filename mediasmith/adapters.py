@@ -18,7 +18,14 @@ from . import fs, kinds
 
 AUDIO_FIELDS = ['title', 'artist', 'albumartist', 'album', 'genre',
                 'date', 'tracknumber', 'discnumber', 'composer']
-BOOK_FIELDS = ['title', 'author', 'series', 'publisher', 'language', 'date']
+BOOK_FIELDS = ['title', 'author', 'author sort', 'series', 'series number',
+               'publisher', 'language', 'date']
+
+# Display labels for fields whose internal key isn't what we want on screen.
+# The keys stay as-is (audio keys double as mutagen tag names); only the
+# rendered label differs. See EditForm.set_fields.
+FIELD_LABELS = {'tracknumber': 'track no.', 'discnumber': 'disc no.',
+                'series number': 'series no.'}
 
 
 @dataclass(frozen=True)
@@ -117,7 +124,10 @@ def _read_book(path: Path) -> BookDetails:
         if opf:
             fields["title"] = epublib.dc_field(opf, "dc:title") or ""
             fields["author"] = epublib.dc_field(opf, "dc:creator") or ""
+            fields["author sort"] = epublib.creator_file_as(opf) or ""
             fields["series"] = epublib.calibre_meta(opf, "calibre:series") or ""
+            fields["series number"] = (
+                epublib.calibre_meta(opf, "calibre:series_index") or "")
             fields["publisher"] = epublib.dc_field(opf, "dc:publisher") or ""
             fields["language"] = epublib.dc_field(opf, "dc:language") or ""
             fields["date"] = epublib.dc_field(opf, "dc:date") or ""
@@ -385,26 +395,27 @@ def save_details(path: Path, new_name: str, fields: dict[str, str],
     return rename(path, new_name)
 
 
-def extract_cover(path: Path) -> Path:
+def extract_cover(path: Path, overwrite: bool = False) -> Path:
     """Write the book's embedded cover next to it as cover.jpg/.png
-    (named for its actual format). Raises when there is no cover or the
-    target already exists."""
+    (named for its actual format). Raises when there is no cover or (unless
+    ``overwrite``) the target already exists."""
     data = cover_bytes(path)
     if not data:
         raise ValueError(f"{path.name}: no embedded cover")
     ext = ".png" if data[:8] == b"\x89PNG\r\n\x1a\n" else ".jpg"
     target = path.parent / f"cover{ext}"
-    if target.exists():
+    if target.exists() and not overwrite:
         raise FileExistsError(f"{target.name} already exists")
     target.write_bytes(data)
     return target
 
 
-def create_opf(path: Path) -> Path:
+def create_opf(path: Path, overwrite: bool = False) -> Path:
     """Write a Calibre-style metadata.opf beside the book, from its
-    embedded metadata. Raises when the target already exists."""
+    embedded metadata. Raises when the target already exists (unless
+    ``overwrite``)."""
     target = path.parent / "metadata.opf"
-    if target.exists():
+    if target.exists() and not overwrite:
         raise FileExistsError("metadata.opf already exists")
     details = read_details(path)
     assert isinstance(details, BookDetails)

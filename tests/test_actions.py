@@ -3,7 +3,8 @@
 import pytest
 from textual.app import App
 
-from mediasmith.actions import Action, ActionBar, ActionButton, action_markup
+from mediasmith.actions import (Action, ActionBar, ActionButton,
+                                FOCUS_KEY_STYLE, KEY_STYLE, action_markup)
 
 
 # -- label markup ---------------------------------------------------------------
@@ -11,6 +12,10 @@ from mediasmith.actions import Action, ActionBar, ActionButton, action_markup
 
 def test_key_first_char_splices_caret():
     assert action_markup("save", "s") == "[$text-accent]^s[/]ave"
+
+
+def test_key_style_override_recolors_the_chord():
+    assert action_markup("save", "s", "#ffe6c2") == "[#ffe6c2]^s[/]ave"
 
 
 def test_key_mid_word_splices_before_its_char():
@@ -110,6 +115,25 @@ async def test_hidden_buttons_leave_the_flow():
         bar.set_visible(None)
         await pilot.pause()
         assert bar.action_for_key("ctrl+b").name == "two"
+
+
+async def test_focus_recolors_the_chord():
+    # arrow-key selection lands as focus: the chord swaps to the focus
+    # color (legible on the orange highlight) and restores accent on blur.
+    # set_reactive-not-assignment matters here: Content.__eq__ compares
+    # plain text only, so a same-word recolor would otherwise be skipped.
+    app = BarApp()
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        button = app.query(ActionButton).nodes[0]
+        app.set_focus(button)
+        await pilot.pause()
+        assert FOCUS_KEY_STYLE in str(button.label.markup)
+        assert KEY_STYLE not in str(button.label.markup)
+        app.set_focus(None)
+        await pilot.pause()
+        assert KEY_STYLE in str(button.label.markup)
+        assert FOCUS_KEY_STYLE not in str(button.label.markup)
 
 
 async def test_press_posts_triggered():

@@ -5,9 +5,14 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from rich.style import Style
+from rich.text import Text
 from textual import events, work
+from textual._segment_tools import line_pad
 from textual.binding import Binding
+from textual.geometry import Region, Size
 from textual.message import Message
+from textual.strip import Strip
 from textual.suggester import Suggester
 from textual.widgets import DirectoryTree, Input
 from textual.worker import get_current_worker
@@ -180,10 +185,12 @@ class LibraryTree(DirectoryTree):
         # any plain cursor move collapses it (Finder-style)
         Binding("shift+down", "extend_down", "extend", show=False),
         Binding("shift+up", "extend_up", "extend", show=False),
-        Binding("super+up", "cursor_first", "first", show=False),
-        Binding("super+down", "cursor_last", "last", show=False),
+        Binding("ctrl+up", "cursor_first", "first", show=False),
+        Binding("ctrl+down", "cursor_last", "last", show=False),
         Binding("alt+up", "cursor_first_sibling", "folder top", show=False),
         Binding("alt+down", "cursor_last_sibling", "folder bottom", show=False),
+        # collapse the whole level flat — self, siblings, and their offspring
+        Binding("shift+left", "collapse_level", "collapse level", show=False),
     ]
 
     # Rounded, single-dash guides; all three styles the same so hover/cursor
@@ -420,8 +427,12 @@ class LibraryTree(DirectoryTree):
             await self.reveal_parent()   # left on the context row: climb
         elif node.allow_expand and node.is_expanded:
             node.collapse()
+        elif node.parent is self.root:
+            # ascending to the context row only to press ← again is a wasted
+            # rung: climb straight up, landing focus on that row as it goes
+            await self.reveal_parent()
         elif node.parent is not None:
-            self.cursor_line = node.parent.line
+            self._move_cursor(node.parent.line)   # scroll so it re-centers
 
     def action_to_details(self) -> None:
         details = self.app.query_one(DetailsPane)
@@ -493,9 +504,240 @@ class LibraryTree(DirectoryTree):
         if node is not None and node.parent is not None and node.parent.children:
             self._move_cursor(node.parent.children[-1].line)
 
+    def action_collapse_level(self) -> None:
+        """Flatten this folder level: collapse the cursor's node, every
+        sibling beside it, and all their offspring — where ← collapses one
+        node, this returns the whole level to a plain sibling list. The
+        cursor stays put on its node (now collapsed)."""
+        node = self.cursor_node
+        if node is None:
+            return
+        # siblings share a parent; on the root context row there are none,
+        # so fall back to collapsing everything below the row itself
+        parent = node.parent if node.parent is not None else node
+        targets = parent.children or (parent,)
+        for target in targets:
+            if target.allow_expand:
+                target.collapse_all()
+        self._tree_lines            # rebuild so node.line reflects the collapse
+        self._move_cursor(node.line)
+
     def _move_cursor(self, line: int) -> None:
         self.cursor_line = line
         self.scroll_to_line(line, animate=False)
+
+    # -- centered cursor scrolling ---------------------------------------------
+    # When the rows overflow the pane the cursor rides the center line: the
+    # list is padded top and bottom with blank space so focus stays put while
+    # the rows scroll under it. `before` rows sit above the cursor — for an
+    # even-height pane that leaves one extra row below — and scroll_y tracks
+    # the cursor line one-for-one (line L centered ⇒ scroll_y == L).
+
+    def _center_offset(self) -> int | None:
+        """Rows to show above the centered cursor, or None when the list fits
+        the pane — then plain top-aligned scrolling stands in."""
+        height = self.scrollable_content_region.height
+        if height <= 0 or len(self._tree_lines) <= height:
+            return None
+        return (height - 1) // 2
+
+    @property
+    def max_scroll_y(self) -> int:
+        # Centering lets the last row reach the center line, so scroll_y runs
+        # all the way to the last line index — not virtual_height − viewport.
+        if self._center_offset() is None:
+            return super().max_scroll_y
+        return max(0, len(self._tree_lines) - 1)
+
+    def scroll_to_line(self, line: int, animate: bool = True) -> None:
+        if self._center_offset() is None:
+            super().scroll_to_line(line, animate=animate)
+        else:                       # scroll_y == cursor line ⇒ line centered
+            self.scroll_to(y=line, animate=animate, force=True,
+                           immediate=not animate)
+
+    def _pad_virtual_size(self) -> None:
+        """Grow the scrollable height by the blank top/bottom padding, so the
+        scrollbar reflects the range the centered cursor travels through."""
+        if self._center_offset() is None:
+            return
+        height = self.scrollable_content_region.height
+        self.virtual_size = Size(self.virtual_size.width,
+                                 len(self._tree_lines) + height - 1)
+
+    def _build(self) -> None:
+        super()._build()
+        self._pad_virtual_size()
+
+    def on_resize(self, event: events.Resize) -> None:
+        self._pad_virtual_size()
+
+    # Expanding/collapsing changes the row count — which can flip the pane
+    # between "fits" and "overflows" and can land while the layout is
+    # mid-reflow (region height transiently 0). Either way scroll_y can end
+    # up out of step with the centered cursor (the classic symptom: after an
+    # expand the view snaps to the top row instead of the cursor). Re-assert
+    # scroll_y == cursor_line once the refresh has settled. call_after_refresh
+    # runs after the rebuild+load-driven scroll, so it corrects a bad landing
+    # rather than racing it.
+    def on_tree_node_expanded(self, ev) -> None:
+        self._recenter_cursor()
+
+    def on_tree_node_collapsed(self, ev) -> None:
+        self._recenter_cursor()
+
+    def _recenter_cursor(self) -> None:
+        def recenter() -> None:
+            if self.cursor_line >= 0:
+                self.scroll_to_line(self.cursor_line, animate=False)
+        self.call_after_refresh(recenter)
+
+    def render_line(self, y: int) -> Strip:
+        # Shift the window down by `before`: content row (y + scroll_y) maps to
+        # tree line (… − before), so line scroll_y lands on the center row.
+        scroll_x, scroll_y = self.scroll_offset
+        before = self._center_offset() or 0
+        index = y + scroll_y - before
+        if index < 0:               # blank padding above the first row
+            return Strip.blank(self.size.width, self.rich_style)
+        return self._render_line(index, scroll_x, scroll_x + self.size.width,
+                                 self.rich_style)
+
+    def _render_line(self, y: int, x1: int, x2: int, base_style: Style) -> Strip:
+        # Reimplemented from Textual's Tree solely to un-stick the selected
+        # guide style. Upstream OR-accumulates `selected` down the path, so the
+        # cursor folder tints the guides of its ENTIRE subtree — every nested
+        # ├─/╰─ turns blue, blurring which rows are its direct children. We make
+        # the tint reach exactly one level: the guide column of the cursor's
+        # direct children (see the single changed line, flagged below).
+        tree_lines = self._tree_lines
+        width = self.size.width
+
+        if y >= len(tree_lines):
+            return Strip.blank(width, base_style)
+
+        line = tree_lines[y]
+
+        is_hover = self.hover_line >= 0 and any(node._hover for node in line.path)
+
+        cache_key = (
+            y,
+            is_hover,
+            width,
+            self._updates,
+            self._pseudo_class_state,
+            tuple(node._updates for node in line.path),
+        )
+        if cache_key in self._line_cache:
+            strip = self._line_cache[cache_key]
+        else:
+            base_hidden = self.get_component_styles("tree--guides").color.a == 0
+            hover_hidden = self.get_component_styles("tree--guides-hover").color.a == 0
+            selected_hidden = (
+                self.get_component_styles("tree--guides-selected").color.a == 0
+            )
+
+            base_guide_style = self.get_component_rich_style(
+                "tree--guides", partial=True
+            )
+            guide_hover_style = base_guide_style + self.get_component_rich_style(
+                "tree--guides-hover", partial=True
+            )
+            guide_selected_style = base_guide_style + self.get_component_rich_style(
+                "tree--guides-selected", partial=True
+            )
+
+            hover = line.path[0]._hover
+            selected = line.path[0]._selected and self.has_focus
+
+            def get_guides(style: Style, hidden: bool):
+                if self.show_guides and not hidden:
+                    lines = self.LINES["default"]
+                    if style.bold:
+                        lines = self.LINES["bold"]
+                    elif style.underline2:
+                        lines = self.LINES["double"]
+                else:
+                    lines = ("  ", "  ", "  ", "  ")
+
+                guide_depth = max(0, self.guide_depth - 2)
+                return tuple(
+                    f"{characters[0]}{characters[1] * guide_depth} "
+                    for characters in lines
+                )
+
+            if is_hover:
+                line_style = self.get_component_rich_style("tree--highlight-line")
+            else:
+                line_style = base_style
+
+            line_style += Style(meta={"line": y})
+
+            guides = Text(style=line_style)
+            guides_append = guides.append
+
+            guide_style = base_guide_style
+
+            hidden = True
+            for node in line.path[1:]:
+                # Reset both per iteration: upstream let `selected` stay sticky
+                # so guide_style only ever escalated, but our un-sticking means a
+                # deeper column must be able to fall back to the base style.
+                guide_style = base_guide_style
+                hidden = base_hidden
+                if hover:
+                    guide_style = guide_hover_style
+                    hidden = hover_hidden
+                if selected:
+                    guide_style = guide_selected_style
+                    hidden = selected_hidden
+
+                space, vertical, _, _ = get_guides(guide_style, hidden)
+                guide = space if node.is_last else vertical
+                if node != line.path[-1]:
+                    guides_append(guide, style=guide_style)
+                hover = hover or node._hover
+                # CHANGED FROM UPSTREAM (`selected = (selected or ...)`): drop
+                # the OR so the selected style reflects only whether THIS node —
+                # the immediate parent of the next guide column — is the cursor.
+                # The tint lands on the cursor's direct-child guides and stops.
+                selected = node._selected and self.has_focus
+
+            if len(line.path) > 1:
+                _, _, terminator, cross = get_guides(guide_style, hidden)
+                if line.last:
+                    guides.append(terminator, style=guide_style)
+                else:
+                    guides.append(cross, style=guide_style)
+
+            label_style = self.get_component_rich_style("tree--label", partial=True)
+            if self.hover_line == y:
+                label_style += self.get_component_rich_style(
+                    "tree--highlight", partial=True
+                )
+            if self.cursor_line == y:
+                label_style += self.get_component_rich_style(
+                    "tree--cursor", partial=False
+                )
+
+            label = self.render_label(line.path[-1], line_style, label_style).copy()
+            label.stylize(Style(meta={"node": line.node._id}))
+            guides.append(label)
+
+            segments = list(guides.render(self.app.console))
+            pad_width = max(self.virtual_size.width, width)
+            segments = line_pad(segments, 0, pad_width - guides.cell_len, line_style)
+            strip = self._line_cache[cache_key] = Strip(segments)
+
+        strip = strip.crop(x1, x2)
+        return strip
+
+    def _refresh_line(self, line: int) -> None:
+        # Tree-line index → its screen row, accounting for the center shift.
+        before = self._center_offset() or 0
+        region = Region(0, line - self.scroll_offset.y + before,
+                        self.size.width, 1)
+        self.refresh(region)
 
     # -- Finder-style type-to-select ------------------------------------------
 
