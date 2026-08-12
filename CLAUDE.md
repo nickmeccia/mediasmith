@@ -17,26 +17,35 @@ menu-of-tools model. The UX was prototyped and user-approved in
 implementation to consult, not code to import.
 
 ```
-┌──────────────────────┬───────────────────────────────┐
-│ path input (prefix-  │ details of highlighted file   │
-│ match, tab-complete) │  · metadata per file kind     │
-├──────────────────────┤  · cover / poster image       │
-│ directory tree       │  · contextual action buttons  │
-│  ↑↓ move, ←→ fold    │    (shortcut chars accented)  │
-│  space mark files    │  · batch bar when marks exist │
-├──────────────────────┴───────────────────────────────┤
-│ command strip — reference only, no buttons           │
-└──────────────────────────────────────────────────────┘
+┌─────────────────────┐ ┌───────────────────────────────┐
+│ Tree View           │ │ Details View                  │
+│ ┌─────────────────┐ │ │  · metadata per file kind     │
+│ │ Path Input      │ │ │  · cover / poster image       │
+│ └─────────────────┘ │ │  · contextual action buttons  │
+│  directory tree     │ │    (shortcut chars accented)  │
+│  ↑↓ navigate,       │ │  · batch bar when marks exist │
+│  ←→ expand/collapse │ │                               │
+└─────────────────────┘ └───────────────────────────────┘
+┌───────────────────────────────────────────────────────┐
+│ Command Strip — ONE line, state-driven, wraps narrow  │
+└───────────────────────────────────────────────────────┘
 ```
 
-- Details pane **follows the tree highlight** (debounced), no Enter needed.
+- **Path Input is a sub-view OF Tree View** (todo-4, 2026-08-12): the
+  `TreeView` container widget owns `PathInput` + `LibraryTree`; the pane
+  border and focus state live on the container (`:focus-within`).
+- Details view **follows the tree highlight** (debounced), no Enter needed.
 - Marking files (`space`) grows a batch bar; batch actions apply only when
-  all marked files share one kind.
+  all marked files share one kind. (Still to come — roadmap 4.)
 - Actions are contextual per kind: video → download subtitles/posters,
   audio → editable tag form, book → Calibre-backed metadata, folder →
   whole-folder actions.
-- `^S`-style shortcuts are contextual (save tags / download subs / batch
-  apply — batch wins when marks exist).
+- **Chords are view-scoped**: a button's `^x` fires only while Details
+  view holds focus; tree commands (`^x cut`, `^y copy`, `^v paste`,
+  `^n new directory`, `^DEL delete`, `^/ path`) exist only while the
+  tree holds focus. The Command Strip is the contract — a keybinding not
+  shown for the current state does not work in that state (`strip.py`
+  holds the state tables).
 
 ## Interaction model: the pane hierarchy
 
@@ -48,22 +57,28 @@ deliberate, ascending is always esc-shaped.
 
 ```
         ┌──────────────┐
-        │  path input  │   what it controls: which directory/filter
-        └──────┬───────┘   the browser shows (live while typing)
+        │  path input  │   a SUB-VIEW of the tree view; controls which
+        └──────┬───────┘   directory/filter the tree shows (live typing)
    descend: ⏎ / esc (commit / cancel — the input never keeps focus)
-   ascend:  ^/ from anywhere
+   ascend:  ^/ — from the TREE ONLY (a tree-state strip command)
         ┌──────▼───────┐
-        │ file browser │   what it controls: which file (or selection)
+        │  tree view   │   what it controls: which file (or selection)
         └──────┬───────┘   the details view shows — HOME BASE: never
-   descend: ⏎ ⇥ →          gives up focus implicitly, ↑ at top stays put
-     · only when the shown selection is editable (EDITABLE_KINDS)
-     · → doubles as fold-open on folders; ⏎ never toggles folds
+   descend: ⏎ (⇥ hidden     gives up focus implicitly, ↑ at top stays put
+     alias) — every kind is enterable (rename form at minimum);
+     · → expands folders ONLY (the "→ edit" duplicate is retired);
+     · tree commands: ^x cut, ^y copy, ^v paste, ^n new directory,
+       ^DEL delete, ^← (⇧← alias) collapse level — clipboard state
+       forbids ⏎ edit and a second cut
    ascend:  esc · ← when ← has no other job (text cursor at start,
             leftmost method button, pane itself focused)
         ┌──────▼───────┐
         │ details view │   what it controls: the file's name, tags,
         └──────┬───────┘   and art — all edits PENDING until saved
-   descend: nothing to focus below — the "descent" is the write:
+   descend: into a SUB-FORM (wizard/import input/plan form) — which then
+     OWNS focus (todo-4 "Focus" lockdown, DetailsView._focus_scope):
+     only its commands transmit; save or esc to leave. Otherwise the
+     descent is the write:
      · ^s (or the save button) commits; esc with pending edits asks
        (ConfirmSave modal: save / discard / keep editing)
      · ✓ after a field = the write manifest: exactly what ^s will touch
@@ -77,9 +92,12 @@ Consequences that follow from the model (don't break them):
 - Within details: filename field first, ↑↓/⇥ move between fields, inputs
   are immediately editable on focus (cursor at end, nothing selected).
 - Action methods (album art today, more later): compact buttons under
-  the target, left→right, each printing its shortcut ("path  ^o"); ↓
+  the target, left→right, each printing its shortcut ("im^port"); ↓
   from the field above reaches them, ←→ moves within the row, ⏎ or the
   shortcut activates. Their results feed the same pending/✓/save flow.
+- Focus lockdown: a focused sub-form (wizard, import input, plan form)
+  confines ↑↓ and chords to its own controls
+  (`DetailsView._focus_scope` / `_nav_items`) — leave by saving or esc.
 - Bulk editing rides the same chain: the browser's *selection* (shift
   range, or an album-like leaf folder ≡ its writable children) is what
   descends into details; the bulk form writes only ✓-marked fields, to
@@ -120,7 +138,14 @@ Consequences that follow from the model (don't break them):
      worker and fills in late; verify the selection hasn't moved before
      applying the result.
 
-## The action pattern cookbook (2026-07-11)
+5. **Every color lives in `mediasmith/theme.py`** (Nick's palette,
+   todo-4). CSS holds only STATE — which token applies when (idle/focus
+   pairs flip on view focus). Never hardcode a hex or named color
+   anywhere else; add a token to the Theme instead. Chord colors inside
+   button labels are markup, not CSS — `DetailsView._sync_button_chrome`
+   mirrors the pane's focus flip onto them.
+
+## The action pattern cookbook (2026-07-11, revised 2026-08-12)
 
 Contextual actions are standardized; **do not invent a new shape for a
 new feature — copy one of these.** Worked examples live in commits
@@ -129,18 +154,22 @@ new feature — copy one of these.** Worked examples live in commits
 Adding any action, end to end:
 
 1. `Action("name", "word", "k")` appended to `PANE_ACTIONS`
-   (details.py). The label prints `^k` in the accent color, spliced
-   into the word when the char is in it (`actions.action_markup`).
+   (details.py) — words/keys/order follow todo-4's Button Refactor.
+   The label prints `^k` in the keybinding token color, spliced into
+   the word when the char is in it (`actions.action_markup`).
    Keys are placeholders — Nick renames them; note new ones in
-   `notes/qa/todo.md`. Never use `actions.RESERVED_KEYS`; avoid Input's chords
-   (a/c/k/u/v/w/x) when the panel has focusable fields.
+   `notes/qa/todo-2.md` (the active QA ledger). Never use
+   `actions.RESERVED_KEYS`. Input-eaten chords (a/e/u/w/x…) are OK on
+   buttons now: `FieldInput.on_key` forwards a chord to a visible
+   button before Input can eat it.
 2. A visibility rule in `_sync_pane_bar` — the bar is composed ONCE
    with the full palette; context only shows/hides. Expensive
    detection (folderize probe) runs in a worker and fills in late.
-3. An `action_<name>` handler. Chords fire app-wide while the button
-   is on show (`App.on_key` → `DetailsPane.action_for_key`) — that is
-   how read-only kinds (video, folder) get working keys without
-   focus. Guard the handler by kind/state, not by focus.
+3. An `action_<name>` handler. Chords are VIEW-SCOPED (todo-4): they
+   fire only while Details view holds focus (`App.on_key` →
+   `DetailsView.action_for_key`, filtered by `_focus_scope`). Every
+   kind is enterable (⏎ → rename form), so every button is reachable.
+   Still guard the handler by kind/state, not by focus.
 4. Slow work in `@work(thread=True)` + `call_from_thread`; check the
    selection hasn't moved before applying results.
 5. Filesystem products: refuse-overwrite everywhere (no silent
@@ -211,8 +240,15 @@ Test-driven, calibrated by layer — this replaces Nick-as-only-QA:
    action), and video→gif #13 (third wizard div; _nav_items
    generalized). The fuzz harness write-jails its child and keeps pty
    on death; its first real kill (ConfirmSave double-dismiss) is
-   fixed (see QA-TODO). **The todo-*.md queue is built out** — what
-   remains is Nick's QA ledger and what it spawns. ⬅ you are here
+   fixed (see QA-TODO). Session 3 (2026-08-12, Fable — todo-4/5, log
+   in notes/claude/handoff-fable.md): terms-of-art refactor
+   (PathInput/DetailsView/Selected/BulkSelected…), the TreeView
+   container (path input inside the tree pane), the color theme
+   (theme.py — rule 5), ONE state-driven Command Strip (strip.py,
+   responsive wrapping), cut/copy/paste as tree commands, the
+   Button Refactor (todo-4 words/keys/order; reserved-chord
+   substitutions logged in notes/qa/todo-2.md), view-scoped chords,
+   and the sub-form focus lockdown. ⬅ you are here
 4. **Batch operations.** Partially done ahead of schedule: shift-range
    and album-folder bulk editing shipped (2026-07-10); space-marking +
    batch bar still to come as a third gesture over the same selection
@@ -220,9 +256,9 @@ Test-driven, calibrated by layer — this replaces Nick-as-only-QA:
 5. **Responsive/mobile** — narrow-width breakpoints for tmux-from-phone;
    tree-first two-step flow on narrow screens.
 
-Session notes: `notes/qa/todo.md` tracks what awaits Nick's manual QA
-pass, plus small parked UX decisions (save-button/info-row placement,
-strip wording, per-field ✓ revert).
+Session notes: `notes/qa/todo-2.md` is the ACTIVE QA ledger — what
+awaits Nick's manual pass, chord renames, and parked UX decisions.
+(`notes/qa/todo-1.md` is the prior session's, mostly cleared.)
 
 ## Environment facts
 

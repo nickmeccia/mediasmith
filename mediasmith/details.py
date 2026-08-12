@@ -53,71 +53,58 @@ def _image_size(data: bytes | None) -> tuple[int, int] | None:
 
 PANE_ACTIONS = [
     # the one bar at the pane's foot, composed once with the full palette;
-    # selection changes only show/hide buttons (_sync_pane_bar)
+    # selection changes only show/hide buttons (_sync_pane_bar). Words,
+    # keys, and order per todo-4 "Button Refactor"; where Nick's chord was
+    # reserved (see actions.RESERVED_KEYS) the nearest safe letter stands
+    # in — every substitution is logged in notes/qa/todo-2.md. Chords are
+    # view-scoped now: they fire only while Details view holds focus
+    # (App.on_key), with FieldInput forwarding the Input-eaten ones.
     Action("save", "save", "s", button_id="save-btn"),
-    Action("convert_epub", "convert to epub", "p"),
-    Action("convert_mobi", "convert to mobi", "b"),
-    Action("convert_azw3", "convert to azw3", "y"),
-    Action("extract_cover", "extract cover", "t"),
-    # add/replace the epub cover from a path (mirrors audio art-path).
-    # ^f reused from art-fetch (audio) / convert-tiff (image) — neither
-    # ever shares a view with a book; not Input-eaten, so it fires while a
-    # metadata field is focused. Placeholder key (Nick renames).
-    Action("book_cover", "cover", "f"),
-    Action("create_opf", "create opf", "g"),
-    # ^e recovered from RESERVED_KEYS (2026-07-15 audit — see actions.py);
-    # while a tag field is focused the Input eats ^e (end-of-line), so
-    # the chord fires from the tree — the button itself always works
-    Action("split_omnibus", "split omnibus", "e"),
-    # ^d reused from download-posters (video-only — never shares a view
-    # with books or folders)
-    Action("standardize", "standardize", "d"),
-    # sort rides both a folder AND a single epub now, so it can't share
-    # extract-cover's ^t (both show on one epub). ^o is free here —
-    # reused from rotate (image-only) / art-path (audio-only), neither of
-    # which ever shares a view with a book or folder; splices to "s^ort"
+    # -- book (epub) — spec order: split omnibus rides right after save
+    Action("split_omnibus", "split omnibus", "b"),
+    # ^m is reserved (enter alias): ^t stands in — "conver^t to mobi"
+    Action("convert_mobi", "convert to mobi", "t"),
+    Action("convert_azw3", "convert to azw3", "a"),
+    Action("create_opf", "write opf", "o"),
+    # ^c is reserved (interrupt): ^n stands in — "clea^n". The tree's ^n
+    # (new directory) lives in a different state, so no collision.
+    Action("standardize", "clean", "n"),
+    Action("book_cover", "upload cover", "u"),
+    Action("extract_cover", "extract cover", "e"),
+    # a single epub's sort is "folderize" now (spec); the FOLDER context
+    # keeps the old word via its own button below — same handlers
+    Action("sort_book", "folderize", "f"),
+    # -- mobi/azw3
+    Action("convert_epub", "convert to epub", "e"),
+    # -- image — rotate/resize precede the converts (spec order)
+    Action("rotate", "rotate", "r"),
+    # ^z is reserved (suspend): ^e stands in — "r^esize" (the old chord)
+    Action("resize", "resize", "e"),
+    # ^j is reserved (newline alias): ^g stands in — "convert to jp^g"
+    Action("convert_jpg", "convert to jpg", "g"),
+    Action("convert_png", "convert to png", "p"),
+    Action("convert_tiff", "convert to tiff", "t"),
+    Action("convert_webp", "convert to webp", "w"),
+    # -- video: the subtitle suite, then watch/posters/gif (spec order)
+    Action("get_subs", "fetch subtitles", "f"),
+    # ^c reserved: ^l stands in — "c^lean subs"
+    Action("clean_subs", "clean subs", "l"),
+    # ^h is reserved (backspace alias): ^t stands in — "shif^t subs"
+    Action("shift_subs", "shift subs", "t"),
+    Action("watch", "watch", "w"),
+    Action("download_posters", "download posters", "p"),
+    Action("gif", "make gif", "g"),
+    # -- folder probes (todo-4 lists no renames for these): sort keeps
+    # its folder word so a folder never shows two "folderize" buttons
     Action("sort", "sort", "o"),
     Action("folderize", "folderize", "l"),
     Action("strip_multi_artist", "strip multi-artist", "x"),
     # while any plan preview is up, these two own the bar
     Action("plan_apply", "apply", "a"),
     Action("plan_cancel", "cancel"),            # esc cancels too
-    # video: the subtitle suite (keys are placeholders — Nick renames)
-    Action("get_subs", "get subs", "k"),
-    Action("clean_subs", "clean subs", "u"),
-    Action("shift_subs", "shift subs", "v"),
-    Action("watch", "watch", "w"),
-    # ^d recovered from RESERVED_KEYS (2026-07-15 audit — see actions.py)
-    Action("download_posters", "download posters", "d"),
-    # ^g reused from create-opf (epub-only — never shares a video view)
-    Action("gif", "make gif", "g"),
-    # image: convert palette + resize/rotate — the first CONTEXTUAL
-    # REUSES (Nick's pick, 2026-07-15; the ctrl-letter pool ran out).
-    # Each letter's other owner is a book/audio-only button, so the two
-    # can never be on show together; ActionBar.set_visible asserts it.
-    Action("convert_jpg", "convert to jpg", "p"),
-    Action("convert_png", "convert to png", "g"),
-    Action("convert_webp", "convert to webp", "b"),
-    Action("convert_tiff", "convert to tiff", "f"),
-    Action("resize", "resize", "e"),
-    Action("rotate", "rotate", "o"),
-    # new directory: ^e via CONTEXTUAL REUSE (2026-08-08 — the ⌘ chords didn't
-    # survive Nick's terminal). ^e is split-omnibus (book) / resize (image);
-    # none share a view with a folder, and the letter isn't Input-eaten, so
-    # the chord fires even while a folder's rename field is focused.
-    Action("new_directory", "new directory", "e"),
-    # trash moved OFF ^t (it collided with extract-cover) to ctrl+delete,
-    # dispatched by the app (App.on_key), not action_for_key — no single
-    # char can name it. The button prints "^del"; the chord works on ANY
-    # selection, file or folder (2026-08-08 fix — it was folder-only).
-    Action("delete", "delete", key_label="DEL"),
-    # Move (proposal M1): ONE stateful chord — ^n lifts the selection,
-    # ^n places it at the highlighted spot; the label flips to match.
-    # Single-key because the ctrl-letter pool is exhausted (see QA-TODO).
-    Action("move", "move", "n"),
+    # new-directory/delete BUTTONS are gone (tree commands now: ^n, ^DEL);
+    # their action_* handlers below remain — the tree bindings call them.
 ]
-
-MOVE_WORDS = {False: "move", True: "place here"}
 
 EDITABLE_KINDS: frozenset[str] = frozenset(PANELS)
 """Every kind whose details can take focus for editing — which is all of
@@ -263,6 +250,20 @@ class FieldInput(Input):
 
     def on_focus(self) -> None:
         self.cursor_position = len(self.value)
+
+    def on_key(self, event) -> None:
+        # A chord printed on a visible button outranks Input's editing
+        # chords (^a home, ^e end, ^u clear, …): Nick's button letters
+        # include Input-eaten ones (todo-4 Button Refactor), and the
+        # printed button is the contract. Unclaimed chords still edit.
+        if not event.key.startswith("ctrl+"):
+            return
+        pane = self.screen.query_one(DetailsView)
+        action = pane.action_for_key(event.key)
+        if action is not None:
+            event.stop()
+            event.prevent_default()
+            pane.trigger(action)
 
     def action_left_or_release(self) -> None:
         if self.cursor_position == 0:
@@ -755,8 +756,11 @@ class DetailsView(VerticalScroll, can_focus=True):
                 yield Static("", id="art-mark", classes="fmark")
             with Horizontal(id="row-art-buttons"):
                 yield Label("", id="art-buttons-pad", classes="fkey")
+                # "im^port": ^i is reserved (tab alias), ^p stands in —
+                # logged in notes/qa/todo-2.md
                 yield ActionBar(
-                    Action("art_path", "path", "o", button_id="art-btn-path"),
+                    Action("art_path", "import", "p",
+                           button_id="art-btn-path"),
                     Action("art_fetch", "fetch", "f",
                            button_id="art-btn-fetch"),
                     id="art-bar")
@@ -786,8 +790,9 @@ class DetailsView(VerticalScroll, can_focus=True):
                     yield FieldInput(id="gif-width", compact=True,
                                      type="integer", classes="resize-num")
                     yield Label("px wide", classes="wsep")
+                # "^save" per spec (was "apply ^a") — the wizard's write
                 yield ActionBar(
-                    Action("gif_make", "apply", "a",
+                    Action("gif_make", "save", "s",
                            button_id="gif-apply-btn"),
                     id="gif-bar")
             yield image_widget(self.images, id="cover-video")
@@ -816,8 +821,9 @@ class DetailsView(VerticalScroll, can_focus=True):
                                      type="integer", classes="resize-num")
                     yield Checkbox("link", value=True, id="resize-link",
                                    compact=True)
+                # "^save" per spec (was "apply ^a") — the wizard's write
                 yield ActionBar(
-                    Action("resize_apply", "apply", "a",
+                    Action("resize_apply", "save", "s",
                            button_id="resize-apply-btn"),
                     id="resize-bar")
             yield image_widget(self.images, id="cover-image")
@@ -1340,24 +1346,20 @@ class DetailsView(VerticalScroll, can_focus=True):
                 names.add("folderize")
             if self._standardize_ready:         # probe: uncleaned epubs
                 names.add("standardize")
-            if self._sort_ready:                # probe: unwrapped books
-                names.add("sort")
+            if self._sort_ready:                # probe: unwrapped books —
+                # a single epub's button says "folderize" (spec), the
+                # folder's says "sort"; same engine either way
+                names.add("sort_book"
+                          if self.kind == kinds.BOOK and self.paths is None
+                          else "sort")
             if self._multiartist_ready:
                 names.add("strip_multi_artist")
-            if self._plan_root() is not None:   # a folder is on show
-                names |= {"new_directory", "delete"}
             if self._video_target() is not None:
                 names |= {"get_subs", "watch", "download_posters", "gif"}
                 if self._video_srt is not None:
                     names |= {"clean_subs", "shift_subs"}
                 if self._shift_open:            # the write manifest: ^s
                     names.add("save")           # writes the pending shift
-            lifted = self.app.lifted
-            if lifted is None:
-                if self._liftable_paths():
-                    names.add("move")
-            elif self._place_target() is not None:
-                names.add("move")               # label reads "place here"
         try:
             bar = self.query_one("#pane-bar", ActionBar)
         except NoMatches:
@@ -1365,15 +1367,54 @@ class DetailsView(VerticalScroll, can_focus=True):
             # after the pane's children are gone — a late result is
             # meaningless then, not an error (flaked the suite twice)
             return
-        self._relabel_move(self.app.lifted is not None)
         bar.set_visible(names)
 
+    # -- focus lockdown (todo-4 "Focus"): a focused sub-view owns the user.
+    # While an inline wizard / import input / plan form holds focus, only
+    # ITS commands are transmittable — nothing reaches the rest of the
+    # pane until it is saved or cancelled (terms-of-art: sub-form states).
+
+    def _within(self, selector: str) -> bool:
+        focused = self.app.focused
+        if focused is None:
+            return False
+        try:
+            div = self.query_one(selector)
+        except NoMatches:
+            return False
+        return div.display and (focused is div or div in focused.ancestors)
+
+    def _focus_scope(self) -> set[str] | None:
+        """Action names reachable from the focused sub-view — None when
+        no sub-view owns focus (everything visible is reachable)."""
+        if self._within("#row-art-path"):       # Import Album Art
+            return set()                        # ⏎ applies, esc cancels
+        if self._within("#book-cover-div"):     # Import Cover
+            return set()
+        # each wizard's scope: its write, plus its own toggle chord (the
+        # toggle is the sub-form's command — pinned-while-pending included)
+        if self._within("#shift-div"):          # Shift Subtitles
+            return {"save", "shift_subs"}       # ^s writes the shift
+        if self._within("#resize-div"):         # Resize Image
+            return {"resize_apply", "resize"}
+        if self._within("#gif-div"):            # Make GIF
+            return {"gif_make", "gif"}
+        if self._within("#panel-omnibus"):      # Split Omnibus
+            return {"plan_apply", "plan_cancel"}
+        return None
+
     def action_for_key(self, key: str) -> Action | None:
-        """The action a key chord should fire: its button is on show."""
+        """The action a key chord should fire: its button is on show,
+        and the focused sub-view (if any) claims it."""
+        scope = self._focus_scope()
         for bar in self._active_bars():
             action = bar.action_for_key(key)
-            if action is not None:
+            if action is None:
+                continue
+            if scope is None or action.name in scope:
                 return action
+            # else: this bar's match is locked out — a later bar may
+            # still hold the scoped action on the same chord
         return None
 
     def trigger(self, action: Action) -> None:
@@ -1388,9 +1429,28 @@ class DetailsView(VerticalScroll, can_focus=True):
     def _nav_items(self) -> list:
         """Everything ↑↓ walks, top to bottom: the fields, then any open
         wizard's controls, then every visible action button in reading
-        order. Wizard widgets are how focus enters a non-editable
-        kind's pane (video: the shift readout, the gif inputs)."""
-        items: list = self._field_inputs()      # empty for read-only kinds
+        order. A FOCUSED sub-view confines the walk to its own controls
+        (focus lockdown, todo-4): save or cancel to leave."""
+        if self._within("#shift-div"):          # its save is the pane ^s
+            items: list = [self.query_one("#shift-control", ShiftControl)]
+            save = self.query_one("#save-btn", ActionButton)
+            if save.display:
+                items.append(save)
+            return items
+        if self._within("#resize-div"):
+            return [self.query_one("#resize-w", FieldInput),
+                    self.query_one("#resize-h", FieldInput),
+                    self.query_one("#resize-link", Checkbox),
+                    *self.query_one("#resize-bar", ActionBar).buttons()]
+        if self._within("#gif-div"):
+            return [self.query_one("#gif-fps", FieldInput),
+                    self.query_one("#gif-width", FieldInput),
+                    *self.query_one("#gif-bar", ActionBar).buttons()]
+        if self._within("#row-art-path"):       # single-input sub-forms:
+            return [self.query_one("#art-path", ArtPathInput)]
+        if self._within("#book-cover-div"):     # ↑↓ stay put
+            return [self.query_one("#book-cover-path", CoverPathInput)]
+        items = self._field_inputs()            # the pane's normal walk
         if self._shift_open:
             items.append(self.query_one("#shift-control", ShiftControl))
         if self._gif_open:
@@ -1443,7 +1503,7 @@ class DetailsView(VerticalScroll, can_focus=True):
                 row[index + 1].focus()
 
     def action_release(self) -> None:
-        if self._omnibus_editing:           # esc backs out of the split
+        if self.plan_preview_open():        # esc backs out of a plan/split
             self.action_plan_cancel()       # (which returns focus to the tree)
             return
         if not self.dirty:
@@ -2014,6 +2074,11 @@ class DetailsView(VerticalScroll, can_focus=True):
         self.query_one("#plan-tree", Static).update(text)
         self.query_one("#plan-preview").display = True
         self._sync_pane_bar()
+        # the preview owns the pane: chords are view-scoped now, and
+        # opening it hid the fields under any focused one — land focus on
+        # apply so ^a / esc / ←→ work immediately
+        self.app.reveal_details()               # narrow: display, then focus
+        self.query_one("#act-plan_apply", ActionButton).focus()
 
     def _plan_root(self) -> Path | None:
         """The folder a plan action applies to: a folder selection, or
@@ -2025,6 +2090,8 @@ class DetailsView(VerticalScroll, can_focus=True):
         return None
 
     def action_plan_apply(self) -> None:
+        if not self.plan_preview_open():    # a stray ^a must not yank focus
+            return
         if self._folderize_plan is not None:
             plan = self._folderize_plan
             self._folderize_plan = None
@@ -2045,18 +2112,17 @@ class DetailsView(VerticalScroll, can_focus=True):
             self._omnibus_editing = False
             self.notify("splitting…", title="split omnibus")
             self._omnibus_exec_worker(plan)
-            if editing:                     # the form held focus — ascend
-                self.app.action_focus_tree()
         elif self._sort_plan is not None:
             plan = self._sort_plan
             self._sort_plan = None
             self.notify("wrapping…", title="sort")
             self._sort_exec_worker(plan)
+        # the preview (or split form) held focus; the exec hid it — ascend
+        self.app.action_focus_tree()
 
     def action_plan_cancel(self) -> None:
         if not self.plan_preview_open():
             return
-        was_editing = self._omnibus_editing     # the split form held focus
         self._folderize_plan = None
         self._multiartist_plan = None
         self._omnibus_plan = None
@@ -2064,8 +2130,7 @@ class DetailsView(VerticalScroll, can_focus=True):
         self._sort_plan = None
         if self.path is not None:               # restore the normal view
             self.preview(self.path, immediate=True)
-        if was_editing:                         # ascend out of the pane
-            self.app.action_focus_tree()
+        self.app.action_focus_tree()            # ascend out of the pane
 
     # -- folderize --------------------------------------------------------------
 
@@ -2294,6 +2359,10 @@ class DetailsView(VerticalScroll, can_focus=True):
             self._sort_ready = True
             self._sync_pane_bar()
 
+    def action_sort_book(self) -> None:
+        # the single-epub button ("folderize", spec rename) — same engine
+        self.action_sort()
+
     def action_sort(self) -> None:
         if not self._sort_ready:
             return
@@ -2436,22 +2505,17 @@ class DetailsView(VerticalScroll, can_focus=True):
                     title="standardize")
         self.post_message(self.FileCreated(event.target))
 
-    # -- move (proposal M1): lift the selection, browse, place ---------------------
-    # State lives on the App so a lift survives selection changes and
-    # path-bar jumps — cut → ^/ → type destination → ⏎ → place is the
-    # intended long-distance flow. The strip carries the pending state;
-    # esc in the tree cancels (after plan previews, before narrow close).
-
-    def _relabel_move(self, lifted: bool) -> None:
-        button = self.query_one("#act-move", ActionButton)
-        word = MOVE_WORDS[lifted]
-        if button._word != word:
-            button.set_word(word)
+    # -- cut/paste: lift the selection to the clipboard, browse, paste -------------
+    # Tree commands (^x/^v bind on LibraryTree — todo-4); the logic lives
+    # here because the pane mirrors the selection. State lives on the App
+    # so a cut survives selection changes and path-bar jumps — cut → ^/ →
+    # type destination → ⏎ → paste is the intended long-distance flow.
+    # The strip carries the clipboard state; esc in the tree cancels.
 
     def _liftable_paths(self) -> list[Path]:
-        """What ^n would pick up: the highlighted folder (even when it
+        """What ^x would pick up: the highlighted folder (even when it
         opens as an album-like bulk form), the shift-selection, or the
-        single highlighted path (any kind — a lift is a filesystem op).
+        single highlighted path (any kind — a cut is a filesystem op).
         No stats here: ``path`` beside ``paths`` is always a folder."""
         if self.paths:
             if self.path is not None:       # folder-origin bulk: the folder
@@ -2462,7 +2526,7 @@ class DetailsView(VerticalScroll, can_focus=True):
         return []
 
     def _place_target(self) -> Path | None:
-        """Where ^n would drop: the highlighted folder (album-like bulk
+        """Where ^v would drop: the highlighted folder (album-like bulk
         views count — their ``kind`` reads as the children's), or the
         highlighted file's folder."""
         if self.path is not None:
@@ -2473,32 +2537,49 @@ class DetailsView(VerticalScroll, can_focus=True):
             return self.paths[0].parent
         return None
 
-    def action_move(self) -> None:
+    def action_cut(self) -> None:
+        if self.app.lifted is not None:         # the clipboard holds ONE
+            return
+        paths = self._liftable_paths()
+        if paths:
+            self.app.begin_lift(paths)
+            self._sync_pane_bar()
+
+    def action_copy(self) -> None:
+        """Copy follows cut's exact pattern; paste duplicates instead of
+        moving (todo-4 "New Feature: Copy")."""
+        if self.app.lifted is not None:
+            return
+        paths = self._liftable_paths()
+        if paths:
+            self.app.begin_lift(paths, copy=True)
+            self._sync_pane_bar()
+
+    def action_paste(self) -> None:
         lifted = self.app.lifted
         if lifted is None:
-            paths = self._liftable_paths()
-            if paths:
-                self.app.begin_lift(paths)
-                self._sync_pane_bar()
             return
+        copy = self.app.lift_copy
         target = self._place_target()
         if target is None:
             return
         movable = [p for p in lifted if p.parent != target]
         if not movable:
             self.notify("already here — pick another folder (esc cancels)",
-                        title="move")
+                        title="paste")
             return
         for source in movable:                  # a folder can't enter itself
             if source == target or source in target.parents:
                 self.notify(f"can't move {source.name} into itself",
-                            title="move", severity="warning")
+                            title="paste", severity="warning")
                 return
-        self.notify(f"moving {len(movable)}…", title="move")
-        self._move_worker(movable, target)
+        self.notify(f"{'copying' if copy else 'moving'} {len(movable)}…",
+                    title="paste")
+        self._move_worker(movable, target, copy)
 
     @work(thread=True, exclusive=True, group="move")
-    def _move_worker(self, sources: list[Path], target: Path) -> None:
+    def _move_worker(self, sources: list[Path], target: Path,
+                     copy: bool) -> None:
         # cross-volume (NAS↔local) is copy+delete under the hood — never
         # block the UI on it
         import shutil
@@ -2510,25 +2591,34 @@ class DetailsView(VerticalScroll, can_focus=True):
                 errors.append((source, f"{dest.name} already exists"))
                 continue
             try:
-                shutil.move(str(source), str(dest))
+                if copy and source.is_dir():
+                    shutil.copytree(str(source), str(dest), symlinks=True)
+                elif copy:
+                    shutil.copy2(str(source), str(dest))
+                else:
+                    shutil.move(str(source), str(dest))
                 moved.append(source)
             except OSError as error:
                 errors.append((source, str(error)))
-        self.app.call_from_thread(self._move_done, moved, errors, target)
+        self.app.call_from_thread(self._move_done, moved, errors, target,
+                                  copy)
 
     def _move_done(self, moved: list[Path],
-                   errors: list[tuple[Path, str]], target: Path) -> None:
-        parts = [f"{len(moved)} moved to {target.name or target}/"]
+                   errors: list[tuple[Path, str]], target: Path,
+                   copy: bool) -> None:
+        parts = [f"{len(moved)} {'copied' if copy else 'moved'} "
+                 f"to {target.name or target}/"]
         if errors:
             path, reason = errors[0]
             parts.append(f"{len(errors)} failed — {path.name}: {reason}")
-        self.notify(" · ".join(parts), title="move", timeout=8,
+        self.notify(" · ".join(parts), title="paste", timeout=8,
                     severity="warning" if errors else "information")
         self.app.end_lift()
         fs.clear_cache()
         self.post_message(self.FolderChanged(target))
-        for parent in {p.parent for p in moved}:
-            self.post_message(self.FolderChanged(parent))
+        if not copy:                            # a copy leaves sources alone
+            for parent in {p.parent for p in moved}:
+                self.post_message(self.FolderChanged(parent))
         self._sync_pane_bar()
 
     # -- folder CRUD: new directory / trash (rename rides the editable form) ----------

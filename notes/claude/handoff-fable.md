@@ -50,58 +50,35 @@ commit message names its item. Update this file as you go.
 - [x] 2. Terms-of-art refactor (rename map above) — sed across
       mediasmith/ + tests/; `action_markup` also fixed to never splice a
       multi-char key_label ("^DEL delete", not "^delete").
-- [ ] 3. **TreeView container** (todo-4 "Move Path Input Inside Tree View").
-      New `TreeView` (Vertical container) in browser.py owning
-      PathInput + LibraryTree; mockup `notes/mockups/path-input.txt`:
-      the input is a bordered box INSIDE the tree's border. Move the
-      `#left`/border/focus CSS onto TreeView (`:focus-within` lights the
-      container); app.py composes `TreeView` and stops talking to two
-      siblings. Keep narrow-breakpoint behavior (-path-open etc.).
-- [ ] 4. **Color theme stylesheet** (todo-4 last item). New
-      `mediasmith/theme.py` holding Nick's `Theme` verbatim (name→hex map;
-      resolve "$ref" values in Python before constructing Theme —
-      Textual variables can't reference each other reliably).
-      `register_theme` + `self.theme = "mediasmith"` in App.
-      Replace ALL hardcoded colors ($accent, orange, #ffe6c2, etc.)
-      with his tokens; implement the idle/focus dimming his variable
-      pairs describe (border/text/cursor/scrollbar/label/button swap on
-      view focus; details uses :focus-within). Chord colors inside
-      button labels are markup, not CSS — relabel on pane focus change
-      (watch screen.focused; app.py `_sync_strips` shows the pattern).
-      Hidden-file dimming (`node-hidden-fg-*`) is new: stylize dotfile
-      labels in `LibraryTree.render_label`. Never hardcode colors again.
-- [ ] 5. **Command strip & keybinding refactor** (todo-4). ONE strip
-      (delete `#ctxrow`), state-driven: Tree / PathInput / Details /
-      Clipboard states exactly per todo-4 spec (+ `^/ path` in clipboard
-      state per decision 4; `^v paste`+`esc cancel` in primary color).
-      Key changes: ^e new → **^n new directory**; move (^n) becomes
-      **^x cut** (tree-only command, button removed from Details);
-      **^v paste**; ^del → **^DEL delete**; **^← collapse level**
-      (⇧← hidden alias); type-jump stays but leaves the strip;
-      "→ edit" duplicate removed (⏎ only); ^/ only from Tree view.
-      Enforce "not shown → not available" per state.
-- [ ] 6. **Copy** (todo-4). ^c is reserved — pick a safe chord and log it
-      in notes/qa/todo-2.md. Copy follows cut's pattern (clipboard holds
-      one selection; paste duplicates instead of moving; shutil.copy2/
-      copytree in a worker, refuse-overwrite per file).
-- [ ] 7. **Responsive strip styles** (todo-4): one strip, wraps at narrow
-      widths (FlowLayout in actions.py is the wrapping row primitive),
-      keybindings nowrap, logo right-aligned (space-between), logo yields
-      before collision (LOGO_MIN_WIDTH logic exists).
-- [ ] 8. **Button refactor** (todo-4): per-kind renames/order per spec +
-      safe substitutes for the six reserved chords (log in qa/todo-2.md).
-      Remove move/new-folder/trash buttons from Details view. Nested
-      (indented) entries are conditional visibility. "(when …)" =
-      existing show/hide rules. Chord dispatch becomes view-scoped
-      (decision 5) — remove the fire-from-tree path in App.on_key.
-- [ ] 9. **Focus lockdown** (todo-4): while a sub-form/wizard or plan
-      preview is focused, keys must not reach Details view or the tree
-      (e.g. pending subtitle shift must not shadow a rename ^s).
-      Sub-views per terms-of-art: Import Album Art, Import Cover, Shift
-      Subtitles, Resize Image, Make GIF, Split Omnibus; plan previews.
-- [ ] 10. **CLAUDE.md update**: pane-hierarchy diagram gains PathInput
-      inside TreeView; terms-of-art names; new strip model; note
-      notes/qa/todo-2.md as the active QA ledger.
+- [x] 3. **TreeView container** — commit e220130 (with item 2).
+- [x] 4. **Color theme stylesheet** — commit db8e2db. theme.py is the
+      palette; CSS is state; hidden-file dimming + chord-markup relabel
+      (`DetailsView._sync_button_chrome`) included.
+- [x] 5. **Command strip & keybinding refactor** — strip.py (states +
+      wrapping renderer); tree commands ^x/^v/^n/^DEL/^← (⇧← alias);
+      "→ edit" retired; ^/ tree-gated; clipboard state locks out ⏎ edit
+      and second cut.
+- [x] 6. **Copy** — ^y (cop^y; ^c reserved, logged). Paste duplicates
+      (copy2/copytree), clears the clipboard either way.
+- [x] 7. **Responsive strip** — CommandStrip wraps greedily, trailing ·
+      on the line end, logo right-aligned on the last line.
+- [x] 8. **Button refactor** — PANE_ACTIONS reworked to todo-4 words/
+      keys/order; six reserved-chord substitutions logged in
+      notes/qa/todo-2.md; move/new-directory/delete buttons removed;
+      chords view-scoped (App.on_key); FieldInput forwards Input-eaten
+      chords to visible buttons; plan previews take focus (apply btn).
+- [x] 9. **Focus lockdown** — `DetailsView._focus_scope()` +
+      scoped `_nav_items`: a focused sub-form (art path, cover path,
+      shift, resize, gif, omnibus form) confines chords and ↑↓ to its
+      own controls; each wizard's scope includes its toggle + write.
+- [x] 10. **CLAUDE.md updated** (diagram, hierarchy, rules 5, cookbook,
+      roadmap session-3 entry, QA-ledger pointer).
+
+## Remaining for whoever picks this up
+
+- Fuzz gate at the end (snapshot copy!) — see CLAUDE.md for the rsync
+  command; new chords are already in tests/fuzz.py KEYS.
+- Nick's QA pass drives everything else: notes/qa/todo-2.md.
 
 ## Working rules
 

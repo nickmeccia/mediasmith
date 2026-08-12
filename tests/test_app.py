@@ -3,8 +3,9 @@
 from pathlib import Path
 
 from mediasmith import adapters
-from mediasmith.app import LOGO, LOGO_MIN_WIDTH, MediasmithApp
+from mediasmith.app import LOGO, MediasmithApp
 from mediasmith.browser import LibraryTree, PathInput, TreeView, parse_view
+from mediasmith.strip import CommandStrip
 from mediasmith.details import ConfirmSave, DetailsView, EditForm
 
 
@@ -324,9 +325,15 @@ async def test_ctrl_slash_focuses_pathbar(media_tree):
         bar = app.query_one(PathInput)
         await pilot.press("ctrl+slash")            # kitty-protocol name
         assert app.focused is bar
-        app.query_one(DetailsView).focus()
+        await pilot.press("escape")                # back to the tree
         await pilot.press("ctrl+underscore")       # legacy-terminal name
         assert app.focused is bar
+        # ^/ is a TREE command (todo-4): inert while details holds focus
+        await pilot.press("escape")
+        app.query_one(DetailsView).focus()
+        await pilot.pause()
+        await pilot.press("ctrl+slash")
+        assert app.focused is not bar
 
 
 async def test_opt_up_down_jump_to_sibling_ends(media_tree):
@@ -553,12 +560,13 @@ async def test_escape_deletes_partial_segment(media_tree):
 # -- details editing ----------------------------------------------------------
 
 
-async def test_right_arrow_enters_details(media_tree):
+async def test_right_arrow_does_not_edit_files(media_tree):
+    # Nick retired the "→ edit" duplicate (todo-4): ⏎ is the one edit key
     app = MediasmithApp(media_tree)
     async with app.run_test(size=(120, 40)) as pilot:
         await _goto_first_song(app, pilot)
-        await pilot.press("right")                 # duplicates enter on a file
-        assert app.focused.id == "fname"
+        await pilot.press("right")                 # → on a file: nothing
+        assert app.focused is app.query_one(LibraryTree)
 
 
 async def test_right_arrow_still_expands_folders(media_tree):
@@ -731,8 +739,8 @@ async def test_book_offers_conversions_minus_own_format(media_tree):
         bar = app.query_one("#pane-bar", ActionBar)
         names = [b.spec.name for b in bar.buttons()]
         assert names == ["save", "convert_mobi", "convert_azw3",
-                         "extract_cover", "book_cover", "create_opf",
-                         "standardize", "sort", "move"]
+                         "create_opf", "standardize", "book_cover",
+                         "extract_cover", "sort_book"]
 
 
 async def test_plain_book_hides_extract_cover(media_tree):
@@ -757,7 +765,7 @@ async def test_book_cover_button_opens_prefilled_path(media_tree):
     async with app.run_test(size=(120, 40)) as pilot:
         await _goto_dune(app, pilot)
         assert "book_cover" in _bar_names(app)     # offered on every epub
-        await pilot.press("ctrl+f")                # ^f cover
+        await pilot.press("enter", "ctrl+u")       # ^upload cover
         await pilot.pause(0.2)
         field = app.query_one("#book-cover-path")
         assert app.focused is field
@@ -775,7 +783,7 @@ async def test_book_cover_prefill_falls_back_to_cover_image(media_tree):
         await pilot.press("down", "down")          # past cover.jpg → Dune.epub
         await settle(pilot)
         assert app.query_one(DetailsView).kind == "book"
-        await pilot.press("ctrl+f")
+        await pilot.press("enter", "ctrl+u")
         await pilot.pause(0.2)
         assert app.query_one("#book-cover-path").value == \
             str(media_tree / "Books" / "cover.jpg")
@@ -785,7 +793,7 @@ async def test_book_cover_prefill_falls_back_to_directory(media_tree):
     app = MediasmithApp(media_tree)
     async with app.run_test(size=(120, 40)) as pilot:
         await _goto_dune(app, pilot)               # Books/ has only Dune.epub
-        await pilot.press("ctrl+f")
+        await pilot.press("enter", "ctrl+u")
         await pilot.pause(0.2)
         assert app.query_one("#book-cover-path").value == \
             str(media_tree / "Books") + "/"
@@ -802,7 +810,7 @@ async def test_book_cover_apply_writes_into_epub(media_tree):
     app = MediasmithApp(media_tree)
     async with app.run_test(size=(120, 40)) as pilot:
         await _goto_dune(app, pilot)
-        await pilot.press("ctrl+f")
+        await pilot.press("enter", "ctrl+u")
         await pilot.pause(0.2)
         await pilot.press("enter")                 # ⏎ apply
         await pilot.pause(0.8)
@@ -816,7 +824,7 @@ async def test_book_cover_escape_cancels(media_tree):
     app = MediasmithApp(media_tree)
     async with app.run_test(size=(120, 40)) as pilot:
         await _goto_dune(app, pilot)
-        await pilot.press("ctrl+f")
+        await pilot.press("enter", "ctrl+u")
         await pilot.pause(0.2)
         await pilot.press("escape")
         await pilot.pause(0.2)
@@ -827,7 +835,7 @@ async def test_extract_cover_creates_sibling(media_tree):
     app = MediasmithApp(media_tree)
     async with app.run_test(size=(120, 40)) as pilot:
         await _goto_dune(app, pilot)
-        await pilot.press("ctrl+t")                  # ex^tract cover
+        await pilot.press("enter", "ctrl+e")         # ^extract cover
         await pilot.pause(0.5)
         target = media_tree / "Books" / "cover.png"  # factory cover is png
         assert target.exists()
@@ -839,7 +847,7 @@ async def test_create_opf_creates_sidecar(media_tree):
     app = MediasmithApp(media_tree)
     async with app.run_test(size=(120, 40)) as pilot:
         await _goto_dune(app, pilot)
-        await pilot.press("ctrl+g")                  # create opf
+        await pilot.press("enter", "ctrl+o")         # write ^opf
         await pilot.pause(0.5)
         target = media_tree / "Books" / "metadata.opf"
         assert target.exists()
@@ -871,7 +879,7 @@ async def test_split_omnibus_opens_editable_form_focused(media_tree):
     app = MediasmithApp(media_tree)
     async with app.run_test(size=(120, 40)) as pilot:
         await _goto_omni(app, pilot, media_tree)
-        await pilot.press("ctrl+e")              # split omnibus
+        await pilot.press("enter", "ctrl+b")     # split omni^bus
         await pilot.pause(0.6)
         details = app.query_one(DetailsView)
         assert details._omnibus_editing
@@ -887,7 +895,7 @@ async def test_split_omnibus_apply_defaults(media_tree):
     app = MediasmithApp(media_tree)
     async with app.run_test(size=(120, 40)) as pilot:
         await _goto_omni(app, pilot, media_tree)
-        await pilot.press("ctrl+e")
+        await pilot.press("enter", "ctrl+b")
         await pilot.pause(0.6)
         await pilot.press("ctrl+a")              # ^apply, from within a field
         await pilot.pause(0.8)
@@ -903,7 +911,7 @@ async def test_split_omnibus_edits_feed_output(media_tree):
     app = MediasmithApp(media_tree)
     async with app.run_test(size=(120, 40)) as pilot:
         await _goto_omni(app, pilot, media_tree)
-        await pilot.press("ctrl+e")
+        await pilot.press("enter", "ctrl+b")
         await pilot.pause(0.6)
         # correct the mangled title and the cruft-laden series name
         app.query_one("#omni-series").value = "Dune Chronicles"
@@ -921,7 +929,7 @@ async def test_split_omnibus_escape_cancels(media_tree):
     app = MediasmithApp(media_tree)
     async with app.run_test(size=(120, 40)) as pilot:
         await _goto_omni(app, pilot, media_tree)
-        await pilot.press("ctrl+e")
+        await pilot.press("enter", "ctrl+b")
         await pilot.pause(0.6)
         details = app.query_one(DetailsView)
         assert details.plan_preview_open()
@@ -940,7 +948,7 @@ async def test_audio_offers_save_only(media_tree):
     async with app.run_test(size=(120, 40)) as pilot:
         await _goto_first_song(app, pilot)
         bar = app.query_one("#pane-bar", ActionBar)
-        assert [b.spec.name for b in bar.buttons()] == ["save", "move"]
+        assert [b.spec.name for b in bar.buttons()] == ["save"]
 
 
 async def test_convert_creates_sibling_and_tree_follows(media_tree, monkeypatch):
@@ -953,7 +961,7 @@ async def test_convert_creates_sibling_and_tree_follows(media_tree, monkeypatch)
     app = MediasmithApp(media_tree)
     async with app.run_test(size=(120, 40)) as pilot:
         await _goto_dune(app, pilot)
-        await pilot.press("ctrl+b")                  # convert to mo^bi
+        await pilot.press("enter", "ctrl+t")         # conver^t to mobi
         await pilot.pause(0.5)
         target = media_tree / "Books" / "Dune.mobi"
         assert target.exists()
@@ -973,7 +981,7 @@ async def test_convert_never_overwrites(media_tree, monkeypatch):
     app = MediasmithApp(media_tree)
     async with app.run_test(size=(120, 40)) as pilot:
         await _goto_dune(app, pilot)
-        await pilot.press("ctrl+b")
+        await pilot.press("enter", "ctrl+t")
         await pilot.pause(0.5)
         assert existing.read_bytes() == b"precious"
 
@@ -993,10 +1001,10 @@ async def test_convert_overwrites_on_second_press(media_tree, monkeypatch):
     app = MediasmithApp(media_tree)
     async with app.run_test(size=(120, 40)) as pilot:
         await _goto_dune(app, pilot)
-        await pilot.press("ctrl+b")                  # refuses, arms
+        await pilot.press("enter", "ctrl+t")         # refuses, arms
         await pilot.pause(0.3)
         assert calls == [] and existing.read_bytes() == b"old"
-        await pilot.press("ctrl+b")                  # same key again: overwrite
+        await pilot.press("ctrl+t")                  # same key again: overwrite
         await pilot.pause(0.5)
         assert calls and existing.read_bytes() == b"new"
 
@@ -1010,13 +1018,14 @@ async def test_convert_arm_resets_when_selection_moves(media_tree, monkeypatch):
     app = MediasmithApp(media_tree)
     async with app.run_test(size=(120, 40)) as pilot:
         await _goto_dune(app, pilot)
-        await pilot.press("ctrl+b")                  # arms
+        await pilot.press("enter", "ctrl+t")         # arms
         await pilot.pause(0.3)
+        await pilot.press("escape")                  # back to the tree
         await pilot.press("up")                      # browse away disarms
         await settle(pilot)
         await pilot.press("down")                    # back to Dune.epub
         await settle(pilot)
-        await pilot.press("ctrl+b")                  # first press again: refuses
+        await pilot.press("enter", "ctrl+t")         # first press again: refuses
         await pilot.pause(0.4)
         assert calls == []                           # not overwritten
 
@@ -1067,7 +1076,7 @@ async def test_folderize_preview_apply_flow(media_tree):
     app = MediasmithApp(media_tree)
     async with app.run_test(size=(120, 40)) as pilot:
         await _goto_folder(app, pilot, "Inbox")
-        await pilot.press("ctrl+l")              # fo^lderize → plan preview
+        await pilot.press("enter", "ctrl+l")     # fo^lderize → plan preview
         await pilot.pause(0.6)
         details = app.query_one(DetailsView)
         assert details.plan_preview_open()
@@ -1089,7 +1098,7 @@ async def test_folderize_escape_cancels_preview(media_tree):
     app = MediasmithApp(media_tree)
     async with app.run_test(size=(120, 40)) as pilot:
         await _goto_folder(app, pilot, "Inbox")
-        await pilot.press("ctrl+l")
+        await pilot.press("enter", "ctrl+l")
         await pilot.pause(0.6)
         details = app.query_one(DetailsView)
         assert details.plan_preview_open()
@@ -1112,19 +1121,31 @@ async def test_folderize_offered_on_album_bulk_view(media_tree):
         assert "save" in names and "folderize" in names
 
 
-async def test_contextual_strips_follow_focus(media_tree):
+def _strip_text(app) -> str:
+    return app.query_one(CommandStrip).render().plain
+
+
+async def test_command_strip_follows_state(media_tree):
+    # ONE strip; its contents are the state contract (todo-4)
     app = MediasmithApp(media_tree)
-    async with app.run_test(size=(120, 40)) as pilot:
+    async with app.run_test(size=(160, 40)) as pilot:
         await settle(pilot)
-        left = app.query_one("#strip-left")
-        right = app.query_one("#strip-right")
-        assert left.visible and not right.visible    # tree focused at launch
-        await pilot.press("ctrl+slash")              # path bar
-        assert left.visible and not right.visible
+        text = _strip_text(app)                      # tree focused at launch
+        assert "cut" in text and "new directory" in text and "edit" in text
+        assert "complete" not in text and "close" not in text
+        await pilot.press("ctrl+slash")              # path input focused
+        await pilot.pause()
+        text = _strip_text(app)
+        assert "complete" in text and "go" in text and "cancel" in text
+        assert "cut" not in text and "refresh" not in text
         await pilot.press("escape")
         await _goto_first_song(app, pilot)
-        await pilot.press("enter")                   # details
-        assert right.visible and not left.visible
+        await pilot.press("enter")                   # details focused
+        await pilot.pause()
+        text = _strip_text(app)
+        assert "navigate" in text and "close" in text
+        assert "save" not in text                    # the button carries ^s
+        assert "refresh" not in text
 
 
 async def test_left_mid_text_moves_cursor_not_focus(media_tree):
@@ -1247,10 +1268,10 @@ async def test_art_buttons_reachable_by_arrows(media_tree):
         await pilot.press("enter")
         for _ in range(30):                          # ↓ walks clean through:
             await pilot.press("down")                # fields → art → buttons
-        assert app.focused.id == "act-move"          # …and clamps at the end
+        assert app.focused.id == "save-btn"          # …and clamps at the end
         await pilot.press("down")                    # bottom: clamp
-        assert app.focused.id == "act-move"
-        await pilot.press("up", "up", "up")          # ↑ = left through buttons
+        assert app.focused.id == "save-btn"
+        await pilot.press("up", "up")                # ↑ = left through buttons
         assert app.focused.id == "art-btn-path"
         await pilot.press("right")
         assert app.focused.id == "art-btn-fetch"
@@ -1264,16 +1285,16 @@ async def test_art_buttons_reachable_by_arrows(media_tree):
         assert app.focused is app.query_one(LibraryTree)
 
 
-async def test_action_key_fires_from_the_tree(media_tree):
-    # the chord printed on a visible button works app-wide: no need to
-    # descend into the details pane first
+async def test_action_key_inert_from_the_tree(media_tree):
+    # chords are VIEW-SCOPED (todo-4): a Details-view button's chord does
+    # nothing while the tree owns focus — the strip is the contract
     app = MediasmithApp(media_tree)
     async with app.run_test(size=(120, 40)) as pilot:
         await _goto_first_song(app, pilot)
         assert app.focused is app.query_one(LibraryTree)
-        await pilot.press("ctrl+o")                  # art path, from the tree
-        assert app.focused.id == "art-path"
-        assert app.query_one("#row-art-path").display
+        await pilot.press("ctrl+p")                  # im^port — from the tree
+        assert app.focused is app.query_one(LibraryTree)   # inert
+        assert not app.query_one("#row-art-path").display
 
 
 async def test_action_key_inert_when_bar_hidden(media_tree):
@@ -1281,7 +1302,7 @@ async def test_action_key_inert_when_bar_hidden(media_tree):
     async with app.run_test(size=(120, 40)) as pilot:
         await settle(pilot)                          # cursor on a folder
         assert app.query_one(DetailsView).kind == "folder"
-        await pilot.press("ctrl+o")                  # no audio bar on show
+        await pilot.press("ctrl+p")                  # no audio bar on show
         assert app.focused is app.query_one(LibraryTree)
         assert not app.query_one("#row-art-path").display
 
@@ -1290,7 +1311,7 @@ async def test_art_path_method(media_tree):
     app = MediasmithApp(media_tree)
     async with app.run_test(size=(120, 40)) as pilot:
         await _goto_first_song(app, pilot)
-        await pilot.press("enter", "ctrl+o")         # path method, anywhere
+        await pilot.press("enter", "ctrl+p")         # im^port method
         field = app.focused
         assert field.id == "art-path"
         assert app.query_one("#row-art-path").display
@@ -1311,7 +1332,7 @@ async def test_art_path_rejects_non_image(media_tree):
     app = MediasmithApp(media_tree)
     async with app.run_test(size=(120, 40)) as pilot:
         await _goto_first_song(app, pilot)
-        await pilot.press("enter", "ctrl+o")
+        await pilot.press("enter", "ctrl+p")
         app.focused.value = str(media_tree / "notes.txt")
         await pilot.press("enter")
         details = app.query_one(DetailsView)
@@ -1323,7 +1344,7 @@ async def test_art_path_esc_cancels_to_buttons(media_tree):
     app = MediasmithApp(media_tree)
     async with app.run_test(size=(120, 40)) as pilot:
         await _goto_first_song(app, pilot)
-        await pilot.press("enter", "ctrl+o", "escape")
+        await pilot.press("enter", "ctrl+p", "escape")
         assert app.focused.id == "art-btn-path"
         assert not app.query_one("#row-art-path").display
         assert not app.query_one(DetailsView).dirty
@@ -1657,8 +1678,12 @@ async def test_narrow_path_bar_summons_over_view(media_tree):
         await settle(pilot)
         await pilot.press("down", "n")               # notes.txt
         await settle(pilot)
-        await pilot.press("enter")                   # viewing details
-        await pilot.press("ctrl+slash")              # summon the path bar
+        await pilot.press("enter")                   # editing details
+        await pilot.press("ctrl+slash")              # ^/ is tree-only now
+        await pilot.pause()
+        assert app.focused.id == "fname"             # no-op from details
+        await pilot.press("escape")                  # ascend to the tree
+        await pilot.press("ctrl+slash")              # now it summons
         await pilot.pause()
         bar = app.query_one(PathInput)
         assert app.focused is bar
@@ -1698,7 +1723,7 @@ async def test_artist_folder_does_not_bulk(media_tree):
         assert app.query_one("#panel-folder").display
 
 
-# -- move (M1: ^n lifts, ^n places, esc cancels) ---------------------------------
+# -- cut/paste (^x cuts to the clipboard, ^v pastes, esc cancels) -----------------
 
 
 async def _goto_notes(app, pilot):
@@ -1708,24 +1733,22 @@ async def _goto_notes(app, pilot):
     assert app.query_one(DetailsView).path == app.start_dir / "notes.txt"
 
 
-async def test_move_lift_place_flow(media_tree):
+async def test_cut_paste_flow(media_tree):
     app = MediasmithApp(media_tree)
-    async with app.run_test(size=(120, 40)) as pilot:
+    async with app.run_test(size=(160, 40)) as pilot:
         await _goto_notes(app, pilot)
-        await pilot.press("ctrl+n")              # lift
+        await pilot.press("ctrl+x")              # cut
         await pilot.pause()
         assert app.lifted == [media_tree / "notes.txt"]
-        strip = str(app.query_one("#strip-left").render())
-        assert "moving 1 item" in strip
+        assert "paste" in _strip_text(app)       # clipboard state strip
         await pilot.press("alt+up")              # Books (first sibling)
         await settle(pilot)
-        await pilot.press("ctrl+n")              # place into Books
+        await pilot.press("ctrl+v")              # paste into Books
         await pilot.pause(0.8)
         assert (media_tree / "Books" / "notes.txt").exists()
         assert not (media_tree / "notes.txt").exists()
         assert app.lifted is None
-        strip = str(app.query_one("#strip-left").render())
-        assert "moving" not in strip             # strip restored
+        assert "paste" not in _strip_text(app)   # strip restored
 
 
 async def test_move_survives_pathbar_jump(media_tree):
@@ -1733,7 +1756,7 @@ async def test_move_survives_pathbar_jump(media_tree):
     app = MediasmithApp(media_tree)
     async with app.run_test(size=(120, 40)) as pilot:
         await _goto_notes(app, pilot)
-        await pilot.press("ctrl+n")
+        await pilot.press("ctrl+x")
         await pilot.pause()
         await pilot.press("ctrl+slash")
         bar = app.query_one(PathInput)
@@ -1741,8 +1764,8 @@ async def test_move_survives_pathbar_jump(media_tree):
         await settle(pilot)
         await pilot.press("enter")
         await settle(pilot)
-        assert app.lifted is not None            # the jump kept the lift
-        await pilot.press("ctrl+n")              # place into Pics
+        assert app.lifted is not None            # the jump kept the cut
+        await pilot.press("ctrl+v")              # paste into Pics
         await pilot.pause(0.8)
         assert (media_tree / "Pics" / "notes.txt").exists()
         assert app.lifted is None
@@ -1753,11 +1776,11 @@ async def test_move_refuses_overwrite(media_tree):
     app = MediasmithApp(media_tree)
     async with app.run_test(size=(120, 40)) as pilot:
         await _goto_notes(app, pilot)
-        await pilot.press("ctrl+n")
+        await pilot.press("ctrl+x")
         await pilot.pause()
         await pilot.press("alt+up")              # Books
         await settle(pilot)
-        await pilot.press("ctrl+n")
+        await pilot.press("ctrl+v")
         await pilot.pause(0.8)
         assert (media_tree / "notes.txt").exists()               # unmoved
         assert (media_tree / "Books" / "notes.txt").read_text() == "precious"
@@ -1770,41 +1793,40 @@ async def test_move_into_own_subtree_refused(media_tree):
         await pilot.press("down")
         await pilot.press("m", "o")              # Movies
         await settle(pilot)
-        await pilot.press("ctrl+n")              # lift the folder
+        await pilot.press("ctrl+x")              # cut the folder
         await pilot.pause()
         await pilot.press("right")               # expand it
         await settle(pilot)
         await pilot.press("down")                # Alien (1979)
         await settle(pilot)
-        await pilot.press("ctrl+n")              # into its own child: refused
+        await pilot.press("ctrl+v")              # into its own child: refused
         await pilot.pause(0.5)
         assert (media_tree / "Movies" / "Alien (1979)").exists()
-        assert app.lifted is not None            # lift retained
+        assert app.lifted is not None            # cut retained
 
 
 async def test_move_same_folder_is_noop(media_tree):
     app = MediasmithApp(media_tree)
     async with app.run_test(size=(120, 40)) as pilot:
         await _goto_notes(app, pilot)
-        await pilot.press("ctrl+n", "ctrl+n")    # lift, place in place
+        await pilot.press("ctrl+x", "ctrl+v")    # cut, paste in place
         await pilot.pause(0.5)
         assert (media_tree / "notes.txt").exists()
         assert app.lifted is not None            # kept for a real target
 
 
-async def test_move_esc_cancels(media_tree):
+async def test_cut_esc_cancels(media_tree):
     app = MediasmithApp(media_tree)
-    async with app.run_test(size=(120, 40)) as pilot:
+    async with app.run_test(size=(160, 40)) as pilot:
         await _goto_notes(app, pilot)
-        await pilot.press("ctrl+n")
+        await pilot.press("ctrl+x")
         await pilot.pause()
         assert app.lifted is not None
         await pilot.press("escape")
         await pilot.pause()
         assert app.lifted is None
         assert (media_tree / "notes.txt").exists()
-        strip = str(app.query_one("#strip-left").render())
-        assert "moving" not in strip
+        assert "paste" not in _strip_text(app)
 
 
 async def test_move_bulk_selection(media_tree):
@@ -1813,32 +1835,72 @@ async def test_move_bulk_selection(media_tree):
         await _goto_first_song(app, pilot)
         await pilot.press("shift+down")          # both songs
         await _bulk_settle(pilot)
-        await pilot.press("ctrl+n")              # lift the selection
+        await pilot.press("ctrl+x")              # cut the selection
         await pilot.pause()
         assert app.lifted is not None and len(app.lifted) == 2
         await pilot.press("left")                # up to Music
         await settle(pilot)
         await pilot.press("alt+up")              # Books
         await settle(pilot)
-        await pilot.press("ctrl+n")
+        await pilot.press("ctrl+v")
         await pilot.pause(0.8)
         assert (media_tree / "Books" / "01 Song One.mp3").exists()
         assert (media_tree / "Books" / "02 Song Two.mp3").exists()
 
 
-async def test_move_button_label_flips(media_tree):
-    from mediasmith.actions import ActionButton
+async def test_copy_paste_duplicates_file(media_tree):
     app = MediasmithApp(media_tree)
-    async with app.run_test(size=(120, 40)) as pilot:
+    async with app.run_test(size=(160, 40)) as pilot:
         await _goto_notes(app, pilot)
-        button = app.query_one("#act-move", ActionButton)
-        assert "move" in str(button.label)
-        await pilot.press("ctrl+n")
+        await pilot.press("ctrl+y")              # copy
         await pilot.pause()
-        assert "place" in str(button.label)
-        await pilot.press("escape")              # cancel
+        assert app.lifted == [media_tree / "notes.txt"]
+        assert app.lift_copy
+        assert "paste" in _strip_text(app)       # same clipboard state
+        await pilot.press("alt+up")              # Books
+        await settle(pilot)
+        await pilot.press("ctrl+v")              # paste a duplicate
+        await pilot.pause(0.8)
+        assert (media_tree / "Books" / "notes.txt").exists()
+        assert (media_tree / "notes.txt").exists()   # source untouched
+        assert app.lifted is None
+
+
+async def test_copy_paste_duplicates_folder(media_tree):
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(160, 40)) as pilot:
+        await settle(pilot)
+        await pilot.press("down")
+        await pilot.press("m", "u")              # Music
+        await _bulk_settle(pilot)
+        await pilot.press("ctrl+y")              # copy the folder
         await pilot.pause()
-        assert "place" not in str(button.label)
+        await pilot.press("alt+up")              # Books
+        await settle(pilot)
+        await pilot.press("ctrl+v")
+        await pilot.pause(0.8)
+        assert (media_tree / "Books" / "Music" / "01 Song One.mp3").exists()
+        assert (media_tree / "Music" / "01 Song One.mp3").exists()
+
+
+async def test_clipboard_locks_out_edit_and_second_cut(media_tree):
+    # the clipboard holds ONE selection; carrying forbids ⏎ edit (todo-4)
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(160, 40)) as pilot:
+        await _goto_notes(app, pilot)
+        await pilot.press("ctrl+x")
+        await pilot.pause()
+        first = app.lifted
+        await pilot.press("down")
+        await settle(pilot)
+        await pilot.press("ctrl+x")              # second cut: refused
+        await pilot.pause()
+        assert app.lifted == first
+        await pilot.press("enter")               # edit while carrying: refused
+        await pilot.pause()
+        assert app.focused is app.query_one(LibraryTree)
+        text = _strip_text(app)
+        assert "edit" not in text and "cut" not in text
 
 
 # -- strip multi-artist (folder action, folderize's pattern) ----------------------
@@ -1873,7 +1935,7 @@ async def test_multiartist_preview_apply_rewrites_tags(media_tree):
     app = MediasmithApp(media_tree)
     async with app.run_test(size=(120, 40)) as pilot:
         await _goto_folder(app, pilot, "Tangle")
-        await pilot.press("ctrl+x")              # fi^x multi-artist
+        await pilot.press("enter", "ctrl+x")     # strip multi-artist
         await pilot.pause(0.6)
         details = app.query_one(DetailsView)
         assert details.plan_preview_open()
@@ -1895,7 +1957,7 @@ async def test_multiartist_escape_cancels(media_tree):
     app = MediasmithApp(media_tree)
     async with app.run_test(size=(120, 40)) as pilot:
         await _goto_folder(app, pilot, "Tangle")
-        await pilot.press("ctrl+x")
+        await pilot.press("enter", "ctrl+x")
         await pilot.pause(0.6)
         details = app.query_one(DetailsView)
         assert details.plan_preview_open()
@@ -1937,7 +1999,7 @@ async def test_video_offers_subtitle_actions(media_tree):
         # video is renamable now, so "save" leads the bar (the rename write)
         assert _bar_names(app) == ["save", "get_subs", "clean_subs",
                                    "shift_subs", "watch", "download_posters",
-                                   "gif", "move"]
+                                   "gif"]
         await pilot.press("z")                       # the srt-less video
         await settle(pilot)
         names = _bar_names(app)
@@ -1952,7 +2014,7 @@ async def test_clean_subs_strips_credits_and_markup(media_tree):
     app = MediasmithApp(media_tree)
     async with app.run_test(size=(120, 40)) as pilot:
         await _goto_alien(app, pilot)
-        await pilot.press("ctrl+u")                  # clean s^ubs, from the tree
+        await pilot.press("enter", "ctrl+l")         # c^lean subs
         await pilot.pause(0.5)
         text = srt_path.read_text()
         assert "www.example.com" not in text         # credit cue dropped
@@ -1965,7 +2027,7 @@ async def test_shift_div_nudge_and_save(media_tree):
     app = MediasmithApp(media_tree)
     async with app.run_test(size=(120, 40)) as pilot:
         await _goto_alien(app, pilot)
-        await pilot.press("ctrl+v")                  # open the shift div
+        await pilot.press("enter", "ctrl+t")         # open the shift div
         await pilot.pause(0.5)                       # load worker
         details = app.query_one(DetailsView)
         assert details._shift_open
@@ -1991,7 +2053,7 @@ async def test_shift_arrow_steps(media_tree):
     app = MediasmithApp(media_tree)
     async with app.run_test(size=(120, 40)) as pilot:
         await _goto_alien(app, pilot)
-        await pilot.press("ctrl+v")
+        await pilot.press("enter", "ctrl+t")
         await pilot.pause(0.5)
         details = app.query_one(DetailsView)
         await pilot.press("shift+right")             # ±1s
@@ -2008,7 +2070,7 @@ async def test_shift_esc_pending_confirms(media_tree):
     app = MediasmithApp(media_tree)
     async with app.run_test(size=(120, 40)) as pilot:
         await _goto_alien(app, pilot)
-        await pilot.press("ctrl+v")
+        await pilot.press("enter", "ctrl+t")
         await pilot.pause(0.5)
         await pilot.press("right", "escape")         # pending: modal
         assert isinstance(app.screen, ConfirmSave)
@@ -2025,7 +2087,7 @@ async def test_shift_esc_pending_save_writes(media_tree):
     app = MediasmithApp(media_tree)
     async with app.run_test(size=(120, 40)) as pilot:
         await _goto_alien(app, pilot)
-        await pilot.press("ctrl+v")
+        await pilot.press("enter", "ctrl+t")
         await pilot.pause(0.5)
         await pilot.press("right", "escape", "s")    # modal → save
         await pilot.pause(0.6)
@@ -2039,13 +2101,13 @@ async def test_shift_toggle_pinned_while_pending(media_tree):
     app = MediasmithApp(media_tree)
     async with app.run_test(size=(120, 40)) as pilot:
         await _goto_alien(app, pilot)
-        await pilot.press("ctrl+v")
+        await pilot.press("enter", "ctrl+t")
         await pilot.pause(0.5)
-        await pilot.press("right", "ctrl+v")         # toggle off refused
+        await pilot.press("right", "ctrl+t")         # toggle off refused
         details = app.query_one(DetailsView)
         assert details._shift_open
         assert app.focused.id == "shift-control"
-        await pilot.press("left", "ctrl+v")          # clean again: closes
+        await pilot.press("left", "ctrl+t")          # clean again: closes
         await pilot.pause()
         assert not details._shift_open
         assert app.focused is app.query_one(LibraryTree)
@@ -2055,7 +2117,7 @@ async def test_shift_esc_clean_closes(media_tree):
     app = MediasmithApp(media_tree)
     async with app.run_test(size=(120, 40)) as pilot:
         await _goto_alien(app, pilot)
-        await pilot.press("ctrl+v")
+        await pilot.press("enter", "ctrl+t")
         await pilot.pause(0.5)
         await pilot.press("escape")
         await pilot.pause()
@@ -2069,12 +2131,73 @@ async def test_shift_down_reaches_bar_buttons(media_tree):
     app = MediasmithApp(media_tree)
     async with app.run_test(size=(120, 40)) as pilot:
         await _goto_alien(app, pilot)
-        await pilot.press("ctrl+v")
+        await pilot.press("enter", "ctrl+t")
         await pilot.pause(0.5)
         await pilot.press("down")                    # control → first button
         assert app.focused.id == "save-btn"
         await pilot.press("up")                      # and back
         assert app.focused.id == "shift-control"
+
+
+async def test_focus_lockdown_shift_blocks_other_chords(media_tree, monkeypatch):
+    # todo-4 "Focus": a focused sub-form owns the user — while the shift
+    # control has focus, the pane's OTHER commands must not fire
+    calls = []
+    monkeypatch.setattr("mediasmith.details.launch",
+                        lambda path: calls.append(path))
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _goto_alien(app, pilot)
+        await pilot.press("enter", "ctrl+t")         # open + focus the shift div
+        await pilot.pause(0.5)
+        assert app.focused.id == "shift-control"
+        await pilot.press("ctrl+w")                  # watch: locked out
+        await pilot.pause(0.2)
+        assert calls == []
+        await pilot.press("right", "ctrl+s")         # its own save still works
+        await pilot.pause(0.5)
+        details = app.query_one(DetailsView)
+        assert not details._shift_pending            # the shift was written
+
+
+async def test_focus_lockdown_confines_arrow_walk(media_tree):
+    # inside a wizard, ↑↓ must not escape to the pane's fields/buttons
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _goto_photo_lockdown(app, pilot)
+        await pilot.press("enter", "ctrl+e")         # resize wizard, w focused
+        await pilot.pause()
+        assert app.focused.id == "resize-w"
+        await pilot.press("up")                      # top of the sub-form: stay
+        assert app.focused.id == "resize-w"
+        for _ in range(6):
+            await pilot.press("down")                # h → link → save, clamp
+        assert app.focused.id == "resize-apply-btn"
+
+
+async def _goto_photo_lockdown(app, pilot):
+    await settle(pilot)
+    await pilot.press("down")
+    await pilot.press(*"pic", "right")
+    await settle(pilot)
+    await pilot.press("down")
+    await settle(pilot)
+    assert app.query_one(DetailsView).kind == "image"
+
+
+async def test_focus_lockdown_art_path_blocks_fetch(media_tree, monkeypatch):
+    from mediasmith import artfetch
+    monkeypatch.setattr(artfetch, "search_covers",
+                        lambda *a, **kw: (_ for _ in ()).throw(
+                            AssertionError("fetch ran under lockdown")))
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _goto_first_song(app, pilot)
+        await pilot.press("enter", "ctrl+p")         # Import Album Art input
+        assert app.focused.id == "art-path"
+        await pilot.press("ctrl+f")                  # fetch: locked out
+        await pilot.pause(0.3)
+        assert app.focused.id == "art-path"          # still in the sub-form
 
 
 async def test_get_subs_installs_and_tree_follows(media_tree, monkeypatch):
@@ -2098,7 +2221,7 @@ async def test_get_subs_installs_and_tree_follows(media_tree, monkeypatch):
     async with app.run_test(size=(120, 40)) as pilot:
         await _goto_alien(app, pilot)
         assert "clean_subs" not in _bar_names(app)   # no srt yet
-        await pilot.press("ctrl+k")                  # get subs
+        await pilot.press("enter", "ctrl+f")         # ^fetch subtitles
         await pilot.pause(0.8)
         dest = movie / "Alien.1979.srt"
         assert dest.exists()
@@ -2118,7 +2241,7 @@ async def test_get_subs_honors_offline(media_tree, monkeypatch):
     app = MediasmithApp(media_tree)
     async with app.run_test(size=(120, 40)) as pilot:
         await _goto_alien(app, pilot)
-        await pilot.press("ctrl+k")
+        await pilot.press("enter", "ctrl+f")
         await pilot.pause(0.5)
         assert app.is_running
 
@@ -2130,7 +2253,7 @@ async def test_watch_launches_player(media_tree, monkeypatch):
     app = MediasmithApp(media_tree)
     async with app.run_test(size=(120, 40)) as pilot:
         await _goto_alien(app, pilot)
-        await pilot.press("ctrl+w")
+        await pilot.press("enter", "ctrl+w")
         await pilot.pause()
         video = media_tree / "Movies" / "Alien (1979)" / "Alien.1979.mkv"
         assert calls == [video]
@@ -2168,7 +2291,7 @@ async def test_download_posters_lands_files_and_tree_follows(
     app = MediasmithApp(media_tree)
     async with app.run_test(size=(120, 40)) as pilot:
         await _goto_alien(app, pilot)
-        await pilot.press("ctrl+d")                  # ^download posters
+        await pilot.press("enter", "ctrl+p")         # download ^posters
         await pilot.pause(0.5)
         tree = app.query_one(LibraryTree)
         assert tree._node_for(folder) is not None    # re-listed in place
@@ -2182,7 +2305,7 @@ async def test_download_posters_honors_offline(media_tree, monkeypatch):
     app = MediasmithApp(media_tree)
     async with app.run_test(size=(120, 40)) as pilot:
         await _goto_alien(app, pilot)
-        await pilot.press("ctrl+d")
+        await pilot.press("enter", "ctrl+p")
         await pilot.pause(0.3)
         assert calls == []
 
@@ -2222,16 +2345,16 @@ async def test_image_offers_converts_minus_own_format(media_tree):
     app = MediasmithApp(media_tree)
     async with app.run_test(size=(120, 40)) as pilot:
         await _goto_photo(app, pilot)
-        assert _bar_names(app) == ["save", "convert_jpg", "convert_webp",
-                                   "convert_tiff", "resize", "rotate",
-                                   "move"]                 # png: no png
+        assert _bar_names(app) == ["save", "rotate", "resize",
+                                   "convert_jpg", "convert_tiff",
+                                   "convert_webp"]         # png: no png
 
 
 async def test_image_convert_creates_sibling(media_tree):
     app = MediasmithApp(media_tree)
     async with app.run_test(size=(120, 40)) as pilot:
         await _goto_photo(app, pilot)
-        await pilot.press("ctrl+p")                  # convert to j^pg
+        await pilot.press("enter", "ctrl+g")         # convert to jp^g
         await pilot.pause(0.5)
         target = media_tree / "Pics" / "photo.jpg"
         assert target.exists()
@@ -2245,7 +2368,7 @@ async def test_image_convert_never_overwrites(media_tree):
     app = MediasmithApp(media_tree)
     async with app.run_test(size=(120, 40)) as pilot:
         await _goto_photo(app, pilot)
-        await pilot.press("ctrl+p")
+        await pilot.press("enter", "ctrl+g")
         await pilot.pause(0.5)
         assert existing.read_bytes() == b"precious"
 
@@ -2263,10 +2386,10 @@ async def test_image_convert_overwrites_on_second_press(media_tree):
         await pilot.press("down", "down")            # past photo.jpg → photo.png
         await settle(pilot)
         assert app.query_one(DetailsView).kind == "image"
-        await pilot.press("ctrl+p")                  # convert to jpg — refuses
+        await pilot.press("enter", "ctrl+g")         # convert to jpg — refuses
         await pilot.pause(0.4)
         assert existing.read_bytes() == b"placeholder"
-        await pilot.press("ctrl+p")                  # again: overwrites
+        await pilot.press("ctrl+g")                  # again: overwrites
         await pilot.pause(0.6)
         assert existing.read_bytes() != b"placeholder"
         assert Image.open(existing).format == "JPEG"   # a real conversion
@@ -2277,7 +2400,7 @@ async def test_resize_div_linked_fields(media_tree):
     app = MediasmithApp(media_tree)
     async with app.run_test(size=(120, 40)) as pilot:
         await _goto_photo(app, pilot)
-        await pilot.press("ctrl+e")                  # r^esize
+        await pilot.press("enter", "ctrl+e")         # r^esize
         await pilot.pause()
         assert app.focused.id == "resize-w"
         assert app.focused.value == "8"              # prefilled: true dims
@@ -2297,13 +2420,13 @@ async def test_resize_apply_creates_file(media_tree):
     app = MediasmithApp(media_tree)
     async with app.run_test(size=(120, 40)) as pilot:
         await _goto_photo(app, pilot)
-        await pilot.press("ctrl+e")
+        await pilot.press("enter", "ctrl+e")
         await pilot.pause()
         from textual.widgets import Checkbox
         app.query_one("#resize-link", Checkbox).value = False
         app.query_one("#resize-w").value = "4"
         app.query_one("#resize-h").value = "2"
-        await pilot.press("ctrl+a")                  # ^apply
+        await pilot.press("ctrl+s")                  # ^save (the wizard's)
         await pilot.pause(0.5)
         target = media_tree / "Pics" / "photo (4x2).png"
         assert target.exists()
@@ -2316,13 +2439,13 @@ async def test_resize_div_toggles_closed(media_tree):
     app = MediasmithApp(media_tree)
     async with app.run_test(size=(120, 40)) as pilot:
         await _goto_photo(app, pilot)
-        await pilot.press("ctrl+e")
+        await pilot.press("enter", "ctrl+e")
         await pilot.pause()
         assert app.query_one("#resize-div").display is True
         await pilot.press("escape")                  # release to the tree
         assert app.focused is app.query_one(LibraryTree)
         assert app.query_one("#resize-div").display is True   # still open
-        await pilot.press("ctrl+e")                  # react-style toggle
+        await pilot.press("enter", "ctrl+e")         # react-style toggle
         await pilot.pause()
         assert app.query_one("#resize-div").display is False
 
@@ -2336,7 +2459,7 @@ async def test_rotate_rotates_in_place(media_tree):
         await _goto_photo(app, pilot)
         await pilot.press("down")                    # wide.png (p < w)
         await settle(pilot)
-        await pilot.press("ctrl+o")                  # r^otate
+        await pilot.press("enter", "ctrl+r")         # ^rotate
         await pilot.pause(0.5)
         assert Image.open(media_tree / "Pics" / "wide.png").size == (4, 8)
         assert sorted(p.name for p in (media_tree / "Pics").iterdir()) \
@@ -2351,7 +2474,7 @@ async def test_standardize_creates_clean_sibling(media_tree):
     async with app.run_test(size=(120, 40)) as pilot:
         await _goto_dune(app, pilot)
         assert "standardize" in _bar_names(app)
-        await pilot.press("ctrl+d")                  # stan^dardize
+        await pilot.press("enter", "ctrl+n")         # clea^n
         await pilot.pause(0.6)
         target = media_tree / "Books" / "Dune (clean).epub"
         assert target.exists()
@@ -2367,7 +2490,7 @@ async def test_standardize_folder_batch(media_tree):
     async with app.run_test(size=(120, 40)) as pilot:
         await _goto_folder(app, pilot, "Books")
         assert "standardize" in _bar_names(app)      # probe filled in
-        await pilot.press("ctrl+d")
+        await pilot.press("enter", "ctrl+n")
         await pilot.pause(1.0)
         assert (media_tree / "Books" / "Dune (clean).epub").exists()
         assert (media_tree / "Books" / "Second (clean).epub").exists()
@@ -2389,7 +2512,7 @@ async def test_standardize_never_overwrites(media_tree):
     app = MediasmithApp(media_tree)
     async with app.run_test(size=(120, 40)) as pilot:
         await _goto_dune(app, pilot)
-        await pilot.press("ctrl+d")
+        await pilot.press("enter", "ctrl+n")
         await pilot.pause(0.6)
         assert existing.read_bytes() == b"precious"
 
@@ -2417,7 +2540,7 @@ async def test_sort_preview_and_apply(media_tree):
     app = MediasmithApp(media_tree)
     async with app.run_test(size=(120, 40)) as pilot:
         await _goto_folder(app, pilot, "Books")
-        await pilot.press("ctrl+o")                  # s^ort
+        await pilot.press("enter", "ctrl+o")         # s^ort
         await pilot.pause(0.6)
         details = app.query_one(DetailsView)
         assert details.plan_preview_open()
@@ -2436,7 +2559,7 @@ async def test_sort_escape_cancels(media_tree):
     app = MediasmithApp(media_tree)
     async with app.run_test(size=(120, 40)) as pilot:
         await _goto_folder(app, pilot, "Books")
-        await pilot.press("ctrl+o")
+        await pilot.press("enter", "ctrl+o")
         await pilot.pause(0.6)
         details = app.query_one(DetailsView)
         assert details.plan_preview_open()
@@ -2450,8 +2573,8 @@ async def test_sort_single_ebook_wraps_renames_and_reselects(media_tree):
     app = MediasmithApp(media_tree)
     async with app.run_test(size=(120, 40)) as pilot:
         await _goto_dune(app, pilot)                 # Books/Dune.epub, editable
-        assert "sort" in _bar_names(app)             # probe filled in
-        await pilot.press("ctrl+o")                  # s^ort — immediate, no preview
+        assert "sort_book" in _bar_names(app)        # probe filled in
+        await pilot.press("enter", "ctrl+f")         # ^folderize — no preview
         await pilot.pause(0.8)
         wrapper = media_tree / "Books" / "Herbert, Frank - Dune"
         book = wrapper / "Herbert, Frank - Dune.epub"
@@ -2551,22 +2674,24 @@ async def test_rename_context_row_reanchors(media_tree):
         assert tree._node_for(new_parent) is not None
 
 
-async def test_folder_offers_new_and_trash_buttons(media_tree):
+async def test_folder_offers_save_only(media_tree):
+    # new-directory/delete are TREE commands now (^n / ^DEL on the strip);
+    # their buttons are gone from Details view (todo-4 Button Refactor)
     app = MediasmithApp(media_tree)
     async with app.run_test(size=(120, 40)) as pilot:
         await _goto_folder(app, pilot, "Empty")
         names = _bar_names(app)
-        assert "new_directory" in names and "delete" in names
-        await _goto_notes(app, pilot)                # kind: other — neither
+        assert names == ["save"]
+        await _goto_notes(app, pilot)                # kind: other — same
         names = _bar_names(app)
-        assert "new_directory" not in names and "delete" not in names
+        assert names == ["save"]
 
 
 async def test_new_directory_creates_and_descends(media_tree):
     app = MediasmithApp(media_tree)
     async with app.run_test(size=(120, 40)) as pilot:
         await _goto_folder(app, pilot, "Empty")
-        await pilot.press("ctrl+e")                   # n^ew folder
+        await pilot.press("ctrl+n")                   # ^n new directory
         await pilot.pause(0.8)
         target = media_tree / "Empty" / "untitled folder"
         assert target.is_dir()
@@ -2580,7 +2705,7 @@ async def test_new_directory_on_file_targets_its_parent(media_tree):
     app = MediasmithApp(media_tree)
     async with app.run_test(size=(120, 40)) as pilot:
         await _goto_notes(app, pilot)                # a file: its folder
-        await pilot.press("ctrl+e")
+        await pilot.press("ctrl+n")
         await pilot.pause(0.8)
         assert (media_tree / "untitled folder").is_dir()
 
@@ -2590,7 +2715,7 @@ async def test_new_directory_names_dont_collide(media_tree):
     app = MediasmithApp(media_tree)
     async with app.run_test(size=(120, 40)) as pilot:
         await _goto_folder(app, pilot, "Empty")
-        await pilot.press("ctrl+e")
+        await pilot.press("ctrl+n")
         await pilot.pause(0.8)
         assert (media_tree / "Empty" / "untitled folder 2").is_dir()
 
@@ -2666,7 +2791,7 @@ async def test_gif_div_toggles_with_tasty_defaults(media_tree):
     app = MediasmithApp(media_tree)
     async with app.run_test(size=(120, 40)) as pilot:
         await _goto_alien(app, pilot)
-        await pilot.press("ctrl+g")                  # make ^gif
+        await pilot.press("enter", "ctrl+g")         # make ^gif
         await pilot.pause()
         assert app.query_one("#gif-div").display is True
         assert app.focused.id == "gif-fps"
@@ -2693,11 +2818,11 @@ async def test_gif_apply_creates_sibling(media_tree, monkeypatch):
     app = MediasmithApp(media_tree)
     async with app.run_test(size=(120, 40)) as pilot:
         await _goto_alien(app, pilot)
-        await pilot.press("ctrl+g")
+        await pilot.press("enter", "ctrl+g")
         await pilot.pause()
         app.query_one("#gif-fps").value = "24"
         app.query_one("#gif-width").value = "320"
-        await pilot.press("ctrl+a")                  # ^apply in the div
+        await pilot.press("ctrl+s")                  # ^save in the div
         await pilot.pause(0.6)
         target = (media_tree / "Movies" / "Alien (1979)"
                   / "Alien.1979.gif")
@@ -2715,9 +2840,9 @@ async def test_gif_honors_offline(media_tree, monkeypatch):
     app = MediasmithApp(media_tree)
     async with app.run_test(size=(120, 40)) as pilot:
         await _goto_alien(app, pilot)
-        await pilot.press("ctrl+g")
+        await pilot.press("enter", "ctrl+g")
         await pilot.pause()
-        await pilot.press("ctrl+a")
+        await pilot.press("ctrl+s")
         await pilot.pause(0.3)
         assert calls == []
 
@@ -2726,47 +2851,52 @@ async def test_gif_down_walks_into_the_bars(media_tree):
     app = MediasmithApp(media_tree)
     async with app.run_test(size=(120, 40)) as pilot:
         await _goto_alien(app, pilot)
-        await pilot.press("ctrl+g")
+        await pilot.press("enter", "ctrl+g")
         await pilot.pause()
         await pilot.press("down")                    # fps → width
         assert app.focused.id == "gif-width"
-        await pilot.press("down")                    # width → ^apply
+        await pilot.press("down")                    # width → the wizard's ^save
         assert app.focused.id == "gif-apply-btn"
-        await pilot.press("down")                    # → the pane bar (save leads)
-        assert app.focused.id == "save-btn"
-        await pilot.press("up", "up", "up")          # save → apply → width → fps
+        await pilot.press("down")                    # lockdown: clamp inside
+        assert app.focused.id == "gif-apply-btn"
+        await pilot.press("up", "up")                # save → width → fps
         assert app.focused.id == "gif-fps"
 
 
-# -- global-strip logo ------------------------------------------------------
+# -- command strip: responsive wrapping + the logo ---------------------------
 
 
-async def test_logo_shows_on_wide_viewport(media_tree):
+async def test_strip_wide_is_one_line_logo_right(media_tree):
     app = MediasmithApp(media_tree)
-    async with app.run_test(size=(120, 40)) as pilot:
+    async with app.run_test(size=(220, 40)) as pilot:
         await pilot.pause()
-        logo = app.query_one("#strip-logo")
-        assert logo.display is True
-        assert str(logo.render()) == LOGO
+        lines = _strip_text(app).split("\n")
+        assert len(lines) == 1                       # wide: everything fits
+        assert lines[0].rstrip().endswith(LOGO)      # space-between
 
 
-async def test_logo_hides_when_it_would_collide(media_tree):
+async def test_strip_wraps_on_narrow_viewport(media_tree):
     app = MediasmithApp(media_tree)
-    async with app.run_test(size=(LOGO_MIN_WIDTH - 1, 40)) as pilot:
+    async with app.run_test(size=(60, 40)) as pilot:
         await pilot.pause()
-        assert app.query_one("#strip-logo").display is False
+        lines = _strip_text(app).split("\n")
+        assert len(lines) > 1                        # narrow: wrapped
+        assert lines[-1].rstrip().endswith(LOGO)     # logo rides the last line
+        strip = app.query_one(CommandStrip)
+        assert strip.region.height == len(lines)     # height follows the wrap
 
 
-async def test_logo_follows_resize(media_tree):
+async def test_strip_rewraps_on_resize(media_tree):
     app = MediasmithApp(media_tree)
-    async with app.run_test(size=(120, 40)) as pilot:
+    async with app.run_test(size=(220, 40)) as pilot:
         await pilot.pause()
-        await pilot.resize_terminal(LOGO_MIN_WIDTH - 1, 40)
+        assert len(_strip_text(app).split("\n")) == 1
+        await pilot.resize_terminal(60, 40)
         await pilot.pause()
-        assert app.query_one("#strip-logo").display is False
-        await pilot.resize_terminal(LOGO_MIN_WIDTH, 40)
+        assert len(_strip_text(app).split("\n")) > 1
+        await pilot.resize_terminal(220, 40)
         await pilot.pause()
-        assert app.query_one("#strip-logo").display is True
+        assert len(_strip_text(app).split("\n")) == 1
 
 
 # -- centered cursor scrolling ----------------------------------------------

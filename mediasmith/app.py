@@ -5,19 +5,20 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from rich.cells import cell_len
 from rich.color import Color
 from rich.segment import Segment, Segments
 from rich.style import Style
 from textual import events
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal
 from textual.scrollbar import ScrollBar, ScrollBarRender
-from textual.widgets import Input, Static
+from textual.widgets import Input
 
+from . import strip
 from .browser import LibraryTree, PathInput, TreeView
 from .details import DetailsView
+from .strip import CommandStrip
 from .theme import MEDIASMITH
 
 
@@ -71,20 +72,7 @@ ScrollBar.renderer = ThinScrollBarRender
 NARROW_COLUMNS = 80
 """Below this many cells the columns swap instead of sharing the row."""
 
-STRIP_GLOBAL = " ^/ path · ^. hidden · ^q quit"
-STRIP_TREE = (" ↑↓ ←→ move · ⇧← collapse · type jump · ⏎ edit · "
-              "^r refresh · ^e new · ^del trash")
-
-LOGO = "𜵎𜵎▖𜷇🯦𜷇▌𜵅𜷃𜵈𜷓𜴀𜵎𜵎▖𜵅𜶍▐𜶓"
-"""Octant-glyph wordmark (see notes/octant.py) — right edge of the
-global strip. Every glyph is cell-width 1 under Rich (verified), so
-the collision math below is exact."""
-
-LOGO_MIN_WIDTH = 1 + cell_len(STRIP_GLOBAL) + 1 + cell_len(LOGO)
-"""Viewport cells needed before the logo shows: the strip's 1-cell
-left padding, the commands, one blank cell of separation, the logo."""
-STRIP_PATH = " ⇥ complete · ⏎ go · esc cancel"
-STRIP_DETAILS = " ↑↓ fields · ^s save · esc back"
+LOGO = strip.LOGO  # re-exported: tests and notes/octant.py know it here
 
 
 class MediasmithApp(App):
@@ -106,10 +94,10 @@ class MediasmithApp(App):
         Binding("ctrl+underscore", "focus_path", "path", show=False,
                 priority=True),
         Binding("ctrl+full_stop", "toggle_hidden", "hidden", show=False),
-        # folder CRUD is app-dispatched in on_key: new directory on ^e (a pane
-        # button chord reused across kinds), trash on ctrl+delete (its own
-        # chord — see on_key). The old ⌘⇧N / ⌘⌫ Finder chords are gone (they
-        # never reached Nick's terminal — macOS eats ⌘ before the TUI does).
+        # delete stays app-dispatched in on_key: ctrl+delete has no single-
+        # char chord shape. Cut/paste/new-directory are LibraryTree bindings
+        # (tree commands per todo-4). The old ⌘⇧N / ⌘⌫ Finder chords are
+        # gone (macOS eats ⌘ before the TUI does).
     ]
 
     CSS = """
@@ -236,13 +224,6 @@ class MediasmithApp(App):
     DetailsView:focus-within .omni-source { color: $label-fg-focus; }
     .omni-book { height: auto; margin-top: 1; }
     .omni-head { text-style: bold; }
-    #ctxrow { height: 1; background: $surface; color: $keybinding; }
-    #strip-left { width: 38%; min-width: 30; padding-left: 1; }
-    #strip-right { width: 1fr; padding-left: 1; }
-    #strip { dock: bottom; height: 1; background: $surface;
-             color: $keybinding; padding-left: 1; }
-    #strip-global { width: 1fr; }
-    #strip-logo { width: auto; color: $logo; }
     /* -- narrow (phone) breakpoint: one column at a time. Which column
        shows follows the pane hierarchy: -details-open swaps the details
        column in ("view" keeps the tree focused — no accent border;
@@ -258,7 +239,6 @@ class MediasmithApp(App):
     /* width 0 AND border none: the pane's own border would otherwise
        hold 2 cells open even at width 0 */
     .-narrow.-details-open TreeView { width: 0; border: none; }
-    .-narrow #strip-left { width: 1fr; min-width: 0; }
     ConfirmSave { align: center middle; }
     #confirm-box { width: auto; height: auto; padding: 1 2;
                    background: $surface; border: round $border-fg-focus; }
@@ -280,20 +260,18 @@ class MediasmithApp(App):
         """Narrow "view": the details column is swapped in while the tree
         keeps focus — read-only kinds, which never take focus themselves."""
         self.lifted: list[Path] | None = None
-        """A pending move (^n): app-level so it survives selection
-        changes and path-bar jumps — the long-distance flow is
-        cut → ^/ → destination → ⏎ → place."""
+        """The clipboard (^x cut / ^y copy): app-level so it survives
+        selection changes and path-bar jumps — the long-distance flow is
+        cut → ^/ → destination → ⏎ → ^v paste. Holds ONE selection."""
+        self.lift_copy = False
+        """Whether the clipboard holds a copy (paste duplicates) rather
+        than a cut (paste moves)."""
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="body"):
             yield TreeView(self.start_dir)
             yield DetailsView(images=self.images)
-        with Horizontal(id="ctxrow"):
-            yield Static("", id="strip-left")
-            yield Static("", id="strip-right")
-        with Horizontal(id="strip"):
-            yield Static(STRIP_GLOBAL, id="strip-global")
-            yield Static(LOGO, id="strip-logo")
+        yield CommandStrip()
 
     async def on_mount(self) -> None:
         self.watch(self.screen, "focused", self._sync_strips)
@@ -302,32 +280,21 @@ class MediasmithApp(App):
         await tree.anchor(self.start_dir)   # launch dir in parent context
 
     def _sync_strips(self, focused) -> None:
-        """Contextual strips: each pane's commands show only while it owns
-        focus, on the line above the global strip, aligned to its column."""
-        left = self.query_one("#strip-left", Static)
-        right = self.query_one("#strip-right", Static)
+        """ONE command strip, state-driven: what it shows is what works.
+        States per todo-4 — path input / details / clipboard / tree."""
         details = self.query_one(DetailsView)
         in_left = isinstance(focused, (PathInput, LibraryTree))
         in_details = focused is not None and (
             focused is details or details in focused.ancestors)
-        left.visible = in_left
-        if self.lifted is not None:             # a pending move owns the strip
-            n = len(self.lifted)
-            tree_strip = (f" moving {n} item{'s' if n != 1 else ''} · "
-                          f"^n place here · esc cancel")
+        if isinstance(focused, PathInput):
+            state = strip.STATE_PATH
+        elif in_details:
+            state = strip.STATE_DETAILS
+        elif self.lifted is not None:       # clipboard active (tree focused)
+            state = strip.STATE_CLIPBOARD
         else:
-            tree_strip = STRIP_TREE
-        left.update(STRIP_PATH if isinstance(focused, PathInput) else tree_strip)
-        right.visible = in_details
-        right.update(STRIP_DETAILS)
-        # the logo yields before it collides with the global commands
-        logo = self.query_one("#strip-logo", Static)
-        logo.display = self.size.width >= LOGO_MIN_WIDTH
-        # narrow: a hidden strip must release its width too (visible=False
-        # keeps the space, which the wide layout wants for column alignment)
-        narrow = self.screen.has_class("-narrow")
-        left.display = in_left or not narrow
-        right.display = in_details or not narrow
+            state = strip.STATE_TREE
+        self.query_one(CommandStrip).set_entries(state)
         # narrow columns follow focus; "view" holds -details-open while the
         # tree keeps focus (wide layouts carry the classes but ignore them)
         if in_details:
@@ -362,6 +329,10 @@ class MediasmithApp(App):
         self.screen.remove_class("-details-open")
 
     def action_focus_path(self) -> None:
+        # ^/ is a Tree-view command ONLY (todo-4: a keybinding not on the
+        # strip must not work) — from details or the path input it idles
+        if not isinstance(self.focused, LibraryTree):
+            return
         # narrow ordering: display the bar, move focus, and only then close
         # any open details column — Textual refuses to focus a non-displayed
         # widget and drops focus entirely when a focused one is hidden
@@ -377,57 +348,55 @@ class MediasmithApp(App):
     def action_focus_tree(self) -> None:
         self.query_one(LibraryTree).focus()
 
-    # -- pending move (^n lift/place — DetailsView.action_move drives) ---------
+    # -- the clipboard (^x cut / ^y copy / ^v paste — tree commands) ------------
 
-    def begin_lift(self, paths: list[Path]) -> None:
+    def begin_lift(self, paths: list[Path], copy: bool = False) -> None:
         self.lifted = list(paths)
+        self.lift_copy = copy
         n = len(paths)
-        self.notify(f"{n} item{'s' if n != 1 else ''} lifted — browse to "
-                    "the destination, ^n places, esc cancels", title="move")
+        verb = "copied" if copy else "cut"
+        self.notify(f"{n} item{'s' if n != 1 else ''} {verb} — browse to "
+                    "the destination, ^v pastes, esc cancels",
+                    title="copy" if copy else "cut")
         self._sync_strips(self.screen.focused)
 
     def end_lift(self) -> None:
         self.lifted = None
+        self.lift_copy = False
         self._sync_strips(self.screen.focused)
 
     def cancel_lift(self) -> None:
-        self.notify("move cancelled", title="move")
+        self.notify(("copy" if self.lift_copy else "cut") + " cancelled",
+                    title="clipboard")
         self.end_lift()
         self.query_one(DetailsView)._sync_pane_bar()
 
     def on_key(self, event: events.Key) -> None:
-        # Any ^x chord printed on a visible action button fires it, no
-        # matter where focus sits — read-only kinds (video, folder…) keep
-        # the tree focused, yet their buttons still need their keys.
+        # View-scoped dispatch (todo-4): a chord printed on a visible
+        # action button fires ONLY while Details view holds focus — the
+        # strip and the buttons are the contract for what a key does.
         if len(self.screen_stack) > 1:          # a modal owns the keys
             return
         details = self.query_one(DetailsView)
-        # Trash: ctrl+delete on ANY selection (file or folder), app-dispatched
-        # because no single-char chord can name it. Both the forward-delete and
-        # the Mac backspace-labeled "delete" send it, depending on terminal;
-        # accept both. Never while a text field is focused — that key is the
-        # rename form's word-delete, which must survive; the button still trashes.
+        focused = self.focused
+        # Delete: a TREE command (^DEL on the strip), app-dispatched
+        # because no single-char chord can name it. Both the forward-
+        # delete and the Mac backspace-labeled "delete" send it,
+        # depending on terminal; accept both.
         if event.key in ("ctrl+delete", "ctrl+backspace"):
-            if isinstance(self.focused, Input) or details.plan_preview_open():
-                return
-            event.stop()
-            details.action_delete()
+            if (isinstance(focused, LibraryTree)
+                    and not details.plan_preview_open()):
+                event.stop()
+                details.action_delete()
+            return
+        in_details = focused is not None and (
+            focused is details or details in focused.ancestors)
+        if not in_details:
             return
         action = details.action_for_key(event.key)
         if action is not None:
             event.stop()
             details.trigger(action)
-            return
-        # New-folder fallback: ^e works on ANY selection, not just the folder
-        # views where its button (and so the contextual dispatch above) lives —
-        # ^e on a file makes a folder in its parent, matching the old ⌘⇧N. A
-        # visible ^e button always wins first; a plan preview / split form owns
-        # its own keys, so skip it there.
-        if details.plan_preview_open():
-            return
-        if event.key == "ctrl+e":
-            event.stop()
-            details.action_new_directory()
 
     def on_library_tree_selected(self, ev: LibraryTree.Selected) -> None:
         self.query_one(PathInput).value = str(ev.path)

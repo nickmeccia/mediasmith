@@ -4,14 +4,15 @@ import pytest
 from textual.app import App
 
 from mediasmith.actions import (Action, ActionBar, ActionButton,
-                                FOCUS_KEY_STYLE, KEY_STYLE, action_markup)
+                                IDLE_KEY_STYLE, KEY_STYLE,
+                                SELECTED_KEY_STYLE, action_markup)
 
 
 # -- label markup ---------------------------------------------------------------
 
 
 def test_key_first_char_splices_caret():
-    assert action_markup("save", "s") == "[$text-accent]^s[/]ave"
+    assert action_markup("save", "s") == f"[{KEY_STYLE}]^s[/]ave"
 
 
 def test_key_style_override_recolors_the_chord():
@@ -19,15 +20,16 @@ def test_key_style_override_recolors_the_chord():
 
 
 def test_key_mid_word_splices_before_its_char():
-    assert action_markup("fetch", "t") == "fe[$text-accent]^t[/]ch"
+    assert action_markup("fetch", "t") == f"fe[{KEY_STYLE}]^t[/]ch"
 
 
 def test_key_absent_from_word_prefixes():
-    assert action_markup("convert", "x") == "[$text-accent]^x[/] convert"
+    assert (action_markup("convert", "x")
+            == f"[{KEY_STYLE}]^x[/] convert")
 
 
 def test_key_match_is_case_insensitive():
-    assert action_markup("Save", "s") == "[$text-accent]^S[/]ave"
+    assert action_markup("Save", "s") == f"[{KEY_STYLE}]^S[/]ave"
 
 
 def test_no_key_no_markup():
@@ -118,22 +120,27 @@ async def test_hidden_buttons_leave_the_flow():
 
 
 async def test_focus_recolors_the_chord():
-    # arrow-key selection lands as focus: the chord swaps to the focus
-    # color (legible on the orange highlight) and restores accent on blur.
+    # three-way chord color (theme.py): the focused (arrow-selected)
+    # button carries the selected token; otherwise the owning pane's
+    # idle/focus state picks the pair (set_pane_focus mirrors it).
     # set_reactive-not-assignment matters here: Content.__eq__ compares
     # plain text only, so a same-word recolor would otherwise be skipped.
     app = BarApp()
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
-        button = app.query(ActionButton).nodes[0]
+        button = app.query(ActionButton).nodes[1]   # [0] is auto-focused
+        assert IDLE_KEY_STYLE in str(button.label.markup)   # dim at rest
         app.set_focus(button)
         await pilot.pause()
-        assert FOCUS_KEY_STYLE in str(button.label.markup)
-        assert KEY_STYLE not in str(button.label.markup)
+        assert SELECTED_KEY_STYLE in str(button.label.markup)
+        assert IDLE_KEY_STYLE not in str(button.label.markup)
         app.set_focus(None)
         await pilot.pause()
+        assert IDLE_KEY_STYLE in str(button.label.markup)   # blur: dim again
+        button.set_pane_focus(True)                         # pane lit
         assert KEY_STYLE in str(button.label.markup)
-        assert FOCUS_KEY_STYLE not in str(button.label.markup)
+        button.set_pane_focus(False)                        # pane idle
+        assert IDLE_KEY_STYLE in str(button.label.markup)
 
 
 async def test_press_posts_triggered():

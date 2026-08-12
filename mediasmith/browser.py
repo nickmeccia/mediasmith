@@ -193,8 +193,18 @@ class LibraryTree(DirectoryTree):
         Binding("ctrl+down", "cursor_last", "last", show=False),
         Binding("alt+up", "cursor_first_sibling", "folder top", show=False),
         Binding("alt+down", "cursor_last_sibling", "folder bottom", show=False),
-        # collapse the whole level flat — self, siblings, and their offspring
+        # collapse the whole level flat — self, siblings, and their offspring.
+        # ^← is the strip's chord (Nick, 2026-08-12); ⇧← stays as a hidden
+        # alias for muscle memory.
+        Binding("ctrl+left", "collapse_level", "collapse level", show=False),
         Binding("shift+left", "collapse_level", "collapse level", show=False),
+        # the clipboard: cut/copy/paste/new-directory are TREE commands
+        # (todo-4) — they exist only while the tree owns focus, per the
+        # strip. ^y for copy: ^c is reserved (see notes/qa/todo-2.md).
+        Binding("ctrl+x", "cut", "cut", show=False),
+        Binding("ctrl+y", "copy", "copy", show=False),
+        Binding("ctrl+v", "paste", "paste", show=False),
+        Binding("ctrl+n", "new_directory", "new directory", show=False),
     ]
 
     # Rounded, single-dash guides; all three styles the same so hover/cursor
@@ -430,8 +440,8 @@ class LibraryTree(DirectoryTree):
             return
         if node.allow_expand:
             node.expand()
-        else:
-            self.action_edit()   # right on a file: edit, same as enter
+        # → on a file: nothing. Nick retired the "→ edit" duplicate —
+        # ⏎ is the one edit key (todo-4 strip refactor).
 
     async def action_collapse(self) -> None:
         node = self.cursor_node
@@ -448,7 +458,32 @@ class LibraryTree(DirectoryTree):
         elif node.parent is not None:
             self._move_cursor(node.parent.line)   # scroll so it re-centers
 
+    # -- the clipboard: cut / paste / new directory (tree commands) --------------
+    # The heavy lifting (liftable/place targets, the move worker, pane-bar
+    # sync) stays on DetailsView, which mirrors the selection; the tree
+    # owns the KEYS, so the commands exist exactly where the strip says.
+
+    def action_cut(self) -> None:
+        if self.app.lifted is not None:     # one selection at a time —
+            return                          # no second cut while carrying
+        self.app.query_one(DetailsView).action_cut()
+
+    def action_copy(self) -> None:
+        if self.app.lifted is not None:     # ditto: the clipboard is full
+            return
+        self.app.query_one(DetailsView).action_copy()
+
+    def action_paste(self) -> None:
+        if self.app.lifted is None:
+            return
+        self.app.query_one(DetailsView).action_paste()
+
+    def action_new_directory(self) -> None:
+        self.app.query_one(DetailsView).action_new_directory()
+
     def action_edit(self) -> None:
+        if self.app.lifted is not None:     # no editing while carrying —
+            return                          # the clipboard state has no ⏎
         details = self.app.query_one(DetailsView)
         node = self.cursor_node
         selection = self._selection_paths()
