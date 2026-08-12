@@ -1685,7 +1685,14 @@ class DetailsPane(VerticalScroll, can_focus=True):
             self.notify(f"{saved} saved", title="bulk save")
         if self.paths == paths:
             self._pending_art = None
+            # _begin_bulk hides the form under the focused field, which
+            # drops focus on the floor (todo-5 bug): note where focus sat
+            # first, and re-descend once the re-read lands
+            focused = self.app.focused
+            editing = focused is not None and self in focused.ancestors
             self._begin_bulk(paths, origin=self.path)   # re-read: new baseline
+            if editing and not release:
+                self.focus_when_loaded()
         if release:
             self.app.action_focus_tree()
 

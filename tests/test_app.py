@@ -1475,6 +1475,27 @@ async def test_bulk_edit_applies_to_all(media_tree):
         assert not details.dirty                     # fresh baseline post-save
 
 
+async def test_bulk_save_keeps_focus(media_tree):
+    # todo-5 bug: after a bulk ^s the re-read (_begin_bulk) hid the form
+    # under the focused field and NOTHING held focus — no keypress could
+    # bring it back. Saving while editing must land focus back in the form.
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _goto_first_song(app, pilot)
+        await pilot.press("shift+down")
+        await _bulk_settle(pilot)
+        await pilot.press("enter")                   # descend into the form
+        form = app.query_one("#form-audio", EditForm)
+        form.inputs()[3].focus()                     # album (unanimous)
+        form.inputs()[3].value = "Bulk Album"
+        await pilot.pause()
+        await pilot.press("ctrl+s")
+        await pilot.pause(0.8)                       # save + re-read settle
+        assert app.focused is not None               # focus never dropped
+        details = app.query_one(DetailsPane)
+        assert details in app.focused.ancestors      # …and stayed in the pane
+
+
 async def test_bulk_untouched_mixed_field_not_written(media_tree):
     app = MediasmithApp(media_tree)
     async with app.run_test(size=(120, 40)) as pilot:

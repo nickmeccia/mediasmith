@@ -23,7 +23,7 @@ I would like to reconsider the zones of this app according to the following diag
  
 Currently, this app considers Path Input to be a zone separate from Tree View and from Details View, and equal in hierarchy. I would like to change the mental model of Path Input to be a subview of Tree View, instead of its own view. Consequences:
 
-- The UI needs to change. Please see ~/code/mediasmith/notes/mockup-path-input.txt for a mockup.
+- The UI needs to change. Please see ~/code/mediasmith/notes/mockups/path-input.txt for a mockup.
 - The command strip needs to change. Please see `Command Strip & Keybinding Refactor` below.
 - The code needs to change...potentially. As a UX designer, if I were coding the front end of this app in HTML and CSS, this mental model change would absolutely inspire changes to my code. What that means for you, I don't know, as this codebase was written entirely by Claudes. Please discuss this consequence with me.
 - CLAUDE.md needs to be updated to reflect this change.
