@@ -95,7 +95,7 @@ noun
 
 ##### Plan Previews
 
-- **Folderize** -- Wrap audio files or ebook files in folders according to a format-dependent algorithm.
+- **Folderize** -- Wrap audio files or ebook files in folders according to a format-dependent algorithm. On a single ebook or a single video the wrap is one file's, so it runs immediately and has no preview: a video wraps into a folder named after its filename, taking its subtitles and art with it.
 
 - **Strip Multi-Artist** -- Rewrite all `artist` and `album artist` tags as the first artist listed.
 
@@ -112,6 +112,8 @@ noun
 #### Commands
 
 - **Navigate** -- Move the selected state between adjacent text inputs and/or buttons.
+
+- **Open** -- Hand the selected file to the operating system's default application for its type. Offered on every file, always the second button after Save.
 
 - **Button-Specific Commands** -- Most unique commands are presented as labeled buttons which the user can trigger with keybindings or by selecting and pressing enter.
 

@@ -86,6 +86,26 @@ async def test_pathbar_tab_completes(media_tree):
         assert bar.value == str(media_tree / "Music") + "/"
 
 
+async def test_pathbar_enter_expands_the_directory_it_lands_on(media_tree):
+    # Nick, 2026-08-22: arriving somewhere from the path input should show
+    # what is there — the landed-on folder is expanded, not just selected
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await settle(pilot)
+        bar = app.query_one(PathInput)
+        bar.focus()
+        await pilot.pause()
+        bar.value = str(media_tree / "Mus")          # a filter view
+        await pilot.pause(0.2)
+        await pilot.press("enter")
+        await settle(pilot)
+        tree = app.query_one(LibraryTree)
+        node = tree._node_for(media_tree / "Music")
+        assert node is not None
+        assert node.is_expanded                      # its tracks are on show
+        assert tree.cursor_node is node
+
+
 async def test_other_file_is_editable(media_tree):
     # a plain file is renamable now (folder-style filename field); tab and
     # enter descend into its rename field, esc ascends back to the tree
@@ -797,7 +817,7 @@ async def test_book_offers_conversions_minus_own_format(media_tree):
         await _goto_dune(app, pilot)
         bar = app.query_one("#pane-bar", ActionBar)
         names = [b.spec.name for b in bar.buttons()]
-        assert names == ["save", "convert_mobi", "convert_azw3",
+        assert names == ["save", "open", "convert_mobi", "convert_azw3",
                          "create_opf", "standardize", "book_cover",
                          "extract_cover", "sort_book"]
 
@@ -906,7 +926,7 @@ async def test_create_opf_creates_sidecar(media_tree):
     app = MediasmithApp(media_tree)
     async with app.run_test(size=(120, 40)) as pilot:
         await _goto_dune(app, pilot)
-        await pilot.press("enter", "ctrl+o")         # write ^opf
+        await pilot.press("enter", "ctrl+w")         # ^write opf
         await pilot.pause(0.5)
         target = media_tree / "Books" / "metadata.opf"
         assert target.exists()
@@ -1001,13 +1021,13 @@ async def test_split_omnibus_escape_cancels(media_tree):
                     / "Herbert, Frank - Omnibus - 01 - Book 1.epub").exists()
 
 
-async def test_audio_offers_save_only(media_tree):
+async def test_audio_offers_save_and_open(media_tree):
     from mediasmith.actions import ActionBar
     app = MediasmithApp(media_tree)
     async with app.run_test(size=(120, 40)) as pilot:
         await _goto_first_song(app, pilot)
         bar = app.query_one("#pane-bar", ActionBar)
-        assert [b.spec.name for b in bar.buttons()] == ["save"]
+        assert [b.spec.name for b in bar.buttons()] == ["save", "open"]
 
 
 async def test_convert_creates_sibling_and_tree_follows(media_tree, monkeypatch):
@@ -1327,10 +1347,10 @@ async def test_art_buttons_reachable_by_arrows(media_tree):
         await pilot.press("enter")
         for _ in range(30):                          # ↓ walks clean through:
             await pilot.press("down")                # fields → art → buttons
-        assert app.focused.id == "save-btn"          # …and clamps at the end
+        assert app.focused.id == "act-open"          # …and clamps at the end
         await pilot.press("down")                    # bottom: clamp
-        assert app.focused.id == "save-btn"
-        await pilot.press("up", "up")                # ↑ = left through buttons
+        assert app.focused.id == "act-open"
+        await pilot.press("up", "up", "up")          # ↑ = left through buttons
         assert app.focused.id == "art-btn-path"
         await pilot.press("right")
         assert app.focused.id == "art-btn-fetch"
@@ -2027,7 +2047,7 @@ async def test_multiartist_escape_cancels(media_tree):
         assert d.fields["artist"] == "Jax Jones/Rebecca Black"  # untouched
 
 
-# -- subtitles (get / clean / shift / watch on video files) ---------------------
+# -- subtitles (get / clean / shift on video files) -----------------------------
 
 
 SRT_DIRTY = (
@@ -2055,14 +2075,15 @@ async def test_video_offers_subtitle_actions(media_tree):
     app = MediasmithApp(media_tree)
     async with app.run_test(size=(120, 40)) as pilot:
         await _goto_alien(app, pilot)
-        # video is renamable now, so "save" leads the bar (the rename write)
-        assert _bar_names(app) == ["save", "get_subs", "clean_subs",
-                                   "shift_subs", "watch", "download_posters",
-                                   "gif"]
+        # video is renamable now, so "save" leads the bar (the rename
+        # write); "open" is always second (2026-08-22)
+        assert _bar_names(app) == ["save", "open", "get_subs", "clean_subs",
+                                   "shift_subs", "download_posters", "gif",
+                                   "folderize_video"]
         await pilot.press("z")                       # the srt-less video
         await settle(pilot)
         names = _bar_names(app)
-        assert "get_subs" in names and "watch" in names
+        assert "get_subs" in names and "open" in names
         assert "clean_subs" not in names             # nothing to clean/shift
         assert "shift_subs" not in names
 
@@ -2210,7 +2231,7 @@ async def test_focus_lockdown_shift_blocks_other_chords(media_tree, monkeypatch)
         await pilot.press("enter", "ctrl+t")         # open + focus the shift div
         await pilot.pause(0.5)
         assert app.focused.id == "shift-control"
-        await pilot.press("ctrl+w")                  # watch: locked out
+        await pilot.press("ctrl+o")                  # open: locked out
         await pilot.pause(0.2)
         assert calls == []
         await pilot.press("right", "ctrl+s")         # its own save still works
@@ -2305,17 +2326,124 @@ async def test_get_subs_honors_offline(media_tree, monkeypatch):
         assert app.is_running
 
 
-async def test_watch_launches_player(media_tree, monkeypatch):
+async def test_open_launches_default_app(media_tree, monkeypatch):
     calls = []
     monkeypatch.setattr("mediasmith.details.launch",
                         lambda path: calls.append(path))
     app = MediasmithApp(media_tree)
     async with app.run_test(size=(120, 40)) as pilot:
         await _goto_alien(app, pilot)
-        await pilot.press("enter", "ctrl+w")
+        await pilot.press("enter", "ctrl+o")
         await pilot.pause()
         video = media_tree / "Movies" / "Alien (1979)" / "Alien.1979.mkv"
         assert calls == [video]
+
+
+async def test_open_offered_on_every_file_kind(media_tree, monkeypatch):
+    # "open" is the universal second button (Nick, 2026-08-22)
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await settle(pilot)                      # the tree's own first select
+        details = app.query_one(DetailsView)
+        for path in (media_tree / "Music" / "01 Song One.mp3",
+                     media_tree / "Books" / "Dune.epub",
+                     media_tree / "Pics" / "photo.png",
+                     media_tree / "notes.txt"):
+            details.preview(path, immediate=True)
+            await settle(pilot)
+            names = _bar_names(app)
+            assert names[:2] == ["save", "open"], f"{path.name}: {names}"
+        details.preview(media_tree / "Music", immediate=True)   # a folder
+        await settle(pilot)
+        assert "open" not in _bar_names(app)     # its ^o is the sort button
+
+
+async def test_open_launches_the_selected_file(media_tree, monkeypatch):
+    calls = []
+    monkeypatch.setattr("mediasmith.details.launch",
+                        lambda path: calls.append(path))
+    song = media_tree / "Music" / "01 Song One.mp3"
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await settle(pilot)
+        await pilot.press("down")                    # into the anchor
+        await pilot.press("m", "u", "right")         # Music, expanded
+        await settle(pilot)
+        await pilot.press("down")                    # 01 Song One.mp3
+        await settle(pilot)
+        assert app.query_one(DetailsView).path == song
+        await pilot.press("enter", "ctrl+o")
+        await pilot.pause()
+        assert calls == [song]
+
+
+# -- video: folderize (wrap the video into a folder named after it) -------------
+
+
+async def test_video_folderize_wraps_the_video_and_its_subtitle(media_tree):
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _goto_alien(app, pilot)
+        assert "folderize_video" in _bar_names(app)
+        await pilot.press("enter", "ctrl+d")         # fol^derize
+        await pilot.pause(0.8)
+        wrapper = media_tree / "Movies" / "Alien (1979)" / "Alien.1979"
+        video = wrapper / "Alien.1979.mkv"
+        assert video.exists()
+        assert (wrapper / "Alien.1979.srt").exists()     # the sidecar came
+        assert (wrapper / "poster.jpg").exists()         # sole video: art too
+        details = app.query_one(DetailsView)
+        assert details.path == video                 # same video still shown
+        assert details.kind == "video"
+        assert "folderize_video" not in _bar_names(app)   # now in place
+        tree = app.query_one(LibraryTree)
+        assert tree._node_for(video) is not None      # revealed in the tree
+
+
+async def test_video_folderize_hidden_when_already_wrapped(media_tree):
+    from mediasmith import fs
+    movies = media_tree / "Movies" / "Alien (1979)"
+    (movies / "Alien (1979).mkv").write_bytes(b"x")   # named for its folder
+    fs.clear_cache()
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await settle(pilot)
+        app.query_one(DetailsView).preview(movies / "Alien (1979).mkv",
+                                           immediate=True)
+        await settle(pilot)
+        assert "folderize_video" not in _bar_names(app)
+
+
+# -- video: the poster (album art's twin) ---------------------------------------
+
+
+async def test_video_panel_shows_the_poster_with_dimensions(media_tree):
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _goto_alien(app, pilot)
+        dims = app.query_one("#cover-video-dims")
+        assert dims.display is True
+        assert "8 × 8" in str(dims.render())          # the fixture's poster.jpg
+
+
+async def test_video_poster_found_inside_the_poster_folder(media_tree):
+    from mediasmith import fs
+    from textual.widgets import Static
+    from tests.mediafactory import make_png
+    movie = media_tree / "Movies" / "Alien (1979)"
+    (movie / "poster.jpg").unlink()                   # only the folder is left
+    (movie / "Alien (1979)").mkdir()
+    make_png(movie / "Alien (1979)" / "a.png", size=(12, 20))
+    fs.clear_cache()
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await settle(pilot)                          # the poster folder now
+        details = app.query_one(DetailsView)         # sorts above the video
+        details.preview(movie / "Alien.1979.mkv", immediate=True)
+        await settle(pilot)
+        row = app.query_one("#video-posters", Static)
+        assert str(row.render()) == "Alien (1979)/a.png"
+        assert "12 × 20" in str(app.query_one("#cover-video-dims").render())
 
 
 # -- video: container field + download posters ----------------------------------
@@ -2404,7 +2532,7 @@ async def test_image_offers_converts_minus_own_format(media_tree):
     app = MediasmithApp(media_tree)
     async with app.run_test(size=(120, 40)) as pilot:
         await _goto_photo(app, pilot)
-        assert _bar_names(app) == ["save", "rotate", "resize",
+        assert _bar_names(app) == ["save", "open", "rotate", "resize",
                                    "convert_jpg", "convert_tiff",
                                    "convert_webp"]         # png: no png
 
@@ -2740,10 +2868,10 @@ async def test_folder_offers_save_only(media_tree):
     async with app.run_test(size=(120, 40)) as pilot:
         await _goto_folder(app, pilot, "Empty")
         names = _bar_names(app)
-        assert names == ["save"]
-        await _goto_notes(app, pilot)                # kind: other — same
-        names = _bar_names(app)
-        assert names == ["save"]
+        assert names == ["save"]                     # a folder has no "open"
+        await _goto_notes(app, pilot)                # kind: other — a FILE,
+        names = _bar_names(app)                      # so it opens
+        assert names == ["save", "open"]
 
 
 async def test_new_directory_creates_and_descends(media_tree):

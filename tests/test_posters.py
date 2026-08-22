@@ -285,3 +285,63 @@ def test_run_search_error_fails_cleanly(tmp_path):
     _, last = drain(posters.run(video, fetch=FakeTMDB({}), api_key="k"))
     assert isinstance(last, posters.Failed)
     assert "search failed" in last.reason
+
+
+# -- find_poster: the read half — what the details pane shows -----------------
+
+
+def a_video(tmp_path, name="Alien.1979.mkv") -> Path:
+    from mediasmith import fs
+    video = tmp_path / name
+    video.write_bytes(b"not a real video")
+    fs.clear_cache()
+    return video
+
+
+def an_image(path: Path) -> Path:
+    from mediasmith import fs
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(png((10, 20, 30)))
+    fs.clear_cache()
+    return path
+
+
+def test_find_poster_prefers_art_named_after_the_video(tmp_path):
+    video = a_video(tmp_path)
+    an_image(tmp_path / "loose.jpg")
+    own = an_image(tmp_path / "Alien.1979.jpg")
+    assert posters.find_poster(video) == own
+
+
+def test_find_poster_looks_inside_the_poster_folder(tmp_path):
+    video = a_video(tmp_path)
+    inside = an_image(tmp_path / "Alien (1979)" / "a.png")   # run()'s folder
+    assert posters.find_poster(video) == inside
+
+
+def test_find_poster_falls_back_to_loose_art(tmp_path):
+    video = a_video(tmp_path)
+    loose = an_image(tmp_path / "poster.jpg")
+    assert posters.find_poster(video) == loose
+
+
+def test_find_poster_ignores_folders_that_are_not_art(tmp_path):
+    from mediasmith import fs
+    video = a_video(tmp_path)
+    (tmp_path / "Extras").mkdir()
+    (tmp_path / "Extras" / "notes.txt").write_text("x")
+    fs.clear_cache()
+    assert posters.find_poster(video) is None
+
+
+def test_find_poster_claims_nothing_loose_when_videos_share_a_folder(tmp_path):
+    from mediasmith import fs
+    video = a_video(tmp_path)
+    (tmp_path / "Aliens.1986.mkv").write_bytes(b"x")
+    an_image(tmp_path / "poster.jpg")
+    an_image(tmp_path / "Some Folder" / "b.png")
+    fs.clear_cache()
+    assert posters.find_poster(video) is None
+    # …but a folder named after the video is still unambiguous
+    mine = an_image(tmp_path / "Alien.1979" / "c.png")
+    assert posters.find_poster(video) == mine

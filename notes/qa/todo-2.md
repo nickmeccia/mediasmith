@@ -124,3 +124,73 @@ lands. (Named "todo-2.md" per your instruction during the session.)
       `ActionButton:focus`. The selected pair (primary bg / grey-90 text,
       per the palette) now applies. If you preferred the quieter look,
       that is one selector in app.py.
+
+## Session 5 (Opus, 2026-08-22) — Nick's four requests
+
+All four landed; each item below is what needs your eye.
+
+- [ ] **Video form field order** is now embedded title / container /
+      size / subtitles / posters, per your list (`details.py`,
+      `panel-video`). Nothing else moved.
+- [ ] **"open" is the new universal second button** (`^o`, every file
+      kind: audio, video, book, image, and plain files). It is video's
+      old **watch** button, renamed and generalized — same
+      `details.launch` seam, same `MEDIASMITH_OFFLINE` guard so the fuzz
+      gate doesn't spawn 100 players. A FOLDER does not get it: its ^o
+      is the **sort** button, and one context may never show two
+      buttons on one chord (`ActionBar.set_visible` asserts this).
+      Say the word if you want folders to open in Finder — then sort
+      needs a new letter.
+- [ ] **^o cost two chords their letter** (both logged like the reserved
+      substitutions above):
+
+      | kind  | button text        | was | now     |
+      |-------|--------------------|-----|---------|
+      | epub  | **^write opf**     | ^o  | **^w**  |
+      | video | **fol^derize**     | —   | **^d**  |
+
+      Video folderize wanted ^o (your "open" took it), ^f/^l/^t are the
+      subtitle suite, so "fol^derize" took ^d. ^d is an Input editing
+      chord (delete-right); the button forwards it, as with the others.
+- [ ] **Video folderize** wraps the video into a folder named after the
+      filename minus its extension, exactly like a single epub's
+      folderize: no plan preview, one move, then the video is revealed
+      inside its new folder still editable. The button hides when the
+      video already sits in a folder named after it.
+- [ ] **What rides along with the video** (your call in-session:
+      sidecars, not the video alone — a subtitle is only ever found as
+      `<video stem>.srt` beside its video):
+      · anything sharing the video's stem — `.srt`, `.en.srt`, `.nfo`,
+        a poster folder named after the file;
+      · when it is the folder's ONLY video, its art too: loose images
+        and image-only subfolders (that is `posters.run`'s folder, which
+        it names after TMDB's title, not after the file).
+      Everything else stays put — in a folder of many videos a stray
+      image belongs to no one in particular. `videofolder.py` docstring
+      states the rule; change it there.
+- [ ] **The poster now shows in the video pane** with its pixel
+      dimensions under it, the album-art/book-cover treatment. Finding
+      it moved into `posters.find_poster` (same ladder as above:
+      `<stem>.jpg` → poster folder → loose art), so what the pane shows
+      is exactly what folderize would move. The posters ROW prints a
+      folder-relative name now (`Alien (1979)/a.png`) when the poster
+      lives one level down.
+
+### …and two more you turned up mid-session
+
+- [ ] **"fetch subtitles" said subliminal wasn't installed when it was.**
+      Homebrew's subliminal 2.7.1 keg reaches its dependencies through a
+      `.pth` file (`homebrew_deps.pth` → the certifi keg), and only
+      `site.addsitedir` executes those — `subsync.import_subliminal` was
+      doing a bare `sys.path.insert`, so subliminal imported and then
+      died on `certifi`. Every ImportError read as "not installed", which
+      is why reinstalling and relaunching never helped. Fixed
+      (`site.addsitedir`, added once per process). The message now names
+      the real failure when the keg IS on disk — reinstall advice only
+      when nothing was found.
+- [ ] **Path input → tree now expands where it lands.** Committing a
+      filtered path put the cursor on the folder but left it closed
+      (`LibraryTree.anchor` expanded the CONTAINING directory only). A
+      cursor that is itself a directory is expanded too now. Unfiltered
+      Enter already behaved this way, which is why it looked
+      inconsistent.

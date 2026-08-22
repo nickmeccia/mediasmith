@@ -34,6 +34,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterator, Union
 
+from . import fs, kinds
 from .text import sanitize_filename
 
 USER_AGENT = "mediasmith/0.1"
@@ -154,6 +155,96 @@ def target_folder(video: Path, label: str) -> Path:
     if video.parts[:2] == ("/", "Volumes"):
         return STAGING_DIR / name
     return video.parent / name
+
+
+POSTER_FOLDER_BUDGET = 8
+"""How many sibling directories ``find_poster`` may list before giving
+up on rule 2. The read happens on the debounce, not in a worker (it is
+normally one cached listing), so a video parked in a folder of fifty
+subdirectories must not stall the pane on SMB — folderize's PROBE_BUDGET
+bargain: a false negative beats a NAS meltdown. The directory named
+after the video is always looked at first, so the budget only ever costs
+the image-only guess."""
+
+
+def image_only_folder(folder: Path) -> bool:
+    """A folder of nothing but images — what ``run`` leaves behind, and
+    the shape that identifies a poster folder under a title that isn't
+    the video's filename. Empty or mixed folders say no."""
+    try:
+        entries = fs.list_dir(folder)
+    except OSError:
+        return False
+    images = 0
+    for entry in entries:
+        if entry.name.startswith("."):          # .DS_Store and friends
+            continue
+        if entry.is_dir:
+            return False
+        if Path(entry.name).suffix.lower() not in kinds.IMAGE_EXTENSIONS:
+            return False
+        images += 1
+    return images > 0
+
+
+def _first_image(folder: Path) -> Path | None:
+    try:
+        entries = fs.list_dir(folder)
+    except OSError:
+        return None
+    return next((folder / e.name for e in entries
+                 if not e.is_dir and not e.name.startswith(".")
+                 and Path(e.name).suffix.lower() in kinds.IMAGE_EXTENSIONS),
+                None)
+
+
+def find_poster(video: Path) -> Path | None:
+    """The poster the details pane shows for ``video`` — the read half of
+    ``target_folder``. A preference ladder, cached listings only (NAS
+    rule), most specific first:
+
+    1. ``<video stem>.jpg`` beside the video — art named for the file;
+    2. a poster folder: a sibling directory named after the video, or —
+       when this is the folder's ONLY video, so the folder is about this
+       one film — any image-only sibling directory (``run`` names its
+       folder after TMDB's title, not after the file);
+    3. a loose sibling image, again only when this is the only video
+       here; in a folder of many videos a stray image belongs to no one
+       in particular, so nothing shows.
+    """
+    parent = video.parent
+    try:
+        entries = fs.list_dir(parent)
+    except OSError:
+        return None
+    stem = video.stem.lower()
+    sole = sum(1 for e in entries
+               if not e.is_dir
+               and Path(e.name).suffix.lower() in kinds.VIDEO_EXTENSIONS) == 1
+
+    folders: list[Path] = []
+    loose: list[Path] = []
+    for entry in entries:
+        path = parent / entry.name
+        if entry.is_dir:
+            if entry.name.lower() == stem:
+                folders.insert(0, path)             # named for the video
+            elif sole:
+                folders.append(path)
+            continue
+        if Path(entry.name).suffix.lower() not in kinds.IMAGE_EXTENSIONS:
+            continue
+        if path.stem.lower() == stem:
+            return path                             # 1: the video's own art
+        loose.append(path)
+
+    for folder in folders[:POSTER_FOLDER_BUDGET]:   # 2: a poster folder
+        if folder.name.lower() == stem or image_only_folder(folder):
+            image = _first_image(folder)
+            if image is not None:
+                return image
+
+    return loose[0] if sole and loose else None     # 3: loose art
 
 
 def dhash(data: bytes, size: int = 8) -> int | None:

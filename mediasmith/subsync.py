@@ -40,6 +40,7 @@ from __future__ import annotations
 import os
 import re
 import shutil
+import site
 import subprocess
 import sys
 import tempfile
@@ -158,6 +159,7 @@ Event = Union[DirStarted, DirMissing, DirScanned, FileStarted, ReleaseFound,
 # ─────────────────────────────────────────────────────────────────────────────
 
 SUBLIMINAL_PYTHONPATH = None  # auto-detected below
+_SITE_ADDED = False
 
 
 def find_subliminal_pythonpath() -> str | None:
@@ -182,10 +184,17 @@ class _Subliminal:
 
 
 def import_subliminal() -> "_Subliminal":
-    global SUBLIMINAL_PYTHONPATH
+    global SUBLIMINAL_PYTHONPATH, _SITE_ADDED
     SUBLIMINAL_PYTHONPATH = find_subliminal_pythonpath()
-    if SUBLIMINAL_PYTHONPATH:
-        sys.path.insert(0, SUBLIMINAL_PYTHONPATH)
+    if SUBLIMINAL_PYTHONPATH and not _SITE_ADDED:
+        # site.addsitedir, NOT sys.path.insert (2026-08-22): a Homebrew
+        # formula venv reaches its dependency kegs through .pth files
+        # (subliminal 2.7.1 ships homebrew_deps.pth, pointing at the
+        # certifi keg), and only addsitedir executes those. A bare
+        # sys.path.insert finds subliminal and then dies importing
+        # certifi — which read as "subliminal not installed".
+        site.addsitedir(SUBLIMINAL_PYTHONPATH)
+        _SITE_ADDED = True
     from subliminal import (scan_video, download_best_subtitles,
                             Video, compute_score)
     from babelfish import Language
@@ -202,9 +211,15 @@ def check_requirements() -> list[str]:
         problems.append("Missing tool: alass-cli — install with: brew install alass")
     try:
         import_subliminal()
-    except ImportError:
-        problems.append("subliminal Python package not found — "
-                        "install with: brew install subliminal")
+    except ImportError as error:
+        if SUBLIMINAL_PYTHONPATH is None:
+            problems.append("subliminal Python package not found — "
+                            "install with: brew install subliminal")
+        else:
+            # it IS installed; say what actually broke instead of sending
+            # Nick to reinstall a package he already has
+            problems.append(f"subliminal found at {SUBLIMINAL_PYTHONPATH} "
+                            f"but could not be imported — {error}")
     return problems
 
 

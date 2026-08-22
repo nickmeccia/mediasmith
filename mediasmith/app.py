@@ -187,7 +187,7 @@ class MediasmithApp(App):
     .fval-static { color: $text-fg-idle; }
     DetailsView:focus-within .fval-static { color: $text-fg-focus; }
     .cover { width: auto; height: 16; margin: 1 0 0 0; }
-    /* pixel dimensions printed under a cover (album art, book cover) */
+    /* pixel dimensions under a cover (album art, book cover, poster) */
     .cover-dims { height: 1; color: $label-fg-idle; }
     DetailsView:focus-within .cover-dims { color: $label-fg-focus; }
     /* the audio art is a form field: image top-aligned with its label,
@@ -483,12 +483,12 @@ class MediasmithApp(App):
         self.reveal_details()                   # narrow: display, then focus
         details.focus()
 
-    async def on_details_view_book_sorted(
-            self, ev: DetailsView.BookSorted) -> None:
-        # the ebook moved into a brand-new wrapper folder beside where it
+    async def on_details_view_wrapped(
+            self, ev: DetailsView.Wrapped) -> None:
+        # the file moved into a brand-new wrapper folder beside where it
         # was: re-list that directory in place, expand the wrapper, cursor
-        # on the book, then descend into its (editable) details — new-
-        # folder's reveal, one level deeper (ev.path is the book itself)
+        # on the file, then descend into its (editable) details — new-
+        # folder's reveal, one level deeper (ev.path is the file itself)
         tree = self.query_one(LibraryTree)
         directory = tree._node_for(ev.path.parent.parent)   # the old dir
         if directory is not None:

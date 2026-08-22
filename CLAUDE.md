@@ -248,7 +248,18 @@ Test-driven, calibrated by layer — this replaces Nick-as-only-QA:
    responsive wrapping), cut/copy/paste as tree commands, the
    Button Refactor (todo-4 words/keys/order; reserved-chord
    substitutions logged in notes/qa/todo-2.md), view-scoped chords,
-   and the sub-form focus lockdown. ⬅ you are here
+   and the sub-form focus lockdown. Session 5 (2026-08-22, Opus —
+   Nick's four asks, all logged in notes/qa/todo-2.md): the video
+   form's field order; "open" (^o) as the universal SECOND button on
+   every file kind, generalized from video's old "watch" (which cost
+   "write opf" its ^o → ^w); video folderize (videofolder.py — wrap a
+   video into a folder named after its filename, sidecars and art
+   riding along, no preview, single-epub sort's shape); and the video
+   poster shown in the pane like album art, with the poster ladder now
+   in posters.find_poster. Same session, two bugs Nick hit: subliminal
+   discovery (a Homebrew keg reaches its deps through .pth files —
+   site.addsitedir, never sys.path.insert) and path-input navigation
+   (LibraryTree.anchor expands a directory cursor). ⬅ you are here
 4. **Batch operations.** Partially done ahead of schedule: shift-range
    and album-folder bulk editing shipped (2026-07-10); space-marking +
    batch bar still to come as a third gesture over the same selection

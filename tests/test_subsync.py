@@ -200,3 +200,42 @@ def test_subtitle_ext_detection():
     assert subsync.subtitle_ext(ASS_BYTES) == "ass"
     assert subsync.subtitle_ext(b"WEBVTT\n") is None
     assert subsync.subtitle_ext(b"") is None
+
+
+# -- Homebrew discovery: the keg reaches its deps through a .pth ---------------
+
+
+def test_import_subliminal_processes_the_kegs_pth_files(tmp_path, monkeypatch):
+    """A Homebrew formula venv points at its dependency kegs with .pth
+    files (subliminal 2.7.1 ships homebrew_deps.pth → the certifi keg),
+    and only ``site.addsitedir`` executes those. A bare sys.path.insert
+    imported subliminal and then died on certifi, which surfaced as
+    "subliminal Python package not found" (2026-08-22)."""
+    keg = tmp_path / "site-packages"
+    dep = tmp_path / "dep"
+    (keg / "subliminal").mkdir(parents=True)
+    dep.mkdir()
+    (keg / "homebrew_deps.pth").write_text(
+        f"import site; site.addsitedir({str(dep)!r})\n")
+    monkeypatch.setattr(subsync, "find_subliminal_pythonpath", lambda: str(keg))
+    monkeypatch.setattr(subsync, "_SITE_ADDED", False)
+    monkeypatch.setattr("sys.path", list(__import__("sys").path))
+    with pytest.raises(ImportError):        # the stub package is empty
+        subsync.import_subliminal()
+    import sys
+    assert str(dep) in sys.path             # the .pth ran
+
+
+def test_check_requirements_names_the_real_import_failure(monkeypatch):
+    monkeypatch.setattr(subsync, "SUBLIMINAL_PYTHONPATH",
+                        "/opt/keg/site-packages")
+
+    def boom():
+        raise ImportError("No module named 'certifi'")
+
+    monkeypatch.setattr(subsync, "import_subliminal", boom)
+    problems = subsync.check_requirements()
+    reported = [p for p in problems if "subliminal" in p]
+    assert len(reported) == 1
+    assert "certifi" in reported[0]         # not "install with: brew install"
+    assert "/opt/keg/site-packages" in reported[0]

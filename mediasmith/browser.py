@@ -250,9 +250,17 @@ class LibraryTree(DirectoryTree):
 
     async def anchor(self, directory: Path, cursor: Path | None = None) -> None:
         """Show ``directory`` in the context of its parent: the parent is
-        the root row, ``directory`` is expanded, cursor on ``cursor``."""
+        the root row, ``directory`` is expanded, cursor on ``cursor``.
+
+        A cursor that is itself a directory is expanded too (Nick,
+        2026-08-22): arriving somewhere from the path input should show
+        what is there, not a closed folder. Filtered navigation lands
+        here through ``end_filter``."""
         parent = directory.parent
-        self._pending_restore = ([directory], cursor or directory)
+        expanded = [directory]                  # parents precede children
+        if cursor is not None and cursor != directory and cursor.is_dir():
+            expanded.append(cursor)
+        self._pending_restore = (expanded, cursor or directory)
         if parent != directory and str(parent) != str(self.path):
             self.path = parent          # watch_path chains the restore
         else:

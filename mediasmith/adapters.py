@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import epub as epublib
-from . import fs, kinds
+from . import fs, kinds, posters
 
 AUDIO_FIELDS = ['title', 'artist', 'albumartist', 'album', 'genre',
                 'date', 'tracknumber', 'discnumber', 'composer']
@@ -103,18 +103,32 @@ def _read_video(path: Path) -> VideoDetails:
     subtitle = next((path.with_suffix(sfx).name
                      for sfx in kinds.SUBTITLE_SUFFIXES
                      if path.with_suffix(sfx).exists()), None)
-    poster = next((path.parent / e.name
-                   for e in fs.list_dir(path.parent)
-                   if not e.is_dir
-                   and Path(e.name).suffix.lower() in kinds.IMAGE_EXTENSIONS),
-                  None)
+    # the poster ladder lives with the poster engine (posters.find_poster);
+    # a poster inside its own folder shows as "Alien (1979)/poster.jpg"
+    poster = posters.find_poster(path)
     return VideoDetails(
         size=path.stat().st_size,
         container=path.suffix.lstrip(".").lower(),
         subtitle_name=subtitle,
-        poster_name=poster.name if poster else None,
-        poster_bytes=poster.read_bytes() if poster else None,
+        poster_name=_relative_name(poster, path.parent) if poster else None,
+        poster_bytes=_read_bytes(poster) if poster else None,
     )
+
+
+def _relative_name(path: Path, root: Path) -> str:
+    """A sibling's display name: bare when it sits beside the video,
+    "folder/name.jpg" when it sits one level down."""
+    try:
+        return str(path.relative_to(root))
+    except ValueError:
+        return path.name
+
+
+def _read_bytes(path: Path) -> bytes | None:
+    try:
+        return path.read_bytes()
+    except OSError:
+        return None
 
 
 def _read_book(path: Path) -> BookDetails:

@@ -33,18 +33,19 @@ KEYS = ([b"\x1b[B"] * 5 + [b"\x1b[A"] * 3
         + [b"\x1b[C", b"\x1b[D", b" ", b"\t", b"\r", b"c",
            b"\x1b[1;2B", b"\x1b[1;2A",   # shift+↓/↑: selection stress
            b"\x1b", b"\x1b", b"\x1f",    # esc (narrow view close), ctrl+/
-           b"\x13", b"\x0f", b"\x06",    # ^s ^o ^f: action-bar chords
-           b"\x0b", b"\x15", b"\x16", b"\x17",   # ^k ^u ^v ^w: subtitles
+           b"\x13", b"\x0f", b"\x06",    # ^s ^o ^f: save, open, fetch subs
+           b"\x0b", b"\x15", b"\x16", b"\x17",   # ^k ^u ^v ^w: upload
+                                         # cover, paste, write opf
            b"\x18",                      # ^x: cut / strip multi-artist
            b"\x0e",                      # ^n: new directory
            b"\x16",                      # ^v: paste
            b"\x1b[1;5D",                 # ctrl+←: collapse level
-           b"\x04",                      # ^d: download posters
+           b"\x04",                      # ^d: folderize a video
            b"\x05",                      # ^e: split omnibus / resize div
            b"\x01",                      # ^a: plan apply / resize apply
            b"\x10", b"\x02", b"\x19",    # ^p ^b ^y: converts (books are
                                          # OFFLINE-guarded; images run)
-           b"\x14", b"\x07",             # ^t ^g: extract cover, create opf
+           b"\x14", b"\x07",             # ^t ^g: extract cover, make gif
            b"\x1b[3;5~",                 # ctrl+del: trash (OFFLINE-guarded)
            b"\x1b[1;2C", b"\x1b[1;2D",   # shift+→/←: shift-div nudges /
                                          # shift+←: collapse the tree level

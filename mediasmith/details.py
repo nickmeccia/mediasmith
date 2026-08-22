@@ -31,7 +31,7 @@ from textual.widgets import Button, Checkbox, Input, Label, Static
 
 from . import (adapters, artfetch, booksort, calibre, epub, folderize, fs,
                gif, imageops, kinds, multiartist, omnibus, posters, srt,
-               standardize, subsync)
+               standardize, subsync, videofolder)
 from .actions import Action, ActionBar, ActionButton
 from .images import image_widget
 
@@ -60,12 +60,18 @@ PANE_ACTIONS = [
     # view-scoped now: they fire only while Details view holds focus
     # (App.on_key), with FieldInput forwarding the Input-eaten ones.
     Action("save", "save", "s", button_id="save-btn"),
+    # every file kind can be handed to the OS (Nick, 2026-08-22): "open"
+    # is ALWAYS the second button, so it lives second in this list — the
+    # bar composes in list order and context only shows/hides. It
+    # replaces video's old "watch"; ^o cost "write opf" its chord (→ ^w)
+    Action("open", "open", "o"),
     # -- book (epub) — spec order: split omnibus rides right after save
     Action("split_omnibus", "split omnibus", "b"),
     # ^m is reserved (enter alias): ^t stands in — "conver^t to mobi"
     Action("convert_mobi", "convert to mobi", "t"),
     Action("convert_azw3", "convert to azw3", "a"),
-    Action("create_opf", "write opf", "o"),
+    # ^o is "open" everywhere now: ^w stands in — "^write opf"
+    Action("create_opf", "write opf", "w"),
     # ^c is reserved (interrupt): ^n stands in — "clea^n". The tree's ^n
     # (new directory) lives in a different state, so no collision.
     Action("standardize", "clean", "n"),
@@ -85,15 +91,19 @@ PANE_ACTIONS = [
     Action("convert_png", "convert to png", "p"),
     Action("convert_tiff", "convert to tiff", "t"),
     Action("convert_webp", "convert to webp", "w"),
-    # -- video: the subtitle suite, then watch/posters/gif (spec order)
+    # -- video: the subtitle suite, then posters/gif (spec order, minus
+    # "watch" — it is the universal "open" button above now)
     Action("get_subs", "fetch subtitles", "f"),
     # ^c reserved: ^l stands in — "c^lean subs"
     Action("clean_subs", "clean subs", "l"),
     # ^h is reserved (backspace alias): ^t stands in — "shif^t subs"
     Action("shift_subs", "shift subs", "t"),
-    Action("watch", "watch", "w"),
     Action("download_posters", "download posters", "p"),
     Action("gif", "make gif", "g"),
+    # the ebook gesture on a video (2026-08-22); ^f/^l/^t are the
+    # subtitle suite and ^o is "open", so "fol^derize" takes ^d (an Input
+    # editing chord, which FieldInput forwards to a visible button)
+    Action("folderize_video", "folderize", "d"),
     # -- folder probes (todo-4 lists no renames for these): sort keeps
     # its folder word so a folder never shows two "folderize" buttons
     Action("sort", "sort", "o"),
@@ -676,11 +686,12 @@ class DetailsView(VerticalScroll, can_focus=True):
             super().__init__()
             self.path = path
 
-    class BookSorted(Message):
-        """A single ebook was renamed and wrapped into its own new directory
-        (``Author Sort - Title/``); ``path`` is where it landed. The tree
+    class Wrapped(Message):
+        """A single file was wrapped into its own new directory beside
+        where it was (an ebook into ``Author Sort - Title/``, a video into
+        a folder named after it); ``path`` is where it landed. The tree
         should re-list, expand the wrapper, and drop the cursor on the
-        book — editable, like new-folder's flow one level deeper."""
+        file — editable, like new-folder's flow one level deeper."""
 
         def __init__(self, path: Path) -> None:
             super().__init__()
@@ -689,6 +700,15 @@ class DetailsView(VerticalScroll, can_focus=True):
     def can_edit(self) -> bool:
         """Focus may enter this pane only when the shown kind is editable."""
         return self.kind in EDITABLE_KINDS and self._readable
+
+    def _open_target(self) -> Path | None:
+        """The single file "open" hands to the OS, or None. Any one file
+        qualifies — a folder does not (its ^o is the sort button), and
+        neither does a bulk selection (one gesture, one file)."""
+        if (self.paths is not None or self.path is None
+                or self.kind in (None, kinds.FOLDER)):
+            return None
+        return self.path        # the kind already says it is a file
 
     def __init__(self, *, images: str = "auto", **kw) -> None:
         super().__init__(**kw)
@@ -770,9 +790,9 @@ class DetailsView(VerticalScroll, can_focus=True):
 
         with Vertical(id="panel-video", classes="panel"):
             width = len("embedded title") + LABEL_GUTTER
-            yield self._row("size", "video-size", width)
-            yield self._row("container", "video-container", width)
             yield self._row("embedded title", "video-title", width)
+            yield self._row("container", "video-container", width)
+            yield self._row("size", "video-size", width)
             yield self._row("subtitles", "video-subs", width)
             yield self._row("posters", "video-posters", width)
             with Vertical(id="shift-div"):
@@ -795,7 +815,10 @@ class DetailsView(VerticalScroll, can_focus=True):
                     Action("gif_make", "save", "s",
                            button_id="gif-apply-btn"),
                     id="gif-bar")
+            # the poster, with its pixel dimensions under it — album art
+            # and the book cover's twin (Nick, 2026-08-22)
             yield image_widget(self.images, id="cover-video")
+            yield Label("", id="cover-video-dims", classes="cover-dims")
 
         with Vertical(id="panel-book", classes="panel"):
             yield EditForm(12, id="form-book")
@@ -901,7 +924,8 @@ class DetailsView(VerticalScroll, can_focus=True):
 
     def _set_cover_dims(self, id: str, size: tuple[int, int] | None) -> None:
         """Print the cover's pixel dimensions ('600 × 600') beneath it, for
-        the kinds that carry a dims label (album art, book cover)."""
+        the kinds that carry a dims label (album art, book cover, video
+        poster)."""
         labels = self.query(f"#{id}")
         if not labels:
             return
@@ -1321,6 +1345,11 @@ class DetailsView(VerticalScroll, can_focus=True):
         else:
             if self.can_edit():
                 names.add("save")
+                # "open" rides the same gate as save, not because it
+                # writes anything but because a pane that can't take
+                # focus has no reachable buttons
+                if self._open_target() is not None:
+                    names.add("open")           # every single file, 2nd
                 if (self.kind == kinds.BOOK and self.paths is None
                         and self.path is not None):
                     suffix = self.path.suffix.lower()
@@ -1354,8 +1383,10 @@ class DetailsView(VerticalScroll, can_focus=True):
                           else "sort")
             if self._multiartist_ready:
                 names.add("strip_multi_artist")
-            if self._video_target() is not None:
-                names |= {"get_subs", "watch", "download_posters", "gif"}
+            if (video := self._video_target()) is not None:
+                names |= {"get_subs", "download_posters", "gif"}
+                if videofolder.probe(video):    # free: a name comparison
+                    names.add("folderize_video")
                 if self._video_srt is not None:
                     names |= {"clean_subs", "shift_subs"}
                 if self._shift_open:            # the write manifest: ^s
@@ -2335,7 +2366,7 @@ class DetailsView(VerticalScroll, can_focus=True):
     # The fourth plan-shaped action (booksort.py) — folderize's exact
     # shape on the shared plan_apply/plan_cancel pair. On a single epub the
     # same engine runs one-file and immediately (no preview): rename + wrap,
-    # then reveal the book in its new directory, still editable (BookSorted).
+    # then reveal the book in its new directory, still editable (Wrapped).
     # One _sort_ready flag serves both contexts — they never coexist.
 
     @work(thread=True, exclusive=True, group="sort-probe")
@@ -2399,7 +2430,7 @@ class DetailsView(VerticalScroll, can_focus=True):
             return
         self.notify(f"wrapped into {new_path.parent.name}/", title="sort")
         fs.clear_cache()                        # the subtree just changed
-        self.post_message(self.BookSorted(new_path))
+        self.post_message(self.Wrapped(new_path))
 
     @work(thread=True, exclusive=True, group="sort-plan")
     def _sort_plan_worker(self, root: Path) -> None:
@@ -2781,21 +2812,24 @@ class DetailsView(VerticalScroll, can_focus=True):
             parts.append(f"markup stripped from {n} cue{'s' if n != 1 else ''}")
         self.notify(" · ".join(parts), title=f"clean subs — {srt_path.name}")
 
-    def action_watch(self) -> None:
-        """Launch the video in the default player (subs auto-load when
-        named like the video, which get-subs guarantees)."""
-        video = self._video_target()
-        if video is None:
+    def action_open(self) -> None:
+        """Hand the file to the OS — the video pane's old "watch" button,
+        now every file kind's (Nick, 2026-08-22). On a video this is still
+        the player (subs auto-load when named like the video, which
+        get-subs guarantees); on an mp3 it is the music app, on an epub
+        the reader."""
+        path = self._open_target()
+        if path is None:
             return
         if os.environ.get(artfetch.OFFLINE_ENV):
             # the fuzz gate presses everything; don't open 100 players
-            self.notify("watch disabled (MEDIASMITH_OFFLINE set)",
-                        title="watch")
+            self.notify("open disabled (MEDIASMITH_OFFLINE set)",
+                        title="open")
             return
         try:
-            launch(video)
+            launch(path)
         except OSError as error:
-            self.notify(str(error), title="watch", severity="error")
+            self.notify(str(error), title="open", severity="error")
 
     # -- download posters: TMDB fetch into a curation folder (posters.py) ---------
 
@@ -2907,6 +2941,42 @@ class DetailsView(VerticalScroll, can_focus=True):
             lambda path, ow, f=fps, w=width: gif.make_gif(
                 path, fps=f, width=w, overwrite=ow),
             video)
+
+    # -- folderize a video: wrap it (and its companions) into its own folder -------
+    # The ebook "folderize" gesture on a video (videofolder.py). Single
+    # file, deterministic target — so it runs immediately, no plan
+    # preview, exactly like a single epub's sort, and reveals the video in
+    # its new directory still editable (Wrapped).
+
+    def action_folderize_video(self) -> None:
+        video = self._video_target()
+        if video is None or not videofolder.probe(video):
+            return
+        self.notify(f"{video.name} → {video.stem}/", title="folderize")
+        self._folderize_video_worker(video)
+
+    @work(thread=True, exclusive=True, group="folderize-video")
+    def _folderize_video_worker(self, video: Path) -> None:
+        landed, moved, errors = videofolder.execute(video)
+        self.app.call_from_thread(self._folderize_video_done, video, landed,
+                                  moved, errors)
+
+    def _folderize_video_done(self, video: Path, landed: Path, moved: int,
+                              errors: list[tuple[Path, str]]) -> None:
+        if landed == video:                     # the video itself never moved
+            _, reason = errors[0] if errors else (None, "nothing to move")
+            self.notify(f"{video.name}: {reason}", title="folderize",
+                        severity="error", timeout=8)
+            return
+        parts = [f"{moved} file{'s' if moved != 1 else ''} → "
+                 f"{landed.parent.name}/"]
+        if errors:
+            path, reason = errors[0]
+            parts.append(f"{len(errors)} left behind — {path.name}: {reason}")
+        self.notify(" · ".join(parts), title="folderize", timeout=8,
+                    severity="warning" if errors else "information")
+        fs.clear_cache()                        # the subtree just changed
+        self.post_message(self.Wrapped(landed))
 
     # -- shift subs: the inline wizard div ----------------------------------------
 
