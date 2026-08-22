@@ -8,11 +8,10 @@ and the write half takes plain field dicts back.
 from __future__ import annotations
 
 import io
-import shutil
-import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from . import container
 from . import epub as epublib
 from . import fs, kinds, posters
 
@@ -442,17 +441,8 @@ def create_opf(path: Path, overwrite: bool = False) -> Path:
 def probe_video_title(path: Path) -> str | None:
     """The container's embedded title tag (what VLC shows), or None.
 
-    Slow (spawns ffprobe) — run it in a worker thread, and check the
-    selection hasn't moved before applying the result.
+    A header read now (``container.read_title``), not an ffprobe spawn —
+    fast enough that the worker thread is politeness rather than
+    necessity. The seam is kept: the UI monkeypatches this name.
     """
-    if not shutil.which("ffprobe"):
-        return None
-    try:
-        result = subprocess.run(
-            ["ffprobe", "-v", "quiet", "-show_entries", "format_tags=title",
-             "-of", "default=noprint_wrappers=1:nokey=1", str(path)],
-            capture_output=True, text=True, timeout=15)
-        title = result.stdout.strip()
-        return title or None
-    except (OSError, subprocess.SubprocessError):
-        return None
+    return container.read_title(path)

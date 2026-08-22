@@ -3,6 +3,7 @@
 from pathlib import Path
 
 from mediasmith import adapters
+from mediasmith import details as details_mod
 from mediasmith.app import LOGO, MediasmithApp
 from mediasmith.browser import LibraryTree, PathInput, TreeView, parse_view
 from mediasmith.strip import CommandStrip
@@ -2324,6 +2325,45 @@ async def test_get_subs_honors_offline(media_tree, monkeypatch):
         await pilot.press("enter", "ctrl+f")
         await pilot.pause(0.5)
         assert app.is_running
+
+
+# -- details.launch: the one shell-out with no library behind it ---------------
+
+
+def test_launch_uses_the_platform_opener(tmp_path, monkeypatch):
+    """macOS gets `open`, everything else `xdg-open`. Before 2026-08-22 this
+    hardcoded `open`, which silently did the wrong thing off macOS."""
+    target = tmp_path / "clip.mkv"
+    target.write_bytes(b"x")
+    seen = []
+    monkeypatch.setattr(details_mod.subprocess, "Popen",
+                        lambda argv, **kw: seen.append(argv))
+
+    monkeypatch.setattr(details_mod.sys, "platform", "darwin")
+    details_mod.launch(target)
+    assert seen[-1] == ["open", str(target)]
+
+    monkeypatch.setattr(details_mod.sys, "platform", "linux")
+    details_mod.launch(target)
+    assert seen[-1] == ["xdg-open", str(target)]
+
+
+def test_launch_uses_startfile_on_windows(tmp_path, monkeypatch):
+    """os.startfile exists only on Windows, so it is reached through the
+    platform branch and never through Popen."""
+    target = tmp_path / "clip.mkv"
+    target.write_bytes(b"x")
+    started = []
+
+    def no_popen(*args, **kwargs):
+        raise AssertionError("Windows must not reach Popen")
+
+    monkeypatch.setattr(details_mod.sys, "platform", "win32")
+    monkeypatch.setattr(details_mod.os, "startfile", started.append,
+                        raising=False)
+    monkeypatch.setattr(details_mod.subprocess, "Popen", no_popen)
+    details_mod.launch(target)
+    assert started == [target]
 
 
 async def test_open_launches_default_app(media_tree, monkeypatch):

@@ -202,33 +202,19 @@ def test_subtitle_ext_detection():
     assert subsync.subtitle_ext(b"") is None
 
 
-# -- Homebrew discovery: the keg reaches its deps through a .pth ---------------
+# -- subliminal is a real dependency now --------------------------------------
+#
+# The two tests that used to live here covered the Homebrew keg discovery:
+# that `site.addsitedir` ran the keg's homebrew_deps.pth, and that
+# check_requirements named the underlying ImportError instead of telling Nick
+# to reinstall a package he already had. Both described the keg indirection
+# itself, which no longer exists — subliminal is in pyproject.toml and imports
+# like any other dependency. Retired 2026-08-22 with the machinery, not
+# because the behavior stopped mattering.
 
 
-def test_import_subliminal_processes_the_kegs_pth_files(tmp_path, monkeypatch):
-    """A Homebrew formula venv points at its dependency kegs with .pth
-    files (subliminal 2.7.1 ships homebrew_deps.pth → the certifi keg),
-    and only ``site.addsitedir`` executes those. A bare sys.path.insert
-    imported subliminal and then died on certifi, which surfaced as
-    "subliminal Python package not found" (2026-08-22)."""
-    keg = tmp_path / "site-packages"
-    dep = tmp_path / "dep"
-    (keg / "subliminal").mkdir(parents=True)
-    dep.mkdir()
-    (keg / "homebrew_deps.pth").write_text(
-        f"import site; site.addsitedir({str(dep)!r})\n")
-    monkeypatch.setattr(subsync, "find_subliminal_pythonpath", lambda: str(keg))
-    monkeypatch.setattr(subsync, "_SITE_ADDED", False)
-    monkeypatch.setattr("sys.path", list(__import__("sys").path))
-    with pytest.raises(ImportError):        # the stub package is empty
-        subsync.import_subliminal()
-    import sys
-    assert str(dep) in sys.path             # the .pth ran
-
-
-def test_check_requirements_names_the_real_import_failure(monkeypatch):
-    monkeypatch.setattr(subsync, "SUBLIMINAL_PYTHONPATH",
-                        "/opt/keg/site-packages")
+def test_check_requirements_reports_a_broken_subliminal_import(monkeypatch):
+    """A failed import is now a broken install, not a missing formula."""
 
     def boom():
         raise ImportError("No module named 'certifi'")
@@ -237,5 +223,5 @@ def test_check_requirements_names_the_real_import_failure(monkeypatch):
     problems = subsync.check_requirements()
     reported = [p for p in problems if "subliminal" in p]
     assert len(reported) == 1
-    assert "certifi" in reported[0]         # not "install with: brew install"
-    assert "/opt/keg/site-packages" in reported[0]
+    assert "certifi" in reported[0]
+    assert "brew install subliminal" not in reported[0]

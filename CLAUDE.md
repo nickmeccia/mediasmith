@@ -259,13 +259,27 @@ Test-driven, calibrated by layer — this replaces Nick-as-only-QA:
    in posters.find_poster. Same session, two bugs Nick hit: subliminal
    discovery (a Homebrew keg reaches its deps through .pth files —
    site.addsitedir, never sys.path.insert) and path-input navigation
-   (LibraryTree.anchor expands a directory cursor). ⬅ you are here
+   (LibraryTree.anchor expands a directory cursor). Session 6
+   (2026-08-22, Opus — logged in notes/qa/todo-2.md): three shell-outs
+   retired ahead of the distributable-binary question. subliminal is a
+   pyproject dependency instead of a Homebrew keg spliced in with
+   site.addsitedir (import_subliminal survives only as the test seam);
+   ffprobe is replaced by container.py (mutagen ©nam for mp4/m4v,
+   enzyme EBML for mkv — .avi/.mov unhandled on purpose, 0 of 71
+   sampled library files carry a title tag); and details.launch is
+   cross-platform. ffmpeg (gif), alass, and Calibre convert remain
+   external and are the irreducible three. ⬅ you are here
 4. **Batch operations.** Partially done ahead of schedule: shift-range
    and album-folder bulk editing shipped (2026-07-10); space-marking +
    batch bar still to come as a third gesture over the same selection
    set (`LibraryTree._selection_paths` / `DetailsPane.preview_bulk`).
 5. **Responsive/mobile** — narrow-width breakpoints for tmux-from-phone;
    tree-first two-step flow on narrow screens.
+
+Distributable binary: `notes/claude/todo-binary.md` is the STANDING
+ANSWER — what a binary buys, the four code blockers, the three external
+tools that cannot be bundled (ffmpeg, alass, Calibre convert), and why
+`uv tool install` keeps winning. Read it before re-deriving the question.
 
 Session notes: `notes/qa/todo-2.md` is the ACTIVE QA ledger — what
 awaits Nick's manual pass, chord renames, and parked UX decisions.

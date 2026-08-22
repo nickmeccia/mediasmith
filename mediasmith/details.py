@@ -19,6 +19,7 @@ from __future__ import annotations
 import io
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 from textual import work
@@ -376,9 +377,20 @@ SHIFT_HINT = "←→ 0.1s · ⇧←→ 1s · ⇞⇟ 10s · ^s write · esc close
 
 
 def launch(path: Path) -> None:
-    """Open a file in its default app (the watch action's seam —
-    monkeypatch this in tests, subprocess.run shares Popen)."""
-    subprocess.Popen(["open", str(path)])
+    """Open a file in its default app (the ^open action's seam —
+    monkeypatch this in tests, subprocess.run shares Popen).
+
+    Handing a path to the desktop is the one shell-out with no library
+    behind it: every package that claims to wrap this is a subprocess
+    call plus a platform check, so mediasmith does the platform check
+    itself rather than take a dependency for three lines.
+    """
+    if sys.platform == "win32":
+        os.startfile(path)                              # noqa: S606
+        return
+    opener = "open" if sys.platform == "darwin" else "xdg-open"
+    subprocess.Popen([opener, str(path)],
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 class ShiftControl(Static, can_focus=True):

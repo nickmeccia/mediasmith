@@ -91,7 +91,7 @@ def test_other_details(media_tree):
 
 
 def test_probe_video_title_survives_junk(media_tree):
-    # Fake video: ffprobe (if present) fails, and that must mean None, not a raise.
+    # Fake video: the container parser fails, and that must mean None, not a raise.
     title = adapters.probe_video_title(
         media_tree / "Movies" / "Alien (1979)" / "Alien.1979.mkv")
     assert title is None

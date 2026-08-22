@@ -40,15 +40,13 @@ from __future__ import annotations
 import os
 import re
 import shutil
-import site
 import subprocess
-import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator, Union
 
-from . import kinds
+from . import container, kinds
 
 VIDEO_EXTENSIONS = kinds.VIDEO_EXTENSIONS
 SUBTITLE_EXTENSIONS = kinds.SUBTITLE_SUFFIXES
@@ -155,26 +153,18 @@ Event = Union[DirStarted, DirMissing, DirScanned, FileStarted, ReleaseFound,
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# subliminal discovery (Homebrew install lives in its own venv)
+# subliminal (a real dependency — see the note below)
 # ─────────────────────────────────────────────────────────────────────────────
-
-SUBLIMINAL_PYTHONPATH = None  # auto-detected below
-_SITE_ADDED = False
-
-
-def find_subliminal_pythonpath() -> str | None:
-    for base in ['/usr/local/Cellar/subliminal', '/opt/homebrew/Cellar/subliminal']:
-        if not os.path.exists(base):
-            continue
-        for version in sorted(os.listdir(base), reverse=True):
-            site = os.path.join(base, version, 'libexec/lib')
-            if not os.path.exists(site):
-                continue
-            for pyver in sorted(os.listdir(site), reverse=True):
-                candidate = os.path.join(site, pyver, 'site-packages')
-                if os.path.isdir(candidate):
-                    return candidate
-    return None
+#
+# This used to hunt for a Homebrew keg under /opt/homebrew/Cellar/subliminal
+# and splice it in with site.addsitedir. subliminal is a pure-Python package
+# that pip-installs cleanly, so it is a plain dependency now and the whole
+# discovery apparatus is gone — with it went the .pth indirection that made a
+# missing certifi read as "subliminal not found" (2026-08-22).
+#
+# import_subliminal() survives as the TEST SEAM, not as discovery: the engine
+# takes its subliminal callables through this one bag so tests can monkeypatch
+# it (tests/test_subsync.py) and drive run() with no network.
 
 
 class _Subliminal:
@@ -184,20 +174,9 @@ class _Subliminal:
 
 
 def import_subliminal() -> "_Subliminal":
-    global SUBLIMINAL_PYTHONPATH, _SITE_ADDED
-    SUBLIMINAL_PYTHONPATH = find_subliminal_pythonpath()
-    if SUBLIMINAL_PYTHONPATH and not _SITE_ADDED:
-        # site.addsitedir, NOT sys.path.insert (2026-08-22): a Homebrew
-        # formula venv reaches its dependency kegs through .pth files
-        # (subliminal 2.7.1 ships homebrew_deps.pth, pointing at the
-        # certifi keg), and only addsitedir executes those. A bare
-        # sys.path.insert finds subliminal and then dies importing
-        # certifi — which read as "subliminal not installed".
-        site.addsitedir(SUBLIMINAL_PYTHONPATH)
-        _SITE_ADDED = True
-    from subliminal import (scan_video, download_best_subtitles,
-                            Video, compute_score)
     from babelfish import Language
+    from subliminal import (Video, compute_score, download_best_subtitles,
+                            scan_video)
     s = _Subliminal()
     s.scan_video, s.download_best_subtitles = scan_video, download_best_subtitles
     s.Video, s.compute_score, s.Language = Video, compute_score, Language
@@ -212,14 +191,10 @@ def check_requirements() -> list[str]:
     try:
         import_subliminal()
     except ImportError as error:
-        if SUBLIMINAL_PYTHONPATH is None:
-            problems.append("subliminal Python package not found — "
-                            "install with: brew install subliminal")
-        else:
-            # it IS installed; say what actually broke instead of sending
-            # Nick to reinstall a package he already has
-            problems.append(f"subliminal found at {SUBLIMINAL_PYTHONPATH} "
-                            f"but could not be imported — {error}")
+        # subliminal ships with mediasmith now, so this is a broken install
+        # (or a frozen build missing its entry-point metadata), not a
+        # missing brew formula — say what actually failed.
+        problems.append(f"subliminal could not be imported — {error}")
     return problems
 
 
@@ -316,24 +291,17 @@ def read_release_name(video_path: Path) -> str | None:
     """
     Return the release name stored in the file's container 'title' tag
     (e.g. 'Aliens.1986.SE.1080p.BluRay.x265-RARBG'), which survives renaming
-    the file. This is the release info VLC shows in its title bar. Needs ffprobe
-    (ships with ffmpeg); returns None if unavailable or untagged.
+    the file. This is the release info VLC shows in its title bar. Read from
+    the container header directly (``container.read_title``) — no ffprobe;
+    returns None if the format is unhandled or the file is untagged.
     """
-    if not shutil.which("ffprobe"):
+    title = container.read_title(video_path)
+    if not title:
         return None
-    try:
-        out = subprocess.run(
-            ["ffprobe", "-v", "quiet", "-show_entries", "format_tags=title",
-             "-of", "default=noprint_wrappers=1:nokey=1", str(video_path)],
-            capture_output=True, text=True,
-        )
-    except Exception:
-        return None
-    title = out.stdout.strip()
     # Only treat it as a release if it actually looks like one (has a year or a
     # source/quality token), not a human-friendly "Aliens" display title.
-    if title and re.search(r"\b(19|20)\d{2}\b|\b(1080p|720p|2160p|BluRay|WEB[- ]?DL|WEBRip|HDTV|BDRip|x264|x265|HEVC)\b",
-                           title, re.IGNORECASE):
+    if re.search(r"\b(19|20)\d{2}\b|\b(1080p|720p|2160p|BluRay|WEB[- ]?DL|WEBRip|HDTV|BDRip|x264|x265|HEVC)\b",
+                 title, re.IGNORECASE):
         return title
     return None
 

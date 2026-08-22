@@ -194,3 +194,51 @@ All four landed; each item below is what needs your eye.
       cursor that is itself a directory is expanded too now. Unfiltered
       Enter already behaved this way, which is why it looked
       inconsistent.
+
+
+## Session 6 (2026-08-22, Opus) — three shell-outs retired
+
+Context: Nick asked whether mediasmith could ship as a distributable
+binary. It can, but a binary only removes the *Python* dependency, not
+the *toolchain* one — so the prior question is how many external
+commands can stop being external. These three could; ffmpeg (gif),
+alass, and Calibre (convert) still cannot. See the session transcript
+for the full triage.
+
+- [ ] **subliminal is a real dependency now** (`pyproject.toml`), not a
+      Homebrew keg spliced in at runtime. The whole discovery apparatus
+      is gone — `find_subliminal_pythonpath`, `site.addsitedir`,
+      `_SITE_ADDED`, `SUBLIMINAL_PYTHONPATH`. `import_subliminal()`
+      survives ONLY as the test seam. This retires this morning's `.pth`
+      fix and its two tests: the keg indirection they described no
+      longer exists, so they were deleted with the machinery rather
+      than left describing a dead path.
+      **To verify manually:** fetch subtitles for a video that needs
+      them, over the network. That path is monkeypatched in every test,
+      so the suite cannot prove it. Provider discovery (stevedore entry
+      points) resolves 12 providers here and `opensubtitles` loads.
+- [ ] **ffprobe is gone** — replaced by `mediasmith/container.py`
+      (`read_title`): mutagen's `©nam` atom for mp4/m4v, enzyme's EBML
+      header for mkv. `adapters.probe_video_title` and
+      `subsync.read_release_name` both delegate to it and are no longer
+      slow — the worker thread around the first is now politeness, not
+      necessity (10–50 ms over SMB vs ~1 s to spawn ffprobe).
+      `.avi` and `.mov` are DELIBERATELY unhandled: measured against the
+      library, 0/40 sampled .avi and 0/31 .mov carry a title tag at all,
+      so ffprobe answered None for them too. Don't "fix" this without
+      re-measuring; the docstring says so.
+      **To verify manually:** the video pane's title row on a few mkv
+      and mp4 files, and that subtitle matching still finds release
+      names (the `ReleaseFound` event).
+- [ ] **`open` is cross-platform** — `details.launch` branches
+      darwin → `open`, win32 → `os.startfile`, else `xdg-open`, with
+      child output to DEVNULL. It hardcoded `open` before, which was a
+      latent bug for the tmux-from-phone/Linux case in roadmap 5. This
+      stays a subprocess on purpose: every package that wraps it is a
+      platform check plus a Popen, which is not worth a dependency.
+
+Test additions: `tests/test_container.py` (7) and two `launch` platform
+tests in `test_app.py`. `tests/fixtures/` holds four tiny synthetic
+containers (~2 KB each), committed as files so the suite never needs
+ffmpeg to *build* a fixture for the module whose point is not needing
+ffmpeg to *read* one.
