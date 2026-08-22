@@ -1,36 +1,48 @@
-# mediasmith
+# Mmediasmith
 
-A media-library browser and toolbench for the terminal. One fullscreen
-[Textual](https://textual.textualize.io/) app: directory tree on the left,
-live details of the highlighted file on the right.
+Mediasmith is a metadata editor for audio, video, image, and ebook files.
+
+
+## Set Up
+
+This project depends on `uv` to simplify its Python environment.
+```
+brew install uv
+```
+Launch `mediasmith` from any directory by running the install script.
+```
+./install.sh
+```
+
 
 ## Run
 
-```bash
-uv run mediasmith [start_dir]
-uv run mediasmith --images halfcell|unicode|off   # image renderer override
+Launch mediasmith from the current directory:
+```
+mediasmith
 ```
 
-## Development
-
-```bash
-uv run pytest                 # unit + interaction (Pilot) tests
-uv run python tests/fuzz.py   # random-input stress gate (6 seeds × 75s)
+Launch mediasmith from another directory:
+```
+mediasmith ~/Downloads
 ```
 
-## Architecture
+If you did not install the `mediasmith` command, this app must be launched from the `/mediasmith` repository location.
+```
+cd ~/code/mediasmith
+uv run mediasmith
+```
 
-This is a clean-slate rewrite; the previous suite is frozen at
-[`mediasmith-v1`](../mediasmith-v1). Testing policy, slice roadmap, and the
-architecture rules (NAS listing cache, compose-once details pane, textual-image
-import ordering) are documented in [CLAUDE.md](CLAUDE.md) — read it before
-changing structure.
 
-## Status
+## Test
 
-- [x] Slice 1 — file browser + read-only details (NAS-cached tree,
-      per-kind panels, cover art)
-- [ ] Slice 2 — editing (audio tags first)
-- [ ] Slice 3 — engine actions (subtitles)
-- [ ] Slice 4 — batch operations
-- [ ] Slice 5 — responsive / mobile layouts
+Run unit & interaction tests:
+```
+uv run pytest
+```
+
+Run random-input stress gate:
+```
+uv run python tests/fuzz.py
+```
+
