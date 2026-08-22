@@ -63,11 +63,13 @@ MEDIASMITH = Theme(
         "text-fg-focus": GREY_90,
 
         "node-hidden-fg-focus": GREY_60,
+        "node-hidden-selected-fg-focus": GREY_10,
         "node-selected-bg-focus": PRIMARY,
         "scrollbar-color-focus": GREY_90,
         "scrollbar-color-hover-focus": PRIMARY,
         "scrollbar-color-active-focus": PRIMARY,
         "scrollbar-track-focus": "transparent",
+        "scrollbar-corner-focus": GREY_10,
 
         "label-fg-focus": GREY_60,
         "button-bg-focus": GREY_30,
@@ -84,11 +86,14 @@ MEDIASMITH = Theme(
         "text-fg-idle": GREY_40,
 
         "node-hidden-fg-idle": GREY_30,
+        "node-hidden-selected-fg-idle": GREY_10,
         "node-selected-bg-idle": GREY_20,
+        "node-selected-fg-idle": GREY_10,
         "scrollbar-color-idle": GREY_30,
         "scrollbar-color-hover-idle": GREY_30,
         "scrollbar-color-active-idle": GREY_30,
         "scrollbar-track-idle": "transparent",
+        "scrollbar-corner-idle": GREY_10,
 
         "label-fg-idle": GREY_30,
         "button-bg-idle": GREY_20,

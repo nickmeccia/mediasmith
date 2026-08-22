@@ -87,3 +87,40 @@ lands. (Named "todo-2.md" per your instruction during the session.)
       when Details view holds focus, flip to grey-90 on the selected
       (arrow-highlighted) button. The old focused-button look (orange bg,
       black text) is now primary bg / grey-90 text per your palette.
+
+## Session 4 (Opus, 2026-08-13) — three fixes + one they turned up
+
+- [ ] **Tree scrollbar inset.** The 1-cell gutter moved from the children
+      (`PathInput` margin / `LibraryTree` padding) onto the `TreeView`
+      pane as `padding: 0 1`. A child's horizontal margin costs EVERY
+      sibling that width — Textual's vertical layout resolves `1fr`
+      against the widest margin in the box — which is why the tree ran 2
+      cells narrow and its scrollbar sat 3 cells off the border. Now 1
+      cell each side; nothing else moved.
+- [ ] **New color tokens** (theme.py): `node-hidden-selected-fg-focus`,
+      `node-hidden-selected-fg-idle`, `node-selected-fg-idle` (all
+      grey-10) and the scrollbar corner pair `scrollbar-corner-focus` /
+      `scrollbar-corner-idle` (grey-10 — Textual calls that cell the
+      ScrollBarCorner; its rule is `scrollbar-corner-color`).
+      Two things to eyeball:
+      · grey-10 fg on `node-selected-bg-idle` (grey-20) is a very dark
+        row — that is what the spec asked for; say the word for a
+        lighter token.
+      · a hidden row is DIMMED by DirectoryTree's own component class,
+        which fades any token toward the row behind it (grey-10 came out
+        #684a20). The selected pair drops dim so the token lands exactly;
+        unselected hidden rows still dim as before.
+- [ ] **Arrow-key direction bug: it was a repaint, not a move.** Focus
+      always moved correctly; `ActionButton.watch_has_focus` overrode
+      Widget's without calling it, and Widget's version is what applies
+      the `:focus` CSS — so the highlight only caught up on the NEXT
+      keypress, which reads exactly like "the first press after a
+      reversal keeps going the old way". Confirmed against a real pty
+      (Pilot never saw it: it asserts focus, not pixels).
+- [ ] **Fallout of that fix, needs your eye:** with the highlight now
+      live, the selected button was rendering in the plain focused-pane
+      pair, never the selected one — `DetailsView:focus-within
+      ActionButton` (two type names) outranked a bare
+      `ActionButton:focus`. The selected pair (primary bg / grey-90 text,
+      per the palette) now applies. If you preferred the quieter look,
+      that is one selector in app.py.

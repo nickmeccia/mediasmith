@@ -143,6 +143,24 @@ async def test_focus_recolors_the_chord():
         assert IDLE_KEY_STYLE in str(button.label.markup)
 
 
+async def test_focus_applies_its_css_at_once():
+    # ActionButton overrides watch_has_focus, and Widget's version is
+    # what applies the :focus rules. Without the super() call the
+    # selected button's chrome stayed one event stale — the arrow moved,
+    # the highlight didn't, so reversing direction looked like the arrow
+    # kept going the old way (Nick, 2026-08-13).
+    app = BarApp()
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        first, second = app.query(ActionButton).nodes[:2]
+        app.set_focus(second)
+        await pilot.pause()
+        # Button's own :focus rule tints the background; the tint is
+        # there iff the focus styles have been applied to the node
+        assert second.styles.background_tint.a > 0
+        assert first.styles.background_tint.a == 0      # blurred: dropped
+
+
 async def test_press_posts_triggered():
     triggered = []
 

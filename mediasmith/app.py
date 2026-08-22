@@ -108,9 +108,14 @@ class MediasmithApp(App):
     /* The Tree View is ONE bordered pane; Path Input is a sub-view boxed
        inside it (notes/mockups/path-input.txt). Focus on either child
        lights the pane. */
-    TreeView { width: 38%; min-width: 30; border: round $border-fg-idle; }
+    /* the 1-cell inset lives on the PANE, not on its children: a child
+       margin costs every sibling that width (vertical layout resolves
+       1fr against the widest margin), which parked the tree's scrollbar
+       3 cells off the border instead of 1 */
+    TreeView { width: 38%; min-width: 30; border: round $border-fg-idle;
+               padding: 0 1; }
     TreeView:focus-within { border: round $border-fg-focus; }
-    PathInput { height: 3; margin: 0 1; background: $surface;
+    PathInput { height: 3; background: $surface;
               border: round $border-fg-idle; color: $text-fg-idle; }
     PathInput:focus { border: round $border-fg-focus;
                       color: $text-fg-focus; }
@@ -125,7 +130,9 @@ class MediasmithApp(App):
         scrollbar-background: $scrollbar-track-idle;
         scrollbar-background-hover: $scrollbar-track-idle;
         scrollbar-background-active: $scrollbar-track-idle;
-        scrollbar-corner-color: $scrollbar-track-idle;
+        /* the cell where the two scrollbars meet (Textual's
+           ScrollBarCorner) — its own token, not the track's */
+        scrollbar-corner-color: $scrollbar-corner-idle;
     }
     LibraryTree:focus, DetailsView:focus, DetailsView:focus-within {
         color: $text-fg-focus;
@@ -135,13 +142,14 @@ class MediasmithApp(App):
         scrollbar-background: $scrollbar-track-focus;
         scrollbar-background-hover: $scrollbar-track-focus;
         scrollbar-background-active: $scrollbar-track-focus;
+        scrollbar-corner-color: $scrollbar-corner-focus;
     }
     /* Tree's default :focus tints the pane 5% lighter, which the track
        can't follow (no scrollbar-background-tint exists); drop the tint
        so pane and track stay identical — focus shows via the border. */
     LibraryTree { background: transparent; }
     LibraryTree:focus { background-tint: transparent; }
-    LibraryTree { height: 1fr; padding: 0 1; }
+    LibraryTree { height: 1fr; }
     /* the selected node (tree cursor) swaps with the pane's focus */
     LibraryTree > .tree--cursor { background: $node-selected-bg-idle; }
     LibraryTree:focus > .tree--cursor {
@@ -157,8 +165,13 @@ class MediasmithApp(App):
     ActionButton { background: $button-bg-idle; color: $button-fg-idle; }
     DetailsView:focus-within ActionButton { background: $button-bg-focus;
                                             color: $button-fg-focus; }
-    ActionButton:focus { background: $button-selected-bg-focus;
-                         color: $button-selected-fg-focus; }
+    /* the selected pair needs the pane in its selector too: the rule
+       above (two type names) outranks a bare ActionButton:focus, so the
+       selected button was rendering in the plain focused-pane pair */
+    ActionButton:focus,
+    DetailsView:focus-within ActionButton:focus {
+        background: $button-selected-bg-focus;
+        color: $button-selected-fg-focus; }
     .panel { height: auto; margin-top: 1; }
     .dtitle { text-style: bold; padding: 1 0 0 0; }
     #row-fname { height: 1; margin-top: 1; }
@@ -236,9 +249,10 @@ class MediasmithApp(App):
     .-narrow.-details-open DetailsView { display: block; }
     /* width 0, not display none: in "view" the tree keeps focus while
        hidden, and hiding a focused widget makes Textual drop focus */
-    /* width 0 AND border none: the pane's own border would otherwise
-       hold 2 cells open even at width 0 */
-    .-narrow.-details-open TreeView { width: 0; border: none; }
+    /* width 0 AND border none AND padding 0: the pane's own gutter
+       would otherwise hold 2 cells open even at width 0 */
+    .-narrow.-details-open TreeView { width: 0; border: none;
+                                      padding: 0; }
     ConfirmSave { align: center middle; }
     #confirm-box { width: auto; height: auto; padding: 1 2;
                    background: $surface; border: round $border-fg-focus; }

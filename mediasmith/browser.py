@@ -395,14 +395,35 @@ class LibraryTree(DirectoryTree):
         label = super().render_label(node, base_style, style)
         if node.data is None:
             return label
-        if Path(node.data.path).name.startswith("."):
-            # hidden files dim to the theme's node-hidden pair; a token
-            # lookup, not a hex — colors live in theme.py only
+        # the label's foreground is a token lookup, never a hex — colors
+        # live in theme.py only. Which token: hidden (a dot-file) ×
+        # selected (the tree cursor) × the view's idle/focus flip. The
+        # cursor is not "selected" while the path bar edits (.-editing
+        # hides it), so the row keeps its ordinary text color there.
+        hidden = Path(node.data.path).name.startswith(".")
+        selected = (node is self.cursor_node
+                    and not self.has_class("-editing"))
+        # dim: DirectoryTree's own `directory-tree--hidden` component
+        # class fades hidden rows, which would blend a token toward the
+        # row behind it (grey-10 on the cursor came out #684a20). The
+        # non-hidden cursor isn't dimmed, so a SELECTED hidden row drops
+        # dim to land on the token's true color.
+        dim = None
+        if hidden and selected:
+            token = ("node-hidden-selected-fg-focus" if self.has_focus
+                     else "node-hidden-selected-fg-idle")
+            dim = False
+        elif hidden:
             token = ("node-hidden-fg-focus" if self.has_focus
                      else "node-hidden-fg-idle")
+        elif selected and not self.has_focus:
+            token = "node-selected-fg-idle"     # focused: Textual's own
+        else:                                   # cursor foreground
+            token = None
+        if token is not None:
             color = self.app.get_css_variables().get(token)
             if color:
-                label.stylize(Style(color=color))
+                label.stylize(Style(color=color, dim=dim))
         if str(node.data.path) in self._selected:
             label.stylize("reverse")
         return label

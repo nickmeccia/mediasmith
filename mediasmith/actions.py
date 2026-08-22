@@ -203,6 +203,13 @@ class ActionButton(Button):
             self._apply_label(self._key_style())
 
     def watch_has_focus(self, value: bool) -> None:
+        # super() FIRST: Widget.watch_has_focus is what applies the
+        # :focus CSS. Overriding it without the call left the selected
+        # button's chrome one keypress stale — the arrow moved focus,
+        # the highlight only caught up when the NEXT key happened to
+        # restyle the pane, so reversing direction looked like the
+        # arrow kept going the old way (Nick, 2026-08-13).
+        super().watch_has_focus(value)
         self._apply_label(self._key_style())
 
 

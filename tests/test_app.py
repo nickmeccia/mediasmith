@@ -512,6 +512,59 @@ async def test_hidden_files_shown_and_toggleable(media_tree):
         assert app.show_hidden is False           # unchanged from details
 
 
+async def test_tree_is_inset_one_cell_on_both_sides(media_tree):
+    # the pane's padding is the only inset: a child margin would cost
+    # every sibling that width and push the tree's scrollbar (its
+    # rightmost content column) 3 cells off the border instead of 1
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await settle(pilot)
+        pane = app.query_one(TreeView)
+        tree = app.query_one(LibraryTree)
+        path_input = app.query_one(PathInput)
+        left_border, right_border = pane.region.x, pane.region.right - 1
+        scrollbar = tree.region.right - 1   # the tree's last content column
+        assert tree.region.x - left_border - 1 == 1     # one cell, left
+        assert right_border - scrollbar - 1 == 1        # one cell, right
+        assert path_input.region.x == tree.region.x     # boxes line up
+        assert path_input.region.right == tree.region.right
+
+
+def _label_color(tree, line):
+    """The rendered foreground of a tree row's name, as a hex string."""
+    segments = [s for s in tree.render_line(line)._segments if s.text.strip()]
+    return segments[-1].style.color.triplet.hex
+
+
+async def test_selected_node_colors_come_from_the_theme(media_tree):
+    # every color is a theme token (theme.py); the tree cursor picks the
+    # hidden × selected × idle/focus one. A hidden row is dimmed by
+    # DirectoryTree's own component class, so the selected pair drops
+    # dim to land on the token itself.
+    (media_tree / ".config").write_text("x")
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await settle(pilot)
+        tree = app.query_one(LibraryTree)
+        theme = app.get_css_variables()
+        await pilot.press("down", "right")        # into media/, .config first
+        await settle(pilot)
+        line = tree.cursor_line
+        assert str(tree.cursor_node.label) == ".config"
+        assert _label_color(tree, line) == theme["node-hidden-selected-fg-focus"]
+        app.query_one(DetailsView).focus()
+        await pilot.pause()
+        assert _label_color(tree, line) == theme["node-hidden-selected-fg-idle"]
+        tree.focus()
+        await pilot.press("down")                 # off the hidden row
+        await settle(pilot)
+        line = tree.cursor_line
+        assert _label_color(tree, line) != theme["node-hidden-fg-focus"]
+        app.query_one(DetailsView).focus()
+        await pilot.pause()
+        assert _label_color(tree, line) == theme["node-selected-fg-idle"]
+
+
 async def test_enter_without_edit_returns_to_browser(media_tree):
     app = MediasmithApp(media_tree)
     async with app.run_test(size=(120, 40)) as pilot:
