@@ -5,7 +5,8 @@ from textual.app import App
 
 from mediasmith.actions import (Action, ActionBar, ActionButton,
                                 IDLE_KEY_STYLE, KEY_STYLE,
-                                SELECTED_KEY_STYLE, action_markup)
+                                SELECTED_KEY_STYLE, action_markup,
+                                ordinal_for_key)
 
 
 # -- label markup ---------------------------------------------------------------
@@ -38,6 +39,40 @@ def test_no_key_no_markup():
 
 def test_word_brackets_escaped():
     assert action_markup("a[b]", None) == r"a\[b]"
+
+
+def test_ordinal_prints_in_front_of_the_word():
+    assert (action_markup("save", "s", KEY_STYLE, 1)
+            == f"[{KEY_STYLE}]^1[/] [{KEY_STYLE}]^s[/]ave")
+
+
+def test_ordinal_without_a_letter_chord():
+    assert (action_markup("save", None, KEY_STYLE, 3)
+            == f"[{KEY_STYLE}]^3[/] save")
+
+
+def test_ordinal_for_key_reads_ctrl_digits():
+    assert ordinal_for_key("ctrl+4") == 4
+    assert ordinal_for_key("ctrl+0") is None      # ^0 would read as tenth
+    assert ordinal_for_key("ctrl+s") is None
+    assert ordinal_for_key("4") is None
+
+
+def test_ordinal_for_key_reads_alt_digits():
+    """⌥+digit is the spelling that survives tmux (ctrl+digit does not:
+    of ^1…^9 only ^1 and ^9 cross intact)."""
+    assert ordinal_for_key("alt+4") == 4
+    assert ordinal_for_key("alt+0") is None
+
+
+def test_ordinal_for_key_reads_the_option_glyphs():
+    """What ⌥+digit actually arrives as — Ghostty types the glyph, and
+    Textual decodes tmux's ESC+digit into the same one."""
+    assert ordinal_for_key("inverted_exclamation_mark") == 1     # ⌥1 ¡
+    assert ordinal_for_key("section_sign") == 6                  # ⌥6 §
+    assert ordinal_for_key("ª") == 9                             # ⌥9 ª
+    assert ordinal_for_key("pound_sign") == 3                    # ⌥3 £
+    assert ordinal_for_key("dollar_sign") is None                # not one
 
 
 # -- Action validation ------------------------------------------------------------
@@ -79,7 +114,9 @@ async def test_shared_key_both_visible_rejected():
 
 
 class BarApp(App):
-    CSS = "#host { width: 24; } ActionBar { width: 1fr; }"
+    # 26 cells hold two of these buttons, not three: the labels wear a
+    # positional chord now ("^1 a^lpha", 11 cells + 2 margin)
+    CSS = "#host { width: 26; } ActionBar { width: 1fr; }"
 
     def compose(self):
         from textual.containers import Vertical
@@ -97,7 +134,7 @@ async def test_buttons_wrap_like_flexbox():
         await pilot.pause()
         buttons = app.query(ActionButton).nodes
         rows = [b.region.y for b in buttons]
-        # 24 cells can't hold three ~9-cell buttons: at least one wraps,
+        # 26 cells can't hold three ~11-cell buttons: at least one wraps,
         # and wrapped buttons restart at the left edge
         assert rows[0] == rows[1] != rows[2]
         assert buttons[2].region.x == buttons[0].region.x
@@ -117,6 +154,33 @@ async def test_hidden_buttons_leave_the_flow():
         bar.set_visible(None)
         await pilot.pause()
         assert bar.action_for_key("ctrl+b").name == "two"
+
+
+async def test_positions_follow_the_visible_set():
+    app = BarApp()
+    async with app.run_test(size=(80, 24)) as pilot:
+        bar = app.query_one(ActionBar)
+        await pilot.pause()
+        assert [b.ordinal for b in bar.buttons()] == [1, 2, 3]
+        bar.set_visible({"one", "three"})
+        await pilot.pause()
+        assert [b.ordinal for b in bar.buttons()] == [1, 2]
+        # the number a button PRINTS is the one that fires it
+        assert bar.action_for_key("ctrl+2").name == "three"
+        assert bar.action_for_key("ctrl+3") is None
+
+
+async def test_number_from_offsets_a_second_bar():
+    app = BarApp()
+    async with app.run_test(size=(80, 24)) as pilot:
+        bar = app.query_one(ActionBar)
+        await pilot.pause()
+        assert bar.number_from(4) == 7          # next free number
+        assert [b.ordinal for b in bar.buttons()] == [4, 5, 6]
+        assert bar.action_for_key("ctrl+5").name == "two"
+        assert bar.action_for_key("ctrl+1") is None
+        bar.number_from(None)                   # a bar that isn't on show
+        assert [b.ordinal for b in bar.buttons()] == [None, None, None]
 
 
 async def test_focus_recolors_the_chord():

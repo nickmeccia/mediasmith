@@ -119,6 +119,11 @@ class MediasmithApp(App):
               border: round $border-fg-idle; color: $text-fg-idle; }
     PathInput:focus { border: round $border-fg-focus;
                       color: $text-fg-focus; }
+    /* the "reading…" wait marker (browser.READING) rides the border, so a
+       slow NAS read shows without displacing anything the user is typing */
+    PathInput { border-subtitle-align: right;
+                border-subtitle-color: $label-fg-idle; }
+    PathInput:focus { border-subtitle-color: $label-fg-focus; }
     /* one cell wide to match the thin thumb glyphs */
     LibraryTree, DetailsView { scrollbar-size-vertical: 1; }
     /* text + scrollbar ride the same idle/focus flip */
@@ -253,7 +258,7 @@ class MediasmithApp(App):
        would otherwise hold 2 cells open even at width 0 */
     .-narrow.-details-open TreeView { width: 0; border: none;
                                       padding: 0; }
-    ConfirmSave { align: center middle; }
+    ConfirmSave, ConfirmCaseRename { align: center middle; }
     #confirm-box { width: auto; height: auto; padding: 1 2;
                    background: $surface; border: round $border-fg-focus; }
     #confirm-msg { margin-bottom: 1; }
@@ -293,6 +298,11 @@ class MediasmithApp(App):
         tree.focus()
         await tree.anchor(self.start_dir)   # launch dir in parent context
 
+    def sync_strips(self) -> None:
+        """Resync for the current focus — what the details bar calls when
+        its buttons change (the tree's ^f rides the folderize button)."""
+        self._sync_strips(self.screen.focused)
+
     def _sync_strips(self, focused) -> None:
         """ONE command strip, state-driven: what it shows is what works.
         States per todo-4 — path input / details / clipboard / tree."""
@@ -307,7 +317,8 @@ class MediasmithApp(App):
         elif self.lifted is not None:       # clipboard active (tree focused)
             state = strip.STATE_CLIPBOARD
         else:
-            state = strip.STATE_TREE
+            # ^f folderize prints only when the selection has one to give
+            state = strip.tree_state(details.folderize_action() is not None)
         self.query_one(CommandStrip).set_entries(state)
         # narrow columns follow focus; "view" holds -details-open while the
         # tree keeps focus (wide layouts carry the classes but ignore them)
@@ -404,7 +415,24 @@ class MediasmithApp(App):
             if (isinstance(focused, LibraryTree)
                     and not details.plan_preview_open()):
                 event.stop()
-                details.action_delete()
+                # the TREE's highlight is the target, not the pane's
+                # debounced copy of it (a shift-range selection has no
+                # single target, so it keeps its hands-off rule)
+                cursor = (None if len(focused._selection_paths()) > 1
+                          else focused.cursor_path())
+                details.action_delete(cursor)
+            return
+        # Folderize is the one action reachable from BOTH views (Nick,
+        # 2026-08-22): ^f in the tree fires whichever folderize the
+        # selection is showing — video, single epub, or audio folder. It
+        # is on the tree's strip only while one is on show, so this stays
+        # inside the contract rather than beside it.
+        if event.key == "ctrl+f" and isinstance(focused, LibraryTree):
+            action = (None if details.plan_preview_open()
+                      else details.folderize_action())
+            if action is not None:
+                event.stop()
+                details.trigger(action)
             return
         in_details = focused is not None and (
             focused is details or details in focused.ancestors)
@@ -512,9 +540,16 @@ class MediasmithApp(App):
             await tree.anchor(ev.path.parent)   # climb out of the dead root
             return
         parent = tree._node_for(ev.path.parent)
-        if parent is not None:
-            await tree.reload_node(parent)
-            tree._move_cursor(parent.line)      # off the dead row
+        if parent is None:
+            return
+        # read where the row sat BEFORE the reload rebuilds the children,
+        # so the cursor can take its place (Nick, 2026-08-25) instead of
+        # climbing to the folder — where a second ^DEL meant the folder
+        node = tree._node_for(ev.path)
+        index = (parent.children.index(node)
+                 if node is not None and node in parent.children else None)
+        await tree.reload_node(parent)
+        tree.cursor_to_gap(parent, index)
 
 
 def main() -> None:

@@ -55,8 +55,11 @@ def make_tmdb(movie: dict, poster_entries: list[dict],
               images: dict[str, bytes], key="k",
               query="Alien", year=1979) -> FakeTMDB:
     responses = {
+        # the FIRST attempt _search makes (see its docstring): the
+        # original release year, not the broad `year`
         search_url(api_key=key, query=query, include_adult="true",
-                   year=year): json.dumps({"results": [movie]}).encode(),
+                   primary_release_year=year):
+            json.dumps({"results": [movie]}).encode(),
         images_url(movie["id"], key):
             json.dumps({"posters": poster_entries}).encode(),
     }
@@ -88,6 +91,112 @@ def test_resolve_folder_name_supplies_the_year(tmp_path):
     video = tmp_path / "Alien (1979)" / "movie.mkv"
     title, year = posters.resolve_title_year(video, None)
     assert (title, year) == ("Alien", 1979)
+
+
+def test_resolve_trims_a_stranded_separator(tmp_path):
+    """Nick's naming, 2026-08-22: "<year> — <title>". guessit takes the
+    year off the front and leaves the em dash welded to the title."""
+    video = tmp_path / "2017 — Ghost In The Shell.mp4"
+    assert posters.resolve_title_year(video, None) == (
+        "Ghost In The Shell", 2017)
+
+
+def test_clean_title_keeps_a_titles_own_punctuation():
+    assert posters.clean_title("Airplane!") == "Airplane!"
+    assert posters.clean_title("WALL·E") == "WALL·E"
+    assert posters.clean_title("— Ghost —") == "Ghost"
+
+
+def test_resolve_keeps_a_numeric_title_suffix(tmp_path):
+    """Unpinned, guessit reads "2049" as season 20 episode 49 and hands
+    back "Blade Runner"; type="movie" keeps the whole title."""
+    video = tmp_path / "Blade Runner 2049.mkv"
+    assert posters.resolve_title_year(video, None) == ("Blade Runner 2049",
+                                                       None)
+
+
+def test_resolve_query_reports_the_source_it_used(tmp_path):
+    video = tmp_path / "movie file.mkv"
+    guess = posters.resolve_query(video, "Alien.1979.1080p.BluRay")
+    assert guess == ("Alien", 1979, "Alien.1979.1080p.BluRay")
+
+
+# -- picking the right film out of the search results ------------------------
+
+
+def hit(title, year, popularity=1.0, id=1) -> dict:
+    return {"id": id, "title": title, "release_date": f"{year}-01-01",
+            "popularity": popularity}
+
+
+def test_search_asks_for_the_primary_release_year_first():
+    """TMDB's `year` matches ANY release date, so a re-released classic
+    answers for the remake's year (Nick, 2026-08-22: Ghost in the Shell
+    2017 fetched the 1995 anime). `primary_release_year` does not."""
+    remake = hit("Ghost in the Shell", 2017, popularity=18.2)
+    tmdb = FakeTMDB({
+        search_url(api_key="k", query="Ghost in the Shell",
+                   include_adult="true", primary_release_year=2017):
+            json.dumps({"results": [remake]}).encode(),
+    })
+    assert posters._search(tmdb, "k", "Ghost in the Shell", 2017) == remake
+    assert len(tmdb.urls) == 1          # exact title + year: no more asking
+
+
+def test_search_prefers_the_matching_year_over_the_popular_film():
+    """Same query, both films back: TMDB ranks the 1995 anime first."""
+    anime = hit("Ghost in the Shell", 1995, popularity=18.13, id=1)
+    remake = hit("Ghost in the Shell", 2017, popularity=18.26, id=2)
+    tmdb = FakeTMDB({
+        search_url(api_key="k", query="Ghost in the Shell",
+                   include_adult="true", primary_release_year=2017):
+            json.dumps({"results": [anime, remake]}).encode(),
+    })
+    assert posters._search(tmdb, "k", "Ghost in the Shell", 2017) == remake
+
+
+def test_search_looks_past_a_wrong_but_non_empty_first_answer():
+    """"2001 A Space Odyssey" parses as title "A Space Odyssey" + year
+    2001, and primary_release_year=2001 answers with documentaries that
+    happen to share the year. Every attempt is scored into one pool, and
+    the raw filename is the last query."""
+    docs = [hit("NASA: A Space Odyssey Vol. 3", 2001, popularity=0.6)]
+    film = hit("2001: A Space Odyssey", 1968, popularity=23.6, id=9)
+    tmdb = FakeTMDB({
+        search_url(api_key="k", query="A Space Odyssey",
+                   include_adult="true", primary_release_year=2001):
+            json.dumps({"results": docs}).encode(),
+        search_url(api_key="k", query="A Space Odyssey",
+                   include_adult="true", year=2001):
+            json.dumps({"results": docs}).encode(),
+        search_url(api_key="k", query="A Space Odyssey",
+                   include_adult="true"):
+            json.dumps({"results": docs}).encode(),
+        search_url(api_key="k", query="2001 A Space Odyssey",
+                   include_adult="true"):
+            json.dumps({"results": [film]}).encode(),
+    })
+    assert posters._search(tmdb, "k", "A Space Odyssey", 2001,
+                           "2001 A Space Odyssey") == film
+
+
+def test_search_keeps_an_earlier_hit_when_a_later_query_fails():
+    good = hit("Alien", 1979, popularity=26.7)
+    tmdb = FakeTMDB({
+        search_url(api_key="k", query="Alien", include_adult="true",
+                   primary_release_year=1979):
+            json.dumps({"results": [good]}).encode(),
+    })
+    # only the first attempt is canned; an exact title + year stops there
+    assert posters._search(tmdb, "k", "Alien", 1979, "Alien.1979") == good
+
+
+def test_title_grade_ranks_exact_over_contained_over_unrelated():
+    wanted = frozenset({"ghost in the shell"})
+    assert posters._title_grade("Ghost.in.the.Shell", wanted) == 2
+    assert posters._title_grade("Ghost in the Shell 2: Innocence",
+                                wanted) == 1
+    assert posters._title_grade("Akira", wanted) == 0
 
 
 # -- target folder rule -------------------------------------------------------
@@ -245,11 +354,13 @@ def test_run_retries_search_without_year(tmp_path):
     video.touch()
     tmdb = make_tmdb(ALIEN, [poster_entry("/a.png")],
                      {"/a.png": png("red")})
-    with_year = search_url(api_key="k", query="Alien",
-                           include_adult="true", year=1979)
-    without = search_url(api_key="k", query="Alien", include_adult="true")
-    tmdb.responses[with_year] = json.dumps({"results": []}).encode()
-    tmdb.responses[without] = json.dumps({"results": [ALIEN]}).encode()
+    empty = json.dumps({"results": []}).encode()
+    for params in (dict(primary_release_year=1979), dict(year=1979)):
+        tmdb.responses[search_url(api_key="k", query="Alien",
+                                  include_adult="true", **params)] = empty
+    tmdb.responses[search_url(api_key="k", query="Alien",
+                              include_adult="true")] = json.dumps(
+        {"results": [ALIEN]}).encode()
     _, last = drain(posters.run(video, fetch=tmdb, api_key="k"))
     assert isinstance(last, posters.Done) and last.saved == 1
 
@@ -260,8 +371,14 @@ def test_run_no_match_fails(tmp_path):
     empty = json.dumps({"results": []}).encode()
     tmdb = FakeTMDB({
         search_url(api_key="k", query="Alien", include_adult="true",
+                   primary_release_year=1979): empty,
+        search_url(api_key="k", query="Alien", include_adult="true",
                    year=1979): empty,
         search_url(api_key="k", query="Alien", include_adult="true"): empty,
+        # the last attempt: the raw filename, in case the "year" was
+        # part of the title all along (see _search)
+        search_url(api_key="k", query="Alien.1979",
+                   include_adult="true"): empty,
     })
     _, last = drain(posters.run(video, fetch=tmdb, api_key="k"))
     assert isinstance(last, posters.Failed)

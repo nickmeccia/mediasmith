@@ -5,6 +5,8 @@ the pane border, the focus state, and (eventually) tree-level state."""
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import os
 from pathlib import Path
 
@@ -22,9 +24,22 @@ from textual.widgets import DirectoryTree, Input
 from textual.worker import get_current_worker
 
 from . import fs
-from .details import WORD_BINDINGS, DetailsView
+from .details import DEBOUNCE_SECONDS, WORD_BINDINGS, DetailsView
 
 TYPE_SEARCH_SECONDS = 1.0   # Finder-style: pause this long and the buffer resets
+
+READING = "reading\u2026"
+"""Path Input border subtitle while a listing is in flight. The NAS can
+take seconds to spin up; Finder makes that wait visible, so do we."""
+
+LOAD_TIMEOUT = 30.0
+"""Ceiling on the restore's wait for Textual's load queue (``_apply_restore``).
+
+A re-root that arrives while the queue is draining can orphan the queue
+this restore is joined to, and then the join never returns — which wedges
+the tree's message pump for the rest of the session (Nick, 2026-08-22:
+the only way out was to quit the app). Timing out abandons the cursor
+placement, which is a repaint, not a dead app."""
 
 
 def parse_view(value: str) -> tuple[Path, str | None]:
@@ -33,11 +48,25 @@ def parse_view(value: str) -> tuple[Path, str | None]:
     A value naming an existing directory — trailing slash or not — is that
     directory with no filter; anything else shows its parent filtered by
     the last segment.
+
+    Touches the filesystem (``is_dir``), so it is a THREAD-ONLY call; the
+    event loop reaches it through ``aparse_view``.
     """
     p = Path(value.rstrip("/") or "/")
     if p.is_dir():
         return p, None
     return p.parent, p.name
+
+
+async def aparse_view(value: str) -> tuple[Path, str | None]:
+    """``parse_view`` off the event loop."""
+    return await asyncio.to_thread(parse_view, value)
+
+
+async def _join(awaitable) -> None:
+    """Wrap a bare awaitable so ``asyncio.wait_for`` will take it (Textual's
+    AwaitComplete is awaitable but is neither a coroutine nor a Future)."""
+    await awaitable
 
 
 class PathSuggester(Suggester):
@@ -50,7 +79,13 @@ class PathSuggester(Suggester):
         self._bar = bar
 
     async def get_suggestion(self, value: str) -> str | None:
-        matches = self._bar._matches(value)
+        # Textual asks on EVERY value write (Input.watch_value), which
+        # includes the tree's own path sync on each cursor move — and the
+        # ghost only renders while the input has focus. Unfocused, the
+        # listing would be pure NAS cost, once per arrow key.
+        if not self._bar.has_focus:
+            return None
+        matches = await self._bar._matches(value)
         if not matches:
             return None
         first = matches[0]
@@ -76,6 +111,14 @@ class PathInput(Input):
     """Enter was just handled: ignore our own value writes until the (async,
     deferred) focus change lands — ``focus()`` doesn't blur immediately."""
 
+    _nav_timer = None
+    """Debounce between typing and re-rooting the tree (rule 4). Every
+    keystroke used to queue a whole directory read; on the NAS those
+    serialize, and the tree's message pump is stuck for all of them."""
+
+    _reads = 0
+    """Off-thread filesystem reads in flight; the subtitle shows while > 0."""
+
     def __init__(self, *args, **kwargs):
         kwargs.setdefault("select_on_focus", False)
         super().__init__(*args, **kwargs)
@@ -93,9 +136,12 @@ class PathInput(Input):
 
     async def action_cancel(self) -> None:
         """Esc: delete the incomplete segment, hand focus to the browser."""
+        self._cancel_nav()
         tree = self.app.query_one(LibraryTree)
         if tree.view_filter is not None:
-            directory, _ = parse_view(self.value)
+            # the filter view IS rooted at that directory — read it off the
+            # tree instead of re-stating the path (see aparse_view)
+            directory = Path(tree.path)
             tree.view_filter = None
             self._committing = True
             self.value = str(directory).rstrip("/") + "/"
@@ -104,21 +150,35 @@ class PathInput(Input):
         else:
             tree.focus()   # nothing partial: blur resyncs the selection
 
-    def _matches(self, value: str | None = None) -> list[Path]:
+    @contextlib.contextmanager
+    def _reading(self):
+        """Mark the pane as waiting on the filesystem, for as long as it is."""
+        self._reads += 1
+        self.border_subtitle = READING
+        try:
+            yield
+        finally:
+            self._reads -= 1
+            if not self._reads:
+                self.border_subtitle = ""
+
+    async def _matches(self, value: str | None = None) -> list[fs.CachedPath]:
+        """Entries of the typed directory that the last segment prefixes.
+
+        CachedPaths, so every ``is_dir()`` downstream is free — and read in
+        a thread, because this runs from the suggester on each keystroke.
+        """
         value = self.value if value is None else value
         base, prefix = os.path.split(value)
-        base = Path(base or "/")
-        try:
-            entries = fs.list_dir(base)
-        except OSError:
-            return []
+        with self._reading():
+            children = await fs.acached_children(base or "/")
         show_hidden = getattr(self.app, "show_hidden", True)
-        return [base / e.name for e in entries
-                if (show_hidden or not e.name.startswith("."))
-                and e.name.lower().startswith(prefix.lower())]
+        return [child for child in children
+                if (show_hidden or not child.name.startswith("."))
+                and child.name.lower().startswith(prefix.lower())]
 
-    def action_complete(self) -> None:
-        matches = self._matches()
+    async def action_complete(self) -> None:
+        matches = await self._matches()
         if not matches:
             return
         first = matches[0]
@@ -130,16 +190,41 @@ class PathInput(Input):
         # highlights, or our own Enter commit) must not re-root it.
         if not self.has_focus or self._committing:
             return
-        directory, needle = parse_view(self.value)
+        # Debounced: a re-root reads a directory, and a directory read on
+        # the NAS is measured in seconds. One per pause, not one per key.
+        self._cancel_nav()
+        self._nav_timer = self.set_timer(DEBOUNCE_SECONDS, self._navigate)
+
+    def _cancel_nav(self) -> None:
+        if self._nav_timer is not None:
+            self._nav_timer.stop()
+            self._nav_timer = None
+
+    def _navigate(self) -> None:
+        self._nav_timer = None
+        self._show_typed(self.value)
+
+    @work(exclusive=True, group="path-nav", exit_on_error=False)
+    async def _show_typed(self, value: str) -> None:
+        """Point the tree at what has been typed.
+
+        The parse stats the path, so it happens in a thread: on the event
+        loop a sleeping SMB share freezes the entire app, keys and all.
+        """
+        with self._reading():
+            directory, needle = await aparse_view(value)
+        if self.value != value or not self.has_focus:
+            return          # typing moved on while we waited (rule 4)
         self.app.query_one(LibraryTree).show_filtered(directory, needle)
 
     async def on_blur(self) -> None:
         """Leaving the input commits: value completes to the top match,
         the filter clears, and the tree cursor lands on that match."""
+        self._cancel_nav()
         tree = self.app.query_one(LibraryTree)
         tree.remove_class("-editing")
         if tree.view_filter is not None:
-            matches = self._matches()
+            matches = await self._matches()
             top = matches[0] if matches else None
             if top is not None:
                 self.value = str(top) + ("/" if top.is_dir() else "")
@@ -153,17 +238,20 @@ class PathInput(Input):
 
     async def on_input_submitted(self, ev: Input.Submitted) -> None:
         """Enter: autocomplete an incomplete path, hand focus to the browser."""
+        self._cancel_nav()
         tree = self.app.query_one(LibraryTree)
         if tree.view_filter is not None:
             tree.focus()   # the blur commit completes to the top match
             return
         target = Path(self.value.rstrip("/") or "/")
         self._committing = True                # our value writes ≠ typing
-        if target.is_dir():
+        with self._reading():                  # one off-thread stat, not two
+            node_type = await fs.anode_type(target)
+        if node_type == "dir":
             self.value = str(target).rstrip("/") + "/"
             tree.focus()
             await tree.anchor(target)          # enter it, in parent context
-        elif target.is_file():
+        elif node_type == "file":
             tree.focus()
             await tree.anchor(target.parent, cursor=target)
         else:
@@ -258,7 +346,8 @@ class LibraryTree(DirectoryTree):
         here through ``end_filter``."""
         parent = directory.parent
         expanded = [directory]                  # parents precede children
-        if cursor is not None and cursor != directory and cursor.is_dir():
+        if (cursor is not None and cursor != directory
+                and await fs.ais_dir(cursor)):
             expanded.append(cursor)
         self._pending_restore = (expanded, cursor or directory)
         if parent != directory and str(parent) != str(self.path):
@@ -285,7 +374,11 @@ class LibraryTree(DirectoryTree):
             node = self._node_for(path)
             if node is None or not node.allow_expand:
                 continue
-            await self._add_to_load_queue(node)   # populate before expanding
+            # populate before expanding — under a timeout, because an
+            # orphaned load queue never completes its join (LOAD_TIMEOUT)
+            with contextlib.suppress(asyncio.TimeoutError):
+                await asyncio.wait_for(_join(self._add_to_load_queue(node)),
+                                       LOAD_TIMEOUT)
             node.expand()
         node = self._node_for(cursor_path)
         if node is not None:
@@ -306,6 +399,18 @@ class LibraryTree(DirectoryTree):
         if node is self.root and not str(label):
             label = "/"
         return super().reset_node(node, label, data)
+
+    def cursor_path(self) -> Path | None:
+        """The highlighted row's path — the TRUTH for tree commands.
+
+        Details view learns the highlight through a 150ms debounce, so a
+        command that reads ``DetailsView.path`` acts on the previous row
+        when it fires right after an arrow key.
+        """
+        node = self.cursor_node
+        if node is None or node.data is None:
+            return None
+        return Path(node.data.path)
 
     def _node_for(self, path: Path):
         """The loaded node displaying ``path``, or None."""
@@ -401,6 +506,19 @@ class LibraryTree(DirectoryTree):
 
     def render_label(self, node, base_style, style):
         label = super().render_label(node, base_style, style)
+        # Button-shaped padding (2026-08-23): the name wears one cell of
+        # selection color on each side, like an ActionButton's label. The
+        # left cell is the guide space in render_line — restyled, never
+        # inserted — so nothing on the row moves; the right one is
+        # appended past the name, where there was only row background.
+        # The ICON is inside the run (2026-09-01): DirectoryTree styles
+        # its prefix with base_style, which left the emoji cells on the
+        # pane background mid-highlight; `style` from cell 0 makes the
+        # block continuous from the box character to the trailing pad.
+        icon = len(label.plain) - len(node.label.plain)
+        if icon > 0:
+            label.stylize(style, 0, icon)
+        label.append(" ", style)
         if node.data is None:
             return label
         # the label's foreground is a token lookup, never a hex — colors
@@ -479,7 +597,10 @@ class LibraryTree(DirectoryTree):
         if node is self.root:
             await self.reveal_parent()   # left on the context row: climb
         elif node.allow_expand and node.is_expanded:
-            node.collapse()
+            # collapse_all, not collapse: re-expanding a folder shows a plain
+            # child list, never the shape it happened to have last time
+            # (Nick, 2026-08-22) — ← then → is a reset, like Finder's ⌥←
+            node.collapse_all()
         elif node.parent is self.root:
             # ascending to the context row only to press ← again is a wasted
             # rung: climb straight up, landing focus on that row as it goes
@@ -604,6 +725,23 @@ class LibraryTree(DirectoryTree):
         self.cursor_line = line
         self.scroll_to_line(line, animate=False)
 
+    def cursor_to_gap(self, parent, index: int | None) -> None:
+        """Land the cursor where a row that is now GONE used to sit —
+        Finder's rule (Nick, 2026-08-25): the sibling that slid up into
+        its place, or the one above it when the dead row was last, or
+        the parent when it was the only child.
+
+        ``parent`` is the reloaded folder node; ``index`` is where the
+        row sat among its siblings BEFORE the reload (the nodes are
+        rebuilt, so the caller has to read it first).
+        """
+        children = parent.children
+        if index is None or not children:
+            self._move_cursor(parent.line)      # nothing left beside it
+            return
+        heir = children[index] if index < len(children) else children[-1]
+        self._move_cursor(heir.line)
+
     # -- centered cursor scrolling ---------------------------------------------
     # When the rows overflow the pane the cursor rides the center line: the
     # list is padded top and bottom with blank space so focus stays put while
@@ -681,13 +819,34 @@ class LibraryTree(DirectoryTree):
         return self._render_line(index, scroll_x, scroll_x + self.size.width,
                                  self.rich_style)
 
+    def _tint_level(self):
+        """The child list whose guide column the cursor tints, or None.
+
+        The cursor's own connector is drawn in its parent's column, so that
+        parent identifies the whole tinted level. It is part of the line
+        cache key: every row under it renders differently depending on it,
+        including rows whose path holds neither cursor node.
+        """
+        cursor = self.cursor_node if self.has_focus else None
+        return None if cursor is None else cursor.parent
+
+    def watch_cursor_line(self, previous_line: int, line: int) -> None:
+        super().watch_cursor_line(previous_line, line)
+        # Upstream refreshes only the lines containing the old and new cursor
+        # nodes. The tint spans a whole sibling level (2026-09-01), so a move
+        # ACROSS levels also changes every row hanging off the level being
+        # left and the one being entered — refresh both parents' subtrees.
+        for at in (previous_line, line):
+            node = self._get_node(at)
+            if node is not None and node.parent is not None:
+                self._refresh_node(node.parent)
+
     def _render_line(self, y: int, x1: int, x2: int, base_style: Style) -> Strip:
         # Reimplemented from Textual's Tree solely to un-stick the selected
         # guide style. Upstream OR-accumulates `selected` down the path, so the
         # cursor folder tints the guides of its ENTIRE subtree — every nested
-        # ├─/╰─ turns blue, blurring which rows are its direct children. We make
-        # the tint reach exactly one level: the guide column of the cursor's
-        # direct children (see the single changed line, flagged below).
+        # ├─/╰─ turns blue. We tint exactly one column: the cursor's own
+        # sibling level (see `_tint_level` and the loop below).
         tree_lines = self._tree_lines
         width = self.size.width
 
@@ -705,6 +864,7 @@ class LibraryTree(DirectoryTree):
             self._updates,
             self._pseudo_class_state,
             tuple(node._updates for node in line.path),
+            self._tint_level(),
         )
         if cache_key in self._line_cache:
             strip = self._line_cache[cache_key]
@@ -726,7 +886,14 @@ class LibraryTree(DirectoryTree):
             )
 
             hover = line.path[0]._hover
-            selected = line.path[0]._selected and self.has_focus
+            # Which guide column the cursor lights up (Nick, 2026-09-01):
+            # the one its OWN connector is drawn in — the spine of its
+            # sibling level, running the whole height of that level and on
+            # through the subtrees hanging off it. A node's column belongs
+            # to its parent's child list, so "same parent as the cursor" is
+            # the whole test. (It used to be the cursor's CHILDREN's column,
+            # which lit up only the rows beneath it.)
+            siblings = self._tint_level()
 
             def get_guides(style: Style, hidden: bool):
                 if self.show_guides and not hidden:
@@ -759,14 +926,14 @@ class LibraryTree(DirectoryTree):
             hidden = True
             for node in line.path[1:]:
                 # Reset both per iteration: upstream let `selected` stay sticky
-                # so guide_style only ever escalated, but our un-sticking means a
-                # deeper column must be able to fall back to the base style.
+                # so guide_style only ever escalated, but a column outside the
+                # cursor's level must be able to fall back to the base style.
                 guide_style = base_guide_style
                 hidden = base_hidden
                 if hover:
                     guide_style = guide_hover_style
                     hidden = hover_hidden
-                if selected:
+                if siblings is not None and node.parent is siblings:
                     guide_style = guide_selected_style
                     hidden = selected_hidden
 
@@ -775,18 +942,6 @@ class LibraryTree(DirectoryTree):
                 if node != line.path[-1]:
                     guides_append(guide, style=guide_style)
                 hover = hover or node._hover
-                # CHANGED FROM UPSTREAM (`selected = (selected or ...)`): drop
-                # the OR so the selected style reflects only whether THIS node —
-                # the immediate parent of the next guide column — is the cursor.
-                # The tint lands on the cursor's direct-child guides and stops.
-                selected = node._selected and self.has_focus
-
-            if len(line.path) > 1:
-                _, _, terminator, cross = get_guides(guide_style, hidden)
-                if line.last:
-                    guides.append(terminator, style=guide_style)
-                else:
-                    guides.append(cross, style=guide_style)
 
             label_style = self.get_component_rich_style("tree--label", partial=True)
             if self.hover_line == y:
@@ -797,6 +952,22 @@ class LibraryTree(DirectoryTree):
                 label_style += self.get_component_rich_style(
                     "tree--cursor", partial=False
                 )
+
+            if len(line.path) > 1:
+                _, _, terminator, cross = get_guides(guide_style, hidden)
+                guide = terminator if line.last else cross
+                # The last guide column ends in a space; that cell is the
+                # one adjacent to the rightmost box character, so it wears
+                # the LABEL style, not the guide's — the selection color
+                # starts there (2026-08-23). Box characters keep their own.
+                # A shift-marked row reverses its whole label, so the pad
+                # reverses with it or the block starts a cell late.
+                pad_style = label_style
+                data = line.path[-1].data
+                if data is not None and str(data.path) in self._selected:
+                    pad_style += Style(reverse=True)
+                guides.append(guide[:-1], style=guide_style)
+                guides.append(guide[-1:], style=pad_style)
 
             label = self.render_label(line.path[-1], line_style, label_style).copy()
             label.stylize(Style(meta={"node": line.node._id}))

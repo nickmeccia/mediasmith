@@ -189,6 +189,12 @@ def plan_for_book(book: Path) -> SortPlan | None:
                     groups=[BookGroup(folder_name=name, files=(book,))])
 
 
+def wanted_dirs(plan: SortPlan) -> list[Path]:
+    """The wrapper folders ``plan`` means to create or reuse — checked for
+    case-only collisions before executing (``casing.clashes``)."""
+    return [plan.root / group.folder_name for group in plan.groups]
+
+
 def execute(plan: SortPlan) -> tuple[int, list[tuple[Path, str]]]:
     """Wrap every group. Existing wrapper folders are reused;
     refuse-overwrite per file. Returns (files moved, errors)."""

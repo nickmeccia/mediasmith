@@ -31,7 +31,7 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-from . import fs, kinds, posters
+from . import casing, fs, kinds, posters
 
 
 def wrap_dir(video: Path) -> Path:
@@ -72,11 +72,19 @@ def companions(video: Path) -> tuple[Path, ...]:
     found: list[Path] = []
     for entry in entries:
         path = parent / entry.name
-        if path == video or path == target:
-            # the wrapper folder may already exist (a poster folder named
-            # after the file): it is reused, never moved into itself
-            continue
         name = entry.name.lower()
+        if path == video or path == target:
+            continue        # the wrapper folder may already exist (a
+                            # poster folder named after the file): it is
+                            # reused, never moved into itself
+        if (entry.is_dir and name == target.name.lower()
+                and casing.same_dir(path, target)):
+            # …and on a case-blind volume "the matrix/" IS "The Matrix/",
+            # so it is the wrapper wearing another spelling. Moving it
+            # into itself orphaned the folder AND the video (2026-08-25).
+            # The name test comes first: samefile is a stat, and one stat
+            # per directory entry is the NAS rule's cardinal sin.
+            continue
         if name == stem or name.startswith(f"{stem}."):
             found.append(path)                          # rule 1
         elif not sole:

@@ -96,3 +96,39 @@ def test_cached_children_answer_is_dir_without_stat(tmp_path):
 
 def test_cached_children_unreadable_is_empty(tmp_path):
     assert fs.cached_children(tmp_path / "missing") == []
+
+
+# -- the async front door (fs rule 3: nothing here is event-loop safe) -------
+
+
+async def test_alist_dir_matches_list_dir(tmp_path):
+    build(tmp_path)
+    assert await fs.alist_dir(tmp_path) == fs.list_dir(tmp_path)
+
+
+async def test_acached_children_matches_cached_children(tmp_path):
+    build(tmp_path)
+    assert ([str(p) for p in await fs.acached_children(tmp_path)]
+            == [str(p) for p in fs.cached_children(tmp_path)])
+
+
+async def test_ais_dir(tmp_path):
+    build(tmp_path)
+    assert await fs.ais_dir(tmp_path / "b_dir") is True
+    assert await fs.ais_dir(tmp_path / "a_file.txt") is False
+    assert await fs.ais_dir(tmp_path / "missing") is False
+
+
+async def test_ais_dir_of_a_cached_path_never_touches_the_disk(tmp_path):
+    build(tmp_path)
+    by_name = {p.name: p for p in fs.cached_children(tmp_path)}
+    (tmp_path / "b_dir").rmdir()          # gone from the filesystem
+    assert await fs.ais_dir(by_name["b_dir"]) is True
+
+
+async def test_anode_type(tmp_path):
+    build(tmp_path)
+    assert await fs.anode_type(tmp_path / "b_dir") == "dir"
+    assert await fs.anode_type(tmp_path / "a_file.txt") == "file"
+    assert await fs.anode_type(tmp_path / "missing") == "missing"
+

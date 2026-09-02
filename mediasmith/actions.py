@@ -78,18 +78,71 @@ def _escape(text: str) -> str:
 
 
 def action_markup(word: str, key: str | None,
-                  key_style: str = KEY_STYLE) -> str:
+                  key_style: str = KEY_STYLE,
+                  ordinal: int | None = None) -> str:
     """The label markup: ``^`` + the key char in the accent color,
     spliced into the word when the char is part of it. ``key_style``
-    swaps the chord color (focus recolors it — see FOCUS_KEY_STYLE)."""
+    swaps the chord color (focus recolors it — see FOCUS_KEY_STYLE).
+
+    ``ordinal`` prints the button's POSITIONAL chord in front of the
+    word — "^1 ^save" (Nick's A/B, 2026-08-25). Both chords fire the
+    same action; the number is the experiment, the letter is today's.
+    """
     if key is None:
-        return _escape(word)
-    index = word.lower().find(key.lower()) if len(key) == 1 else -1
-    if index >= 0:
-        return (f"{_escape(word[:index])}"
-                f"[{key_style}]^{word[index]}[/]"
-                f"{_escape(word[index + 1:])}")
-    return f"[{key_style}]^{key}[/] {_escape(word)}"
+        label = _escape(word)
+    else:
+        index = word.lower().find(key.lower()) if len(key) == 1 else -1
+        if index >= 0:
+            label = (f"{_escape(word[:index])}"
+                     f"[{key_style}]^{word[index]}[/]"
+                     f"{_escape(word[index + 1:])}")
+        else:
+            label = f"[{key_style}]^{key}[/] {_escape(word)}"
+    if ordinal is None:
+        return label
+    return f"[{key_style}]^{ordinal}[/] {label}"
+
+
+ORDINAL_LIMIT = 9
+"""How many buttons wear a number: ^1…^9 (^0 would read as tenth-ish)."""
+
+
+# ⌥+digit, the tmux-proof half of the positional chord (measured
+# 2026-08-25, tmux 3.7). Ctrl+digit cannot survive tmux: of ^1…^9 only
+# ^1 and ^9 arrive intact even with `extended-keys always`, because the
+# rest collapse into their legacy C0 codes — and three of those already
+# mean something here (^3 IS escape, ^7 is the app's ^/ path chord, ^8
+# is backspace). ⌥+digit crosses tmux untouched in every configuration,
+# with no tmux setup at all.
+#
+# It arrives under two spellings, and both are the same press:
+#   · "alt+<digit>" — the kitty form, from a terminal (or tmux) that
+#     reports modifiers properly;
+#   · the macOS Option GLYPH — what Ghostty types by default, and what
+#     Textual decodes ESC+<digit> into, which is how tmux forwards it.
+ALT_GLYPH_ORDINALS = {
+    "inverted_exclamation_mark": 1,     # ⌥1 ¡
+    "trade_mark_sign": 2,               # ⌥2 ™
+    "pound_sign": 3,                    # ⌥3 £
+    "cent_sign": 4,                     # ⌥4 ¢
+    "infinity": 5,                      # ⌥5 ∞
+    "section_sign": 6,                  # ⌥6 §
+    "pilcrow_sign": 7,                  # ⌥7 ¶
+    "bullet": 8,                        # ⌥8 •
+    "ª": 9,                             # ⌥9 ª
+}
+
+
+def ordinal_for_key(key: str) -> int | None:
+    """The 1-based button position a key names, or None — ``ctrl+<digit>``,
+    ``alt+<digit>``, or the Option glyph that stands in for the latter."""
+    for prefix in ("ctrl+", "alt+"):
+        if key.startswith(prefix):
+            digit = key[len(prefix):]
+            if len(digit) == 1 and digit.isdigit() and digit != "0":
+                return int(digit)
+            return None
+    return ALT_GLYPH_ORDINALS.get(key)
 
 
 class FlowLayout(Layout):
@@ -166,6 +219,11 @@ class ActionButton(Button):
     """Whether the owning view is focused — the idle/focus half of the
     chord-color decision (the button's own focus wins over both)."""
 
+    _ordinal: int | None = None
+    """This button's place in its bar, printed as ``^N``. Positional, so
+    it is assigned by the BAR on every visibility change, never by the
+    Action (which knows nothing about who else is on show)."""
+
     def __init__(self, spec: Action) -> None:
         self.spec = spec
         self._word = spec.word
@@ -181,7 +239,7 @@ class ActionButton(Button):
     def _content(self, key_style: str) -> Content:
         return Content.from_markup(
             action_markup(self._word, self.spec.key or self.spec.key_label,
-                          key_style))
+                          key_style, self._ordinal))
 
     def _apply_label(self, key_style: str) -> None:
         # set_reactive + refresh, not `self.label = …`: Content.__eq__
@@ -195,6 +253,18 @@ class ActionButton(Button):
         keeping the chord color that matches the current focus state."""
         self._word = word
         self._apply_label(self._key_style())
+
+    @property
+    def ordinal(self) -> int | None:
+        """The number this button PRINTS — and therefore the only number
+        that fires it (the label is the contract)."""
+        return self._ordinal
+
+    def set_ordinal(self, value: int | None) -> None:
+        """Take (or lose) a positional number — the bar's call."""
+        if value != self._ordinal:
+            self._ordinal = value
+            self._apply_label(self._key_style())
 
     def set_pane_focus(self, value: bool) -> None:
         """The owning view's focus flipped: dim or light the chord."""
@@ -236,9 +306,35 @@ class ActionBar(Widget):
         for spec in self._actions:
             yield ActionButton(spec)
 
+    def on_mount(self) -> None:
+        self._number_buttons()      # a bar that never calls set_visible
+
     def buttons(self) -> list[ActionButton]:
         """The visible buttons, left to right."""
         return [b for b in self.query(ActionButton) if b.display]
+
+    def number_from(self, start: int | None) -> int:
+        """Hand out the positional chords: ^N left to right over the
+        VISIBLE buttons, counting up from ``start`` (Nick's A/B,
+        2026-08-25 — the numbers run beside the letter chords until he
+        picks one). ``None`` clears them — a bar that isn't on show
+        prints no number. Returns the next free number, so a pane with
+        several bars can number them all without a collision."""
+        if start is None:
+            for button in self.query(ActionButton):
+                button.set_ordinal(None)
+            return 1
+        visible = self.buttons()
+        for offset, button in enumerate(visible):
+            place = start + offset
+            button.set_ordinal(place if place <= ORDINAL_LIMIT else None)
+        for button in self.query(ActionButton):
+            if not button.display:
+                button.set_ordinal(None)
+        return start + len(visible)
+
+    def _number_buttons(self) -> None:
+        self.number_from(1)
 
     def set_visible(self, names: set[str] | None) -> None:
         """Show only the named actions (None: show everything).
@@ -253,12 +349,19 @@ class ActionBar(Widget):
         keys = [b.spec.key for b in self.buttons() if b.spec.key]
         assert len(keys) == len(set(keys)), \
             f"{self.id}: chord collision among visible buttons ({keys})"
+        self._number_buttons()      # positions moved with the visible set
 
     def action_for_key(self, key: str) -> Action | None:
-        """The visible action bound to this key event name, if any."""
+        """The visible action bound to this key event name, if any —
+        by its own letter chord, or by its printed position (^1…^9)."""
         for button in self.buttons():
             if button.spec.chord == key:
                 return button.spec
+        place = ordinal_for_key(key)
+        if place is not None:
+            for button in self.buttons():
+                if button.ordinal == place:      # what it prints is what
+                    return button.spec           # it answers to
         return None
 
     def on_button_pressed(self, ev: Button.Pressed) -> None:

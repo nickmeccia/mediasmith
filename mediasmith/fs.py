@@ -12,14 +12,27 @@ Two rules (measured in v1 against the SMB library — 7.7s vs 0.01s for a
 ``CachedPath`` closes the loop for widgets that call ``Path.is_dir()`` per
 entry (Textual's DirectoryTree does, twice): it answers from the listing
 instead of the filesystem.
+
+Third rule, added 2026-08-22 after Nick froze the app navigating to
+``/Volumes/Room of Requirement/VIDEO/Sort/``:
+
+3. **Nothing here is safe to call on the event loop.** A cache HIT still
+   costs the signature ``stat``, and against a spun-down SMB disk that
+   one stat blocks for seconds — long enough that the whole TUI stops
+   redrawing and stops taking keys. The ``a``-prefixed wrappers below
+   (``alist_dir``, ``acached_children``, ``ais_dir``, ``anode_type``) are the
+   async front door: every widget on the event loop uses those, and the
+   plain functions are for thread workers only.
 """
 
 from __future__ import annotations
 
+import asyncio
 import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from stat import S_ISDIR
 
 _cache: dict[str, tuple[tuple[int, int, int], tuple["Entry", ...]]] = {}
 
@@ -79,6 +92,11 @@ class CachedPath(Path):
         return self._ms_is_dir
 
 
+async def alist_dir(path: Path | str) -> tuple[Entry, ...]:
+    """``list_dir`` off the event loop. Raises OSError."""
+    return await asyncio.to_thread(list_dir, path)
+
+
 def cached_children(path: Path | str) -> list[CachedPath]:
     """Children of ``path`` as CachedPaths; empty list if unreadable."""
     path = Path(path)
@@ -92,3 +110,43 @@ def cached_children(path: Path | str) -> list[CachedPath]:
         child._ms_is_dir = entry.is_dir
         children.append(child)
     return children
+
+
+async def acached_children(path: Path | str) -> list[CachedPath]:
+    """``cached_children`` off the event loop."""
+    return await asyncio.to_thread(cached_children, path)
+
+
+async def ais_dir(path: Path) -> bool:
+    """``path.is_dir()`` without blocking the event loop.
+
+    A CachedPath already knows — no syscall and no thread hop; anything
+    else pays for a stat, which is the call that hangs on a sleeping NAS.
+    """
+    if isinstance(path, CachedPath):
+        return path.is_dir()
+    return await asyncio.to_thread(_safe_is_dir, path)
+
+
+def _safe_is_dir(path: Path) -> bool:
+    try:
+        return path.is_dir()
+    except OSError:
+        return False
+
+
+async def anode_type(path: Path | str) -> str:
+    """``"dir"`` | ``"file"`` | ``"missing"`` — one off-thread stat.
+
+    One syscall answers what ``is_dir()`` then ``is_file()`` asked in two;
+    on the NAS each of those is a network round trip.
+    """
+    return await asyncio.to_thread(node_type, path)
+
+
+def node_type(path: Path | str) -> str:
+    try:
+        st = os.stat(path)
+    except OSError:
+        return "missing"
+    return "dir" if S_ISDIR(st.st_mode) else "file"

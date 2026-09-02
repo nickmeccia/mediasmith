@@ -30,9 +30,10 @@ from textual.message import Message
 from textual.screen import ModalScreen
 from textual.widgets import Button, Checkbox, Input, Label, Static
 
-from . import (adapters, artfetch, booksort, calibre, epub, folderize, fs,
-               gif, imageops, kinds, multiartist, omnibus, posters, srt,
-               standardize, subsync, videofolder)
+from . import (adapters, artfetch, booksort, calibre, casing, epub,
+               folderize, fs, gif, imageops, kinds, multiartist, omnibus,
+               posters, progress, srt, standardize, subsync, videofolder)
+from . import actions
 from .actions import Action, ActionBar, ActionButton
 from .images import image_widget
 
@@ -50,6 +51,19 @@ def _image_size(data: bytes | None) -> tuple[int, int] | None:
         return PILImage.open(io.BytesIO(data)).size
     except Exception:
         return None
+
+
+def _subs_job(video: Path) -> str:
+    """Job key for a subtitle fetch — per video: fetches run side by side."""
+    return f"get-subs:{video}"
+
+
+def _posters_job(video: Path) -> str:
+    return f"posters:{video}"
+
+
+def _convert_job(source: Path) -> str:
+    return f"convert:{source}"
 
 
 PANE_ACTIONS = [
@@ -94,17 +108,19 @@ PANE_ACTIONS = [
     Action("convert_webp", "convert to webp", "w"),
     # -- video: the subtitle suite, then posters/gif (spec order, minus
     # "watch" — it is the universal "open" button above now)
-    Action("get_subs", "fetch subtitles", "f"),
+    # ^f is "folderize" on a video too (Nick, 2026-08-22 — and the tree's
+    # own folderize chord), so the subtitle fetch takes ^u: "fetch s^ubtitles"
+    Action("get_subs", "fetch subtitles", "u"),
     # ^c reserved: ^l stands in — "c^lean subs"
     Action("clean_subs", "clean subs", "l"),
     # ^h is reserved (backspace alias): ^t stands in — "shif^t subs"
     Action("shift_subs", "shift subs", "t"),
     Action("download_posters", "download posters", "p"),
     Action("gif", "make gif", "g"),
-    # the ebook gesture on a video (2026-08-22); ^f/^l/^t are the
-    # subtitle suite and ^o is "open", so "fol^derize" takes ^d (an Input
-    # editing chord, which FieldInput forwards to a visible button)
-    Action("folderize_video", "folderize", "d"),
+    # the ebook gesture on a video (2026-08-22). ^f, matching the tree's
+    # folderize command and every other kind's folderize button — the
+    # subtitle fetch moved to ^u to free it (Nick, 2026-08-22)
+    Action("folderize_video", "folderize", "f"),
     # -- folder probes (todo-4 lists no renames for these): sort keeps
     # its folder word so a folder never shows two "folderize" buttons
     Action("sort", "sort", "o"),
@@ -267,7 +283,13 @@ class FieldInput(Input):
         # chords (^a home, ^e end, ^u clear, …): Nick's button letters
         # include Input-eaten ones (todo-4 Button Refactor), and the
         # printed button is the contract. Unclaimed chords still edit.
-        if not event.key.startswith("ctrl+"):
+        #
+        # ⌥+digit rides along: it is the positional chord's tmux-proof
+        # spelling, and it reaches us as a PRINTABLE character (the macOS
+        # Option glyph), so a field would otherwise type "¡" instead of
+        # pressing button one.
+        if not (event.key.startswith("ctrl+")
+                or actions.ordinal_for_key(event.key) is not None):
             return
         pane = self.screen.query_one(DetailsView)
         action = pane.action_for_key(event.key)
@@ -299,16 +321,19 @@ class ArtPathInput(FieldInput):
         Binding("escape", "cancel", show=False),
     ]
 
-    def _matches(self) -> list[fs.CachedPath]:
+    async def _matches(self) -> list[fs.CachedPath]:
         base, prefix = os.path.split(self.value)
         prefix = prefix.lower()
-        return [child for child in fs.cached_children(base or "/")
+        # off the event loop: the completion may point at the NAS, and a
+        # sleeping SMB disk answers a listing in seconds (see fs rule 3)
+        children = await fs.acached_children(base or "/")
+        return [child for child in children
                 if child.name.lower().startswith(prefix)
                 and (child.is_dir()
                      or kinds.kind_of(child, is_dir=False) == kinds.IMAGE)]
 
-    def action_complete(self) -> None:
-        matches = self._matches()
+    async def action_complete(self) -> None:
+        matches = await self._matches()
         if not matches:
             return
         first = matches[0]
@@ -343,16 +368,19 @@ class CoverPathInput(FieldInput):
         Binding("escape", "cancel", show=False),
     ]
 
-    def _matches(self) -> list[fs.CachedPath]:
+    async def _matches(self) -> list[fs.CachedPath]:
         base, prefix = os.path.split(self.value)
         prefix = prefix.lower()
-        return [child for child in fs.cached_children(base or "/")
+        # off the event loop: the completion may point at the NAS, and a
+        # sleeping SMB disk answers a listing in seconds (see fs rule 3)
+        children = await fs.acached_children(base or "/")
+        return [child for child in children
                 if child.name.lower().startswith(prefix)
                 and (child.is_dir()
                      or kinds.kind_of(child, is_dir=False) == kinds.IMAGE)]
 
-    def action_complete(self) -> None:
-        matches = self._matches()
+    async def action_complete(self) -> None:
+        matches = await self._matches()
         if not matches:
             return
         first = matches[0]
@@ -638,6 +666,61 @@ class ConfirmSave(ModalScreen[str]):
         self._decide(choice)
 
 
+class ConfirmCaseRename(ModalScreen[str]):
+    """A wanted folder already exists under a different spelling and this
+    filesystem holds only one of them (Nick's spec, 2026-08-25): rename it
+    — keeping or trashing what's inside — or cancel the action.
+
+    The second modal in the app, and the only other one: like ConfirmSave
+    it asks about work that is about to be written, and the answer cannot
+    be inferred (see the cookbook's "never a modal" rule — options BEFORE
+    an action stay inline divs; a destructive fork does not).
+    """
+
+    BINDINGS = [
+        Binding("k", "choose('keep')", "keep contents"),
+        Binding("d", "choose('purge')", "delete contents"),
+        Binding("escape", "choose('cancel')", "cancel"),
+    ]
+
+    def __init__(self, pairs: list[tuple[Path, Path]]) -> None:
+        super().__init__()
+        self._pairs = pairs
+        self._decided = False
+
+    def _decide(self, choice: str) -> None:
+        if self._decided:       # first answer wins (ConfirmSave's rule:
+            return              # a second dismiss is app death)
+        self._decided = True
+        self.dismiss(choice)
+
+    def _message(self) -> str:
+        existing, wanted = self._pairs[0]
+        more = (f" (and {len(self._pairs) - 1} more)"
+                if len(self._pairs) > 1 else "")
+        return (f"{existing.name}/ already exists where {wanted.name}/ "
+                f"should go{more}.\nThis filesystem can't hold both "
+                f"spellings — rename it?")
+
+    def compose(self):
+        with Vertical(id="confirm-box"):
+            yield Label(self._message(), id="confirm-msg")
+            with Horizontal(id="confirm-buttons"):
+                yield Button("Rename, keep contents", id="keep",
+                             variant="primary")
+                yield Button("Rename, delete contents", id="purge")
+                yield Button("Cancel", id="cancel")
+
+    def on_mount(self) -> None:
+        self.query_one("#keep", Button).focus()
+
+    def on_button_pressed(self, ev: Button.Pressed) -> None:
+        self._decide(ev.button.id or "cancel")
+
+    def action_choose(self, choice: str) -> None:
+        self._decide(choice)
+
+
 class DetailsView(VerticalScroll, can_focus=True):
 
     BINDINGS = [
@@ -733,6 +816,8 @@ class DetailsView(VerticalScroll, can_focus=True):
         self._baseline: tuple[str, dict[str, str]] | None = None
         self._pending: Path | None = None
         self._debounce = None
+        self._jobs: progress.JobToasts | None = None    # lazy: needs .app
+        self._standardize_single = False    # a one-book run closes its toast
         self._pending_art: bytes | None = None   # unsaved replacement art
         self._baseline_art: bytes | None = None  # what discard restores
         self._art_candidates: list[artfetch.CoverCandidate] = []
@@ -909,6 +994,10 @@ class DetailsView(VerticalScroll, can_focus=True):
                                           or self in focused.ancestors)
         for button in self.query(ActionButton):
             button.set_pane_focus(inside)
+        # a wizard div opening or closing is a focus move, and it changes
+        # which bars are on show — so the positional chords settle here
+        # too (set_ordinal is a no-op when the number hasn't moved)
+        self._number_action_buttons()
 
     # -- value plumbing ----------------------------------------------------------
 
@@ -1344,6 +1433,23 @@ class DetailsView(VerticalScroll, can_focus=True):
                 bars.append(bar)
         return bars
 
+    def _number_action_buttons(self) -> None:
+        """Hand out ^1…^9 across the WHOLE pane, not per bar (Nick's A/B,
+        2026-08-25): two bars each starting at ^1 would print the same
+        number twice, and the printed number is what fires.
+
+        The pane bar goes first, so "save" keeps the number it had before
+        a wizard div opened above it; the sub-bar on show takes the tail.
+        A bar that isn't on show prints nothing.
+        """
+        active = self._active_bars()
+        start = 1
+        for bar in sorted(active, key=lambda b: b.id != "pane-bar"):
+            start = bar.number_from(start)
+        for bar in self.query(ActionBar):
+            if bar not in active:
+                bar.number_from(None)
+
     def _art_buttons(self) -> list[ActionButton]:
         if self.kind != kinds.AUDIO or not self.can_edit():
             return []
@@ -1411,6 +1517,64 @@ class DetailsView(VerticalScroll, can_focus=True):
             # meaningless then, not an error (flaked the suite twice)
             return
         bar.set_visible(names)
+        self._number_action_buttons()   # positions moved with the visible set
+        # the tree's ^f mirrors whatever folderize this selection earned,
+        # and the strip only prints a key that works — so a bar change is
+        # a strip change (Nick, 2026-08-22). Guarded like the query above:
+        # a late probe result can land after the app is on its way out.
+        try:
+            self.app.sync_strips()
+        except Exception:
+            pass
+
+    def job(self, key: str, title: str, message: str, *,
+            severity: str = "information", done: bool = False,
+            timeout: float = progress.FINAL_TIMEOUT) -> None:
+        """Say ``message`` on the toast belonging to job ``key``.
+
+        One running job owns ONE toast: the first report raises it, later
+        ones replace its text in place, and ``done`` releases it to fade
+        (Nick, 2026-08-22 — a five-second fetch used to look like a dead
+        keypress, because each message's toast had gone before the next
+        one came). ``key`` is the title where a job cannot overlap itself
+        and title+path where it can: subtitle fetches and conversions run
+        side by side on purpose.
+
+        Thread workers reach this the usual way, through
+        ``call_from_thread``.
+        """
+        if self._jobs is None:
+            self._jobs = progress.JobToasts(self.app)
+        self._jobs.report(key, title, message, severity=severity,
+                          done=done, timeout=timeout)
+
+    def job_dismiss(self, key: str) -> None:
+        """Take a job's toast down with no final word — the PANE became
+        the answer. A plan preview says everything "scanning…" was
+        leading up to, so the toast would only be in the way."""
+        if self._jobs is not None:
+            self._jobs.dismiss(key)
+
+    FOLDERIZE_WORD = "folderize"
+    """Three actions wear this word — a single epub's ``sort_book``, a
+    video's ``folderize_video``, an audio folder's ``folderize``. The
+    tree's ^f fires whichever one the selection is showing, so the word
+    (not the name) is what identifies the command across views."""
+
+    def folderize_action(self) -> Action | None:
+        """The folderize on show for the current selection, or None.
+
+        Reads the composed bar rather than re-deriving the rules: the
+        button IS the contract (todo-4), so if it isn't printed, ^f from
+        the tree does nothing either."""
+        try:
+            bar = self.query_one("#pane-bar", ActionBar)
+        except NoMatches:
+            return None
+        for button in bar.buttons():
+            if button.spec.word == self.FOLDERIZE_WORD:
+                return button.spec
+        return None
 
     # -- focus lockdown (todo-4 "Focus"): a focused sub-view owns the user.
     # While an inline wizard / import input / plan form holds focus, only
@@ -1673,7 +1837,7 @@ class DetailsView(VerticalScroll, can_focus=True):
             return
         book = self.path
         self._hide_book_cover_path()
-        self.notify("writing cover…", title="cover")
+        self.job("cover", "cover", "writing cover…")
         self._book_cover_worker(book, target)
 
     @work(thread=True, exclusive=True, group="book-cover")
@@ -1682,12 +1846,13 @@ class DetailsView(VerticalScroll, can_focus=True):
             epub.set_cover(book, image.read_bytes())
         except Exception as error:
             self.app.call_from_thread(
-                self.notify, str(error), title="cover", severity="error")
+                self.job, "cover", "cover", str(error),
+                severity="error", done=True)
             return
         self.app.call_from_thread(self._book_cover_done, book)
 
     def _book_cover_done(self, book: Path) -> None:
-        self.notify("cover updated", title="cover")
+        self.job("cover", "cover", "cover updated", done=True)
         if self.path == book:
             self.preview(book, immediate=True)      # refresh the cover preview
 
@@ -1825,7 +1990,15 @@ class DetailsView(VerticalScroll, can_focus=True):
     def _save_failed(self, error: Exception) -> None:
         self.notify(str(error), title="save failed", severity="error")
 
+    def _ack_save(self, subject: str) -> None:
+        """Acknowledge a completed ^s (Nick, 2026-08-25). A single-file
+        save used to land in silence — the ✓ marks simply cleared, which
+        looks the same as a keypress that did nothing. Bulk saves and the
+        subtitle shift already said so; this makes it the rule."""
+        self.notify(f"{subject} saved", title="save")
+
     def _save_done(self, old: Path, new: Path, release: bool) -> None:
+        self._ack_save(new.name)
         if self.path == old:
             self.path = new
         if self._pending_art is not None:       # the saved art is the new base
@@ -1869,24 +2042,26 @@ class DetailsView(VerticalScroll, can_focus=True):
                         "https://calibre-ebook.com",
                         severity="error", title="convert")
             return
-        self.notify(f"{source.name} → .{fmt}…", title="converting")
+        self.job(_convert_job(source), "convert",
+                 f"{source.name} → .{fmt}…")
         self._convert_worker(source, target)
 
     @work(thread=True, group="convert", exclusive=False)
     def _convert_worker(self, source: Path, target: Path) -> None:
         # conversions take seconds to minutes: never block the UI, and
-        # let several queue up side by side
+        # let several queue up side by side — each with its own toast
         try:
             calibre.convert(source, target)
         except Exception as error:
             self.app.call_from_thread(
-                self.notify, str(error), title="convert failed",
-                severity="error")
+                self.job, _convert_job(source), "convert", str(error),
+                severity="error", done=True)
             return
-        self.app.call_from_thread(self._convert_done, target)
+        self.app.call_from_thread(self._convert_done, source, target)
 
-    def _convert_done(self, target: Path) -> None:
-        self.notify(f"{target.name} created", title="convert")
+    def _convert_done(self, source: Path, target: Path) -> None:
+        self.job(_convert_job(source), "convert", f"{target.name} created",
+                 done=True)
         self.post_message(self.FileCreated(target))
 
     # -- produce-a-sibling actions (cover export, metadata.opf) -------------------
@@ -1910,8 +2085,11 @@ class DetailsView(VerticalScroll, can_focus=True):
         """Refuse this overwrite but leave the door open: arm the one-shot
         and tell the user how to force it."""
         self._overwrite_arm = (title, source)
-        self.notify(f"{label} — press again to overwrite",
-                    severity="warning", title=title)
+        # done=True: this refusal ENDS the producer whose toast is open
+        # (a gif announces itself before ffmpeg refuses the overwrite)
+        self.job(self._produce_job(title, source), title,
+                 f"{label} — press again to overwrite",
+                 severity="warning", done=True)
 
     def action_extract_cover(self) -> None:
         self._produce("extract cover",
@@ -1926,6 +2104,12 @@ class DetailsView(VerticalScroll, can_focus=True):
                 or self.paths is not None):
             return
         self._run_producer(title, producer, self.path)
+
+    @staticmethod
+    def _produce_job(title: str, source: Path) -> str:
+        """Producers run side by side (a gif and a cover extract at once),
+        so the job is the action AND the file it came from."""
+        return f"{title}:{source}"
 
     def _run_producer(self, title: str, producer, source: Path) -> None:
         """Run a produce-a-sibling action, honoring an armed overwrite."""
@@ -1943,13 +2127,16 @@ class DetailsView(VerticalScroll, can_focus=True):
                                       str(error))
             return
         except Exception as error:
-            self.app.call_from_thread(self.notify, str(error), title=title,
-                                      severity="warning")
+            self.app.call_from_thread(
+                self.job, self._produce_job(title, path), title, str(error),
+                severity="warning", done=True)
             return
-        self.app.call_from_thread(self._produced, title, target)
+        self.app.call_from_thread(self._produced, title, path, target)
 
-    def _produced(self, title: str, target: Path) -> None:
-        self.notify(f"{target.name} created", title=title)
+    def _produced(self, title: str, source: Path, target: Path) -> None:
+        # closes the toast a slow producer (gif) opened when it started
+        self.job(self._produce_job(title, source), title,
+                 f"{target.name} created", done=True)
         self.post_message(self.FileCreated(target))
 
     # -- image actions: convert / resize / rotate (imageops.py) --------------------
@@ -2138,12 +2325,13 @@ class DetailsView(VerticalScroll, can_focus=True):
         if self._folderize_plan is not None:
             plan = self._folderize_plan
             self._folderize_plan = None
-            self.notify("organizing…", title="folderize")
+            self.job("folderize", "folderize", "organizing…")
             self._folderize_exec_worker(plan)
         elif self._multiartist_plan is not None:
             plan = self._multiartist_plan
             self._multiartist_plan = None
-            self.notify("stripping…", title="strip multi-artist")
+            self.job("strip multi-artist", "strip multi-artist",
+                     "stripping…")
             self._multiartist_exec_worker(plan)
         elif self._omnibus_plan is not None:
             plan = self._omnibus_plan
@@ -2153,12 +2341,12 @@ class DetailsView(VerticalScroll, can_focus=True):
                     plan, *self.query_one(OmnibusForm).edits(len(plan.books)))
             self._omnibus_plan = None
             self._omnibus_editing = False
-            self.notify("splitting…", title="split omnibus")
+            self.job("split omnibus", "split omnibus", "splitting…")
             self._omnibus_exec_worker(plan)
         elif self._sort_plan is not None:
             plan = self._sort_plan
             self._sort_plan = None
-            self.notify("wrapping…", title="sort")
+            self.job("sort", "sort", "wrapping…")
             self._sort_exec_worker(plan)
         # the preview (or split form) held focus; the exec hid it — ascend
         self.app.action_focus_tree()
@@ -2174,6 +2362,26 @@ class DetailsView(VerticalScroll, can_focus=True):
         if self.path is not None:               # restore the normal view
             self.preview(self.path, immediate=True)
         self.app.action_focus_tree()            # ascend out of the pane
+
+    # -- case-only folder collisions ------------------------------------------------
+    # Every wrapping action (folderize, video folderize, sort) asks the
+    # same question before it writes: is a folder I mean to create already
+    # here under a different spelling? On APFS/SMB the answer can't be
+    # "make both" — see casing.py. The check lists directories, so it runs
+    # inside the action's own worker; the answer comes back through the
+    # modal and re-enters that worker with a resolution.
+
+    def _case_gate(self, key: str, title: str,
+                   pairs: list[tuple[Path, Path]], retry) -> None:
+        def decided(choice: str | None) -> None:
+            if choice in ("keep", "purge"):
+                self.job(key, title, "renaming folders…")
+                retry(choice)
+                return
+            self.job(key, title, "cancelled — folder casing left alone",
+                     done=True, timeout=6)
+
+        self.app.push_screen(ConfirmCaseRename(pairs), decided)
 
     # -- folderize --------------------------------------------------------------
 
@@ -2192,7 +2400,7 @@ class DetailsView(VerticalScroll, can_focus=True):
         root = self._plan_root()
         if root is None or not self._folderize_ready:
             return
-        self.notify("scanning…", title="folderize")
+        self.job("folderize", "folderize", "scanning…")
         self._folderize_plan_worker(root)
 
     @work(thread=True, exclusive=True, group="folderize-plan")
@@ -2203,20 +2411,33 @@ class DetailsView(VerticalScroll, can_focus=True):
     def _folderize_planned(self, root: Path,
                            plan: folderize.FolderizePlan) -> None:
         if self.path != root:                   # selection moved on
+            self.job_dismiss("folderize")  # nothing to report
             return
         if plan.empty:
-            self.notify("already organized", title="folderize")
+            self.job("folderize", "folderize", "already organized",
+                     done=True)
             self._folderize_ready = False
             self._sync_pane_bar()
             return
         self._folderize_plan = plan
+        self.job_dismiss("folderize")       # the preview is the answer
         self._show_plan_preview(f"folderize {root.name}/", render_plan(plan))
 
     @work(thread=True, exclusive=True, group="folderize-exec")
-    def _folderize_exec_worker(self, plan: folderize.FolderizePlan) -> None:
+    def _folderize_exec_worker(self, plan: folderize.FolderizePlan,
+                               resolution: str | None = None) -> None:
+        pairs = casing.clashes(folderize.wanted_dirs(plan))
+        if pairs and resolution is None:
+            self.app.call_from_thread(
+                self._case_gate, "folderize", "folderize", pairs,
+                lambda choice: self._folderize_exec_worker(plan, choice))
+            return
+        case_errors = (casing.resolve(pairs, purge=(resolution == "purge"))
+                       if pairs else [])
         moved, skipped, errors = folderize.execute(plan)
         self.app.call_from_thread(
-            self._folderize_done, plan.root, moved, skipped, errors)
+            self._folderize_done, plan.root, moved, skipped,
+            case_errors + errors)
 
     def _folderize_done(self, root: Path, moved: int, skipped: int,
                         errors: list[tuple[Path, str]]) -> None:
@@ -2226,8 +2447,9 @@ class DetailsView(VerticalScroll, can_focus=True):
         if errors:
             path, reason = errors[0]
             parts.append(f"{len(errors)} failed — {path.name}: {reason}")
-        self.notify(" · ".join(parts), title="folderize", timeout=8,
-                    severity="warning" if errors else "information")
+        self.job("folderize", "folderize", " · ".join(parts), done=True,
+                 timeout=8,
+                 severity="warning" if errors else "information")
         fs.clear_cache()                        # the subtree just changed
         self.post_message(self.FolderChanged(root))
         if self.path == root:
@@ -2250,7 +2472,7 @@ class DetailsView(VerticalScroll, can_focus=True):
         root = self._plan_root()
         if root is None or not self._multiartist_ready:
             return
-        self.notify("scanning…", title="strip multi-artist")
+        self.job("strip multi-artist", "strip multi-artist", "scanning…")
         self._multiartist_plan_worker(root)
 
     @work(thread=True, exclusive=True, group="multiartist-plan")
@@ -2261,13 +2483,16 @@ class DetailsView(VerticalScroll, can_focus=True):
     def _multiartist_planned(self, root: Path,
                              plan: multiartist.MultiArtistPlan) -> None:
         if self.path != root:                   # selection moved on
+            self.job_dismiss("strip multi-artist")  # nothing to report
             return
         if plan.empty:
-            self.notify("no tangled artists", title="strip multi-artist")
+            self.job("strip multi-artist", "strip multi-artist",
+                     "no tangled artists", done=True)
             self._multiartist_ready = False
             self._sync_pane_bar()
             return
         self._multiartist_plan = plan
+        self.job_dismiss("strip multi-artist")
         self._show_plan_preview(f"strip multi-artist in {root.name}/",
                                 render_multiartist_plan(plan))
 
@@ -2284,8 +2509,9 @@ class DetailsView(VerticalScroll, can_focus=True):
         if errors:
             path, reason = errors[0]
             parts.append(f"{len(errors)} failed — {path.name}: {reason}")
-        self.notify(" · ".join(parts), title="strip multi-artist", timeout=8,
-                    severity="warning" if errors else "information")
+        self.job("strip multi-artist", "strip multi-artist",
+                 " · ".join(parts), done=True, timeout=8,
+                 severity="warning" if errors else "information")
         # tags changed in place — no tree structure change, just re-read
         if self.path == root:
             self.preview(root, immediate=True)  # fresh view, fresh probes
@@ -2308,7 +2534,7 @@ class DetailsView(VerticalScroll, can_focus=True):
         if (path is None or not self._omnibus_ready
                 or self.paths is not None):
             return
-        self.notify("reading…", title="split omnibus")
+        self.job("split omnibus", "split omnibus", "reading…")
         self._omnibus_plan_worker(path)
 
     @work(thread=True, exclusive=True, group="omnibus-plan")
@@ -2324,13 +2550,16 @@ class DetailsView(VerticalScroll, can_focus=True):
 
     def _omnibus_planned(self, path: Path, plan: omnibus.OmnibusPlan) -> None:
         if self.path != path:                   # selection moved on
+            self.job_dismiss("split omnibus")  # nothing to report
             return
         if plan.empty:
-            self.notify("not an omnibus after all", title="split omnibus")
+            self.job("split omnibus", "split omnibus",
+                     "not an omnibus after all", done=True)
             self._omnibus_ready = False
             self._sync_pane_bar()
             return
         self._omnibus_plan = plan
+        self.job_dismiss("split omnibus")   # the form/preview is the answer
         if len(plan.books) <= OmnibusForm.POOL:
             # the editable form: correct the NCX's guesses before writing,
             # with the pane focused (the user's feedback, 2026-08-07)
@@ -2367,8 +2596,9 @@ class DetailsView(VerticalScroll, can_focus=True):
         if errors:
             name, reason = errors[0]
             parts.append(f"{len(errors)} failed — {name}: {reason}")
-        self.notify(" · ".join(parts), title="split omnibus", timeout=8,
-                    severity="warning" if errors else "information")
+        self.job("split omnibus", "split omnibus", " · ".join(parts),
+                 done=True, timeout=8,
+                 severity="warning" if errors else "information")
         for path in written:
             self.post_message(self.FileCreated(path))
         if self.path == source:
@@ -2411,36 +2641,47 @@ class DetailsView(VerticalScroll, can_focus=True):
             return
         if (self.kind == kinds.BOOK and self.paths is None
                 and self.path is not None):
-            self.notify("reading…", title="sort")     # single ebook: no preview
+            # single ebook: no preview
+            self.job("sort", "sort", "reading…")
             self._sort_book_worker(self.path)
             return
         root = self._plan_root()
         if root is None:
             return
-        self.notify("reading…", title="sort")
+        self.job("sort", "sort", "reading…")
         self._sort_plan_worker(root)
 
     @work(thread=True, exclusive=True, group="sort-book-exec")
-    def _sort_book_worker(self, book: Path) -> None:
+    def _sort_book_worker(self, book: Path,
+                          resolution: str | None = None) -> None:
         plan = booksort.plan_for_book(book)
         if plan is None:
             self.app.call_from_thread(
-                self.notify, f"{book.name}: no readable metadata",
-                title="sort", severity="warning")
+                self.job, "sort", "sort", f"{book.name}: no readable metadata",
+                severity="warning", done=True)
             return
+        pairs = casing.clashes(booksort.wanted_dirs(plan))
+        if pairs and resolution is None:
+            self.app.call_from_thread(
+                self._case_gate, "sort", "sort", pairs,
+                lambda choice: self._sort_book_worker(book, choice))
+            return
+        case_errors = (casing.resolve(pairs, purge=(resolution == "purge"))
+                       if pairs else [])
         new_path = booksort.sorted_path(book, plan.groups[0].folder_name)
         moved, errors = booksort.execute(plan)
         self.app.call_from_thread(self._sort_book_done, book, new_path,
-                                  moved, errors)
+                                  moved, case_errors + errors)
 
     def _sort_book_done(self, book: Path, new_path: Path, moved: int,
                         errors: list[tuple[Path, str]]) -> None:
         if errors:
             _, reason = errors[0]
-            self.notify(f"{book.name}: {reason}", title="sort",
-                        severity="error", timeout=8)
+            self.job("sort", "sort", f"{book.name}: {reason}",
+                     severity="error", done=True, timeout=8)
             return
-        self.notify(f"wrapped into {new_path.parent.name}/", title="sort")
+        self.job("sort", "sort", f"wrapped into {new_path.parent.name}/",
+                 done=True)
         fs.clear_cache()                        # the subtree just changed
         self.post_message(self.Wrapped(new_path))
 
@@ -2451,19 +2692,32 @@ class DetailsView(VerticalScroll, can_focus=True):
 
     def _sort_planned(self, root: Path, plan: booksort.SortPlan) -> None:
         if self.path != root:                   # selection moved on
+            self.job_dismiss("sort")  # nothing to report
             return
         if plan.empty:
-            self.notify("every book here is already wrapped", title="sort")
+            self.job("sort", "sort", "every book here is already wrapped",
+                     done=True)
             self._sort_ready = False
             self._sync_pane_bar()
             return
         self._sort_plan = plan
+        self.job_dismiss("sort")
         self._show_plan_preview(f"sort {root.name}/", render_sort_plan(plan))
 
     @work(thread=True, exclusive=True, group="sort-exec")
-    def _sort_exec_worker(self, plan: booksort.SortPlan) -> None:
+    def _sort_exec_worker(self, plan: booksort.SortPlan,
+                          resolution: str | None = None) -> None:
+        pairs = casing.clashes(booksort.wanted_dirs(plan))
+        if pairs and resolution is None:
+            self.app.call_from_thread(
+                self._case_gate, "sort", "sort", pairs,
+                lambda choice: self._sort_exec_worker(plan, choice))
+            return
+        case_errors = (casing.resolve(pairs, purge=(resolution == "purge"))
+                       if pairs else [])
         moved, errors = booksort.execute(plan)
-        self.app.call_from_thread(self._sort_done, plan.root, moved, errors)
+        self.app.call_from_thread(self._sort_done, plan.root, moved,
+                                  case_errors + errors)
 
     def _sort_done(self, root: Path, moved: int,
                    errors: list[tuple[Path, str]]) -> None:
@@ -2471,8 +2725,9 @@ class DetailsView(VerticalScroll, can_focus=True):
         if errors:
             path, reason = errors[0]
             parts.append(f"{len(errors)} failed — {path.name}: {reason}")
-        self.notify(" · ".join(parts), title="sort", timeout=8,
-                    severity="warning" if errors else "information")
+        self.job("sort", "sort", " · ".join(parts), done=True,
+                 timeout=8,
+                 severity="warning" if errors else "information")
         fs.clear_cache()                        # the subtree just changed
         self.post_message(self.FolderChanged(root))
         if self.path == root:
@@ -2513,8 +2768,10 @@ class DetailsView(VerticalScroll, can_focus=True):
                 self._sync_pane_bar()
                 return
         n = len(books)
-        self.notify(f"standardizing {n} book{'s' if n != 1 else ''}…",
-                    title="standardize")
+        # who closes the toast: the batch summary, or the one book's result
+        self._standardize_single = n == 1
+        self.job("standardize", "standardize",
+                 f"standardizing {n} book{'s' if n != 1 else ''}…")
         self._standardize_worker(books)
 
     @work(thread=True, exclusive=False, group="standardize")
@@ -2530,22 +2787,25 @@ class DetailsView(VerticalScroll, can_focus=True):
             else:
                 failed.append(event)
                 self.app.call_from_thread(
-                    self.notify, f"{event.source.name}: {event.reason}",
-                    title="standardize", severity="warning", timeout=8)
+                    self.job, "standardize", "standardize",
+                    f"{event.source.name}: {event.reason}",
+                    severity="warning", done=len(books) == 1, timeout=8)
         if len(books) > 1:
             summary = [f"{len(done)} standardized"]
             if failed:
                 summary.append(f"{len(failed)} failed")
             self.app.call_from_thread(
-                self.notify, " · ".join(summary), title="standardize",
-                timeout=8,
+                self.job, "standardize", "standardize", " · ".join(summary),
+                done=True, timeout=8,
                 severity="warning" if failed else "information")
 
     def _standardized(self, event: standardize.BookDone) -> None:
-        self.notify(f"{event.target.name} · {event.style} · "
-                    f"{event.chapters} chapter"
-                    f"{'s' if event.chapters != 1 else ''}",
-                    title="standardize")
+        # the batch summary closes the toast; a single book closes it here
+        self.job("standardize", "standardize",
+                 f"{event.target.name} · {event.style} · "
+                 f"{event.chapters} chapter"
+                 f"{'s' if event.chapters != 1 else ''}",
+                 done=self._standardize_single)
         self.post_message(self.FileCreated(event.target))
 
     # -- cut/paste: lift the selection to the clipboard, browse, paste -------------
@@ -2616,8 +2876,8 @@ class DetailsView(VerticalScroll, can_focus=True):
                 self.notify(f"can't move {source.name} into itself",
                             title="paste", severity="warning")
                 return
-        self.notify(f"{'copying' if copy else 'moving'} {len(movable)}…",
-                    title="paste")
+        self.job("paste", "paste",
+                 f"{'copying' if copy else 'moving'} {len(movable)}…")
         self._move_worker(movable, target, copy)
 
     @work(thread=True, exclusive=True, group="move")
@@ -2654,8 +2914,8 @@ class DetailsView(VerticalScroll, can_focus=True):
         if errors:
             path, reason = errors[0]
             parts.append(f"{len(errors)} failed — {path.name}: {reason}")
-        self.notify(" · ".join(parts), title="paste", timeout=8,
-                    severity="warning" if errors else "information")
+        self.job("paste", "paste", " · ".join(parts), done=True, timeout=8,
+                 severity="warning" if errors else "information")
         self.app.end_lift()
         fs.clear_cache()
         self.post_message(self.FolderChanged(target))
@@ -2690,17 +2950,30 @@ class DetailsView(VerticalScroll, can_focus=True):
         fs.clear_cache()
         self.post_message(self.FolderCreated(folder))
 
-    def _delete_target(self) -> Path | None:
+    def _delete_target(self, cursor: Path | None = None) -> Path | None:
         """What ^del removes: the highlighted item itself — file OR folder
         (or an album-like folder shown as its contents). A shift-range bulk
-        selection has no single target, so it is left alone."""
-        if self.path is not None and self.path.exists():
+        selection has no single target, so it is left alone.
+
+        ``cursor`` is the TREE's highlighted row, and it wins when given:
+        the pane's own ``self.path`` lags the highlight by the preview
+        debounce, so a ^del within 150ms of an arrow key used to trash the
+        row above (Nick, 2026-08-25) — or nothing at all, silently, when
+        that stale row had since been deleted or renamed.
+        """
+        if cursor is not None:
+            return cursor
+        if self.path is not None:
             return self.path
         return None
 
-    def action_delete(self) -> None:
-        root = self._delete_target()
+    def action_delete(self, cursor: Path | None = None) -> None:
+        root = self._delete_target(cursor)
         if root is None:
+            # bulk shift-range (no single target) or an empty pane: say so
+            # rather than swallowing the key
+            self.notify("nothing to delete — highlight one file or folder",
+                        title="delete", severity="warning")
             return
         if os.environ.get(artfetch.OFFLINE_ENV):
             # the fuzz gate presses everything — it must not fill the
@@ -2713,6 +2986,9 @@ class DetailsView(VerticalScroll, can_focus=True):
     @work(thread=True, exclusive=True, group="delete")
     def _delete_worker(self, path: Path) -> None:
         try:
+            if not path.exists():       # the stat belongs HERE, not on the
+                raise FileNotFoundError(   # event loop (rule 4)
+                    f"{path.name} is already gone")
             adapters.trash(path)
         except Exception as error:
             self.app.call_from_thread(
@@ -2746,41 +3022,48 @@ class DetailsView(VerticalScroll, can_focus=True):
             self.notify("offline (MEDIASMITH_OFFLINE set)",
                         title="get subs", severity="warning")
             return
-        self.notify(f"{video.name}: fetching subtitles…", title="get subs")
+        # one toast for the whole fetch, updated as it reports (job())
+        self.job(_subs_job(video), "get subs",
+                 f"{video.name}: fetching subtitles…")
         self._get_subs_worker(video)
 
     @work(thread=True, group="get-subs", exclusive=False)
     def _get_subs_worker(self, video: Path) -> None:
         # like conversions: several fetches may run side by side, and a
-        # clean on another file must not cancel one
+        # clean on another file must not cancel one — so the job key
+        # carries the video, not just the title
+        key = _subs_job(video)
+        def say(message: str, **kw) -> None:
+            self.app.call_from_thread(self.job, key, "get subs", message, **kw)
+
         problems = subsync.check_requirements()
         if problems:
-            self.app.call_from_thread(
-                self.notify, "\n".join(problems), title="get subs",
-                severity="error", timeout=10)
+            say("\n".join(problems), severity="error", done=True, timeout=10)
             return
         # an explicit press on a file that already has a sub means
         # "re-fetch" — the one deliberate exception to refuse-overwrite
         force = subsync.find_subtitle(video) is not None
         try:
+            finished = False
             for event in subsync.run([video], force=force):
                 if isinstance(event, subsync.PhaseStarted):
-                    self.app.call_from_thread(
-                        self.notify, event.label, title="get subs", timeout=3)
+                    say(event.label)
                 elif isinstance(event, subsync.Note):
-                    self.app.call_from_thread(
-                        self.notify, event.text, title="get subs", timeout=5)
+                    say(event.text)
                 elif isinstance(event, subsync.FileDone):
+                    finished = True
                     self.app.call_from_thread(self._got_subs, video,
                                               event.result)
+            if not finished:        # never leave a toast running forever
+                say("nothing came back", severity="warning", done=True)
         except Exception as error:
-            self.app.call_from_thread(
-                self.notify, str(error), title="get subs", severity="error")
+            say(str(error), severity="error", done=True)
 
     def _got_subs(self, video: Path, result: subsync.FileResult) -> None:
-        self.notify(result.status, title=f"subtitles — {video.name}",
-                    severity=("information" if result.category == "ok"
-                              else "warning"), timeout=8)
+        self.job(_subs_job(video), "get subs",
+                 f"{video.name}: {result.status}", done=True,
+                 severity=("information" if result.category == "ok"
+                           else "warning"), timeout=8)
         if result.installed:
             self.post_message(self.FileCreated(video.parent / result.installed))
             if self.path == video:
@@ -2853,42 +3136,45 @@ class DetailsView(VerticalScroll, can_focus=True):
             self.notify("offline (MEDIASMITH_OFFLINE set)",
                         title="download posters", severity="warning")
             return
-        self.notify(f"{video.name}: identifying film…",
-                    title="download posters")
+        self.job(_posters_job(video), "download posters",
+                 f"{video.name}: identifying film…")
         self._posters_worker(video)
 
     @work(thread=True, group="posters", exclusive=False)
     def _posters_worker(self, video: Path) -> None:
-        # the longest worker yet (N image downloads) — progress via
-        # notify, throttled so a 40-poster film doesn't post 40 toasts
-        notify = lambda *a, **kw: self.app.call_from_thread(  # noqa: E731
-            self.notify, *a, title="download posters", **kw)
+        # the longest worker yet (N image downloads) — every phase and
+        # every fifth download replaces the text in the ONE toast this
+        # fetch owns, which is finally released by _posters_done
+        key = _posters_job(video)
+        def say(message: str, **kw) -> None:
+            self.app.call_from_thread(self.job, key, "download posters",
+                                      message, **kw)
         try:
             title = adapters.probe_video_title(video)
             for event in posters.run(video, container_title=title):
                 if isinstance(event, posters.Failed):
-                    notify(event.reason, severity="warning", timeout=10)
-                elif isinstance(event, posters.Identified):
-                    notify(event.label, timeout=3)
-                elif isinstance(event, posters.PhaseStarted):
-                    notify(event.label, timeout=3)
+                    say(event.reason, severity="warning", done=True,
+                        timeout=10)
+                elif isinstance(event, (posters.Identified,
+                                        posters.PhaseStarted)):
+                    say(event.label)
                 elif isinstance(event, posters.Progress):
                     if event.phase == "downloading" and event.done % 5 == 0:
-                        notify(f"{event.done}/{event.total} downloaded…",
-                               timeout=2)
+                        say(f"{event.done}/{event.total} downloaded…")
                 elif isinstance(event, posters.Done):
-                    self.app.call_from_thread(self._posters_done, event)
+                    self.app.call_from_thread(self._posters_done, video, event)
         except Exception as error:
-            notify(str(error), severity="error")
+            say(str(error), severity="error", done=True)
 
-    def _posters_done(self, done: posters.Done) -> None:
+    def _posters_done(self, video: Path, done: posters.Done) -> None:
         parts = [f"{done.saved} poster{'s' if done.saved != 1 else ''} "
                  f"→ {done.folder}"]
         if done.duplicates:
             parts.append(f"{done.duplicates} near-duplicates skipped")
         if done.existing:
             parts.append(f"{done.existing} already there (kept)")
-        self.notify(" · ".join(parts), title="download posters", timeout=10)
+        self.job(_posters_job(video), "download posters", " · ".join(parts),
+                 done=True, timeout=10)
         self.post_message(self.FolderChanged(done.folder.parent))
 
     # -- video → gif: the third wizard div (gif.py) ---------------------------------
@@ -2944,8 +3230,8 @@ class DetailsView(VerticalScroll, can_focus=True):
                         severity="error", timeout=10)
             return
         target = gif.gif_target(video)
-        self.notify(f"{video.name} → {target.name} ({fps} fps, {width} px)…",
-                    title="make gif")
+        self.job(self._produce_job("make gif", video), "make gif",
+                 f"{video.name} → {target.name} ({fps} fps, {width} px)…")
         # produce-a-sibling: the generic runner fits (div stays open); an
         # existing gif refuses once, then overwrites on a second ^apply
         self._run_producer(
@@ -2964,29 +3250,39 @@ class DetailsView(VerticalScroll, can_focus=True):
         video = self._video_target()
         if video is None or not videofolder.probe(video):
             return
-        self.notify(f"{video.name} → {video.stem}/", title="folderize")
+        self.job("folderize", "folderize", f"{video.name} → {video.stem}/")
         self._folderize_video_worker(video)
 
     @work(thread=True, exclusive=True, group="folderize-video")
-    def _folderize_video_worker(self, video: Path) -> None:
+    def _folderize_video_worker(self, video: Path,
+                                resolution: str | None = None) -> None:
+        pairs = casing.clashes([videofolder.wrap_dir(video)])
+        if pairs and resolution is None:
+            self.app.call_from_thread(
+                self._case_gate, "folderize", "folderize", pairs,
+                lambda choice: self._folderize_video_worker(video, choice))
+            return
+        case_errors = (casing.resolve(pairs, purge=(resolution == "purge"))
+                       if pairs else [])
         landed, moved, errors = videofolder.execute(video)
         self.app.call_from_thread(self._folderize_video_done, video, landed,
-                                  moved, errors)
+                                  moved, case_errors + errors)
 
     def _folderize_video_done(self, video: Path, landed: Path, moved: int,
                               errors: list[tuple[Path, str]]) -> None:
         if landed == video:                     # the video itself never moved
             _, reason = errors[0] if errors else (None, "nothing to move")
-            self.notify(f"{video.name}: {reason}", title="folderize",
-                        severity="error", timeout=8)
+            self.job("folderize", "folderize", f"{video.name}: {reason}",
+                     severity="error", done=True, timeout=8)
             return
         parts = [f"{moved} file{'s' if moved != 1 else ''} → "
                  f"{landed.parent.name}/"]
         if errors:
             path, reason = errors[0]
             parts.append(f"{len(errors)} left behind — {path.name}: {reason}")
-        self.notify(" · ".join(parts), title="folderize", timeout=8,
-                    severity="warning" if errors else "information")
+        self.job("folderize", "folderize", " · ".join(parts), done=True,
+                 timeout=8,
+                 severity="warning" if errors else "information")
         fs.clear_cache()                        # the subtree just changed
         self.post_message(self.Wrapped(landed))
 

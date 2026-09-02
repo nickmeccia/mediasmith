@@ -1,0 +1,45 @@
+╔════════════════════════════╗
+║ 2 · NUMBERS IN TMUX        ║
+╚════════════════════════════╝
+
+╭╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╮
+┆ Ctrl can't be rescued    ┆
+╰╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╯
+
+I measured the whole path instead of guessing — a pty pretending to be Ghostty, tmux 3.7 in the middle, a raw-stdin dump standing in for the app. Sending ctrl+1…ctrl+9 in:
+
+┌─────┬──────────────┬──────────────────────┬───────────────────────┐
+│ key │ tmux default │ extended-keys always │ what Textual calls it │
+├─────┼──────────────┼──────────────────────┼───────────────────────┤
+│ ^1  │ 1            │ CSI 27;5;49~         │ ctrl+1 ✓              │
+├─────┼──────────────┼──────────────────────┼───────────────────────┤
+│ ^2  │ NUL          │ NUL                  │ ctrl+@                │
+├─────┼──────────────┼──────────────────────┼───────────────────────┤
+│ ^3  │ ESC          │ ESC                  │ escape                │
+├─────┼──────────────┼──────────────────────┼───────────────────────┤
+│ ^4  │ 0x1C         │ 0x1C                 │ ctrl+backslash        │
+├─────┼──────────────┼──────────────────────┼───────────────────────┤
+│ ^5  │ 0x1D         │ 0x1D                 │ ctrl+]                │
+├─────┼──────────────┼──────────────────────┼───────────────────────┤
+│ ^6  │ 0x1E         │ 0x1E                 │ ctrl+^                │
+├─────┼──────────────┼──────────────────────┼───────────────────────┤
+│ ^7  │ 0x1F         │ 0x1F                 │ the app's ^/          │
+├─────┼──────────────┼──────────────────────┼───────────────────────┤
+│ ^8  │ 0x7F         │ 0x7F                 │ backspace             │
+├─────┼──────────────┼──────────────────────┼───────────────────────┤
+│ ^9  │ 9            │ CSI 27;5;57~         │ ctrl+9 ✓              │
+└─────┴──────────────┴──────────────────────┴───────────────────────┘
+
+Only ^1 and ^9 cross intact, and no tmux setting changes it — tmux prefers each digit's legacy C0 code over the extended form. Three of those codes already mean something here, so aliasing our way out would arm keys that cancel, jump to the path bar, and edit text instead of pressing buttons.
+
+╭╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╮
+┆ ⌥ crosses untouched     ┆
+╰╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╯
+
+Alt+digit came through as ESC 1…ESC 9 in every configuration, including tmux defaults — no tmux.conf needed (you don't have one). So it's wired up beside the ctrl spelling: ⌥2 and ^2 both press button two. It arrives two ways and both are handled — alt+<digit> where modifiers are reported properly, and the macOS Option glyph ¡™£¢∞§¶•ª, which is what Ghostty types today with macos-option-as-alt off and what Textual decodes tmux's ESC+digit into.
+
+Three things that come with it, all in the ledger:
+
+- Those glyphs are printable, so FieldInput intercepts them — you can't type ¡ or § into a filename or tag while the number chords live. Say the word and I'll scope them to the pane instead.
+- ESC 1 is also "esc, then 1" typed fast; set -sg escape-time 10 narrows that window if you ever see it.
+- The buttons still print ^N per your spec; ⌥N is an unprinted alias, like ⇥ for ⏎.

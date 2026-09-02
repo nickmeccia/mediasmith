@@ -11,7 +11,7 @@ thumbnails, keep the highest-resolution copy, Hamming ≤ 5 ⇒ same poster).
 Where the files land (Nick's local/network split):
   - local volume  → beside the video, in its own folder;
   - network volume (under /Volumes) → a staging folder
-    ``~/Downloads/Videosmith/<Film (Year)>/`` for hand curation.
+    ``~/Downloads/Mediasmith/<Film (Year)>/`` for hand curation.
 
 Contract for frontends (the subsync pattern):
   - ``run()`` is a generator that performs the work and yields Event
@@ -28,11 +28,12 @@ from __future__ import annotations
 import io
 import json
 import os
+import re
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Iterator, Union
+from typing import Callable, Iterator, NamedTuple, Union
 
 from . import fs, kinds
 from .text import sanitize_filename
@@ -44,7 +45,7 @@ IMG_BASE = "https://image.tmdb.org/t/p/"
 THUMB_SIZE = "w185"      # small render used only for de-duplication hashing
 DEDUP_HAMMING = 5        # dhash distance ≤ this ⇒ "the same poster"
 
-STAGING_DIR = Path.home() / "Downloads" / "Videosmith"
+STAGING_DIR = Path.home() / "Downloads" / "Mediasmith"
 """Network-volume videos stage here (never write posters to the NAS
 unreviewed); local videos take posters straight into their own folder."""
 
@@ -122,30 +123,75 @@ def default_fetch(url: str) -> bytes:
         return response.read()
 
 
-def resolve_title_year(video: Path,
-                       container_title: str | None = None
-                       ) -> tuple[str, int | None]:
-    """Best-effort (title, year): the container's embedded title tag,
-    then the filename, then the folder name — first candidate guessit
-    gives a year for wins (v1's ladder, verbatim)."""
+_EDGE_DASHES = re.compile(r"^[\s\-\u2010-\u2015_\u00b7]+"
+                          r"|[\s\-\u2010-\u2015_\u00b7]+$")
+"""Dashes and separators guessit leaves stranded at a title's edge."""
+
+
+def clean_title(title: str) -> str:
+    """Trim separator debris off a guessed title.
+
+    ``2017 — Ghost In The Shell`` guesses as ``— Ghost In The Shell``:
+    guessit takes the year off the front and hands back the em dash that
+    joined them (Nick, 2026-08-22). Only leading/trailing dashes, spaces
+    and interpuncts go — a title's own punctuation ("Airplane!") stays.
+    """
+    return _EDGE_DASHES.sub("", title) or title
+
+
+class Guess(NamedTuple):
+    """What the title ladder made of a video."""
+
+    title: str
+    year: int | None
+    source: str
+    """The raw string this came from — kept because guessit can take a
+    year off a title that CONTAINS one ("2001 A Space Odyssey" parses as
+    "A Space Odyssey" + 2001), and then only the raw string finds the
+    film. ``_search`` uses it as a last query and as a second yardstick
+    for scoring."""
+
+
+def resolve_query(video: Path,
+                  container_title: str | None = None) -> Guess:
+    """Best-effort (title, year, source): the container's embedded title
+    tag, then the filename, then the folder name — first candidate
+    guessit gives a year for wins (v1's ladder).
+
+    ``type="movie"`` is pinned: without it guessit reads a numeric title
+    suffix as season/episode ("Blade Runner 2049" → S20E49, "Ocean's 11"
+    → episode 11) and hands back a truncated title (Nick, 2026-08-22).
+    Posters are only ever fetched for films here.
+    """
     from guessit import guessit
     candidates = [c for c in (container_title, video.stem, video.parent.name)
                   if c]
-    fallback: tuple[str, int | None] | None = None
+    fallback: Guess | None = None
     for candidate in candidates:
         try:
-            guess = guessit(candidate)
+            guess = guessit(candidate, {"type": "movie"})
         except Exception:
             continue
         title = guess.get("title")
         if not title:
             continue
+        title = clean_title(str(title))
+        if not title:
+            continue
         year = guess.get("year")
         if year:
-            return str(title), int(year)
+            return Guess(title, int(year), candidate)
         if fallback is None:
-            fallback = (str(title), None)
-    return fallback or (video.stem, None)
+            fallback = Guess(title, None, candidate)
+    return fallback or Guess(video.stem, None, video.stem)
+
+
+def resolve_title_year(video: Path,
+                       container_title: str | None = None
+                       ) -> tuple[str, int | None]:
+    """``resolve_query`` without the source — the shape v1 had."""
+    guess = resolve_query(video, container_title)
+    return guess.title, guess.year
 
 
 def target_folder(video: Path, label: str) -> Path:
@@ -277,20 +323,94 @@ def _get_json(fetch: Fetch, url: str, params: dict) -> dict:
     return json.loads(fetch(url + "?" + urllib.parse.urlencode(params)))
 
 
-def _search(fetch: Fetch, key: str, title: str,
-            year: int | None) -> dict | None:
-    """Top movie hit for title (+year), retrying without the year."""
-    def query(with_year: bool) -> list[dict]:
-        params = {"api_key": key, "query": title, "include_adult": "true"}
-        if with_year and year:
-            params["year"] = year
+def _normalize(text: str) -> str:
+    """Titles compared the way a human would: case, punctuation and
+    spacing folded away ("Ghost in the Shell" == "ghost.in.the.shell")."""
+    return re.sub(r"[^a-z0-9]+", " ", text.lower()).strip()
+
+
+def _title_grade(candidate: str, wanted: frozenset[str]) -> int:
+    """2 = the same title, 1 = one contains the other, 0 = unrelated."""
+    name = _normalize(candidate)
+    if name in wanted:
+        return 2
+    if any(w and (w in name or name in w) for w in wanted):
+        return 1
+    return 0
+
+
+def _score(movie: dict, wanted: frozenset[str], year: int | None) -> tuple:
+    """Rank one search result: how well the title matches, then the year,
+    then TMDB's popularity. Popularity alone picks the famous film over
+    the right one; the year alone picks a documentary that happens to
+    share it (see ``_search``)."""
+    released = (movie.get("release_date") or "")[:4]
+    return (_title_grade(movie.get("title") or "", wanted),
+            year is not None and released == str(year),
+            float(movie.get("popularity") or 0.0))
+
+
+def _search(fetch: Fetch, key: str, title: str, year: int | None,
+            source: str | None = None) -> dict | None:
+    """The movie ``title`` (+``year``) names — not the one TMDB ranks first.
+
+    Three corrections, all from one miss (Nick, 2026-08-22:
+    ``Ghost.in.the.Shell.2017…`` fetched the 1995 anime's posters):
+
+    1. TMDB's ``year`` matches ANY release date a film carries, so the
+       1995 anime — which had a 2017 re-release — comes back for
+       year=2017. ``primary_release_year`` is the ORIGINAL release and
+       is the parameter that disambiguates. It is tried first, then the
+       broad ``year`` (for a film whose TMDB primary date disagrees with
+       the release name), then no year at all.
+    2. ``results[0]`` is popularity order, which fails the same way: the
+       1995 film outranks the 2017 one on the same query. Results are
+       scored, not taken off the top.
+    3. The narrowest query is not always the best one. "2001 A Space
+       Odyssey" parses as title "A Space Odyssey" + year 2001, and
+       ``primary_release_year=2001`` answers with three NASA
+       documentaries — a non-empty result set of the wrong film. So
+       every attempt is scored into ONE pool rather than the first
+       non-empty one winning, and the raw filename joins the queries.
+
+    Attempts stop early on an exact title with a matching year: the
+    ordinary case costs one request, and only a genuinely ambiguous
+    name pays for the rest.
+    """
+    def query(text: str, extra: dict) -> list[dict]:
+        params = {"api_key": key, "query": text, "include_adult": "true",
+                  **extra}
         return _get_json(fetch, f"{TMDB}/search/movie",
                          params).get("results", [])
 
-    results = query(with_year=True)
-    if not results and year:
-        results = query(with_year=False)
-    return results[0] if results else None
+    attempts: list[tuple[str, dict]] = []
+    if year:
+        attempts.append((title, {"primary_release_year": year}))
+        attempts.append((title, {"year": year}))
+    attempts.append((title, {}))
+    wanted = {_normalize(title)}
+    if source and _normalize(source) not in wanted:
+        # the year may be part of the title, not a year at all
+        attempts.append((source, {}))
+        wanted.add(_normalize(source))
+    frozen = frozenset(wanted)
+
+    best: dict | None = None
+    best_score: tuple | None = None
+    for text, extra in attempts:
+        try:
+            results = query(text, extra)
+        except OSError:
+            if best is not None:
+                break               # keep what we already found
+            raise
+        for movie in results:
+            score = _score(movie, frozen, year)
+            if best_score is None or score > best_score:
+                best, best_score = movie, score
+        if best_score is not None and best_score[0] == 2 and best_score[1]:
+            break                   # exact title AND year: nothing beats it
+    return best
 
 
 def run(video: Path, *, fetch: Fetch = default_fetch,
@@ -302,12 +422,12 @@ def run(video: Path, *, fetch: Fetch = default_fetch,
         yield Failed(API_KEY_HELP)
         return
 
-    title, year = resolve_title_year(video, container_title)
+    title, year, source = resolve_query(video, container_title)
     label = title + (f" ({year})" if year else "")
 
     yield PhaseStarted(f"searching TheMovieDB for {label}…")
     try:
-        movie = _search(fetch, key, title, year)
+        movie = _search(fetch, key, title, year, source)
     except OSError as error:
         yield Failed(f"search failed: {error}")
         return

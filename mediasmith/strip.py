@@ -64,6 +64,22 @@ STATE_TREE = [
     Entry("^q", "quit"),
 ]
 
+FOLDERIZE = Entry("^f", "folderize")
+"""Nick, 2026-08-22: folderize is reachable from BOTH views. In the tree
+it fires whichever folderize the selection is showing (video, single
+epub, audio folder) — so it prints only when one is on show, because the
+strip is the contract, not a hint."""
+
+
+def tree_state(folderize: bool = False) -> list[Entry]:
+    """The tree state, with ^f folderize when the selection has earned it.
+    Inserted after ⏎ edit: both act on the node the cursor is on."""
+    if not folderize:
+        return STATE_TREE
+    at = STATE_TREE.index(Entry("ENT", "edit")) + 1
+    return [*STATE_TREE[:at], FOLDERIZE, *STATE_TREE[at:]]
+
+
 STATE_PATH = [
     Entry("TAB", "complete"),
     Entry("ENT", "go"),

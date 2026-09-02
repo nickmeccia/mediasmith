@@ -133,10 +133,18 @@ Consequences that follow from the model (don't break them):
      one `stat` per entry (7.7s vs 0.01s, measured);
    - cache listings for the process lifetime, keyed by the directory's
      mtime signature — revisits cost one stat, staleness is impossible;
-   - debounce highlight-driven file reads (~150ms);
+   - debounce highlight-driven file reads (~150ms) — and debounce TYPING
+     just as hard: a path keystroke that re-roots the tree is a whole
+     directory read (2026-08-22);
    - anything slower than a tag read (ffprobe, network) runs in a thread
      worker and fills in late; verify the selection hasn't moved before
-     applying the result.
+     applying the result;
+   - **no filesystem call belongs on the event loop, cached or not.** A
+     cache HIT still pays the mtime `stat`, and a sleeping SMB disk
+     answers a stat in seconds — long enough to freeze the whole TUI,
+     which is exactly how Nick lost a session (2026-08-22). `fs` exposes
+     an async front door for this: `alist_dir`, `acached_children`,
+     `ais_dir`, `anode_type`. The plain functions are thread-only.
 
 5. **Every color lives in `mediasmith/theme.py`** (Nick's palette,
    todo-4). CSS holds only STATE — which token applies when (idle/focus
@@ -175,9 +183,22 @@ Adding any action, end to end:
 5. Filesystem products: refuse-overwrite everywhere (no silent
    clobbering, no prompts); post `FileCreated(path)` /
    `FolderChanged(path)` so the tree re-lists in place.
+5b. Long work reports through ONE toast, not a stream of them
+   (progress.py, 2026-08-22): `self.job(key, title, message)` raises it,
+   later calls replace its text, `done=True` releases it to fade. The
+   key is the title where a job can't overlap itself, title+path where
+   it can. One-shot messages — refusals, guards, validation — stay
+   `self.notify`.
 6. Options-before-action ("wizard"): an inline div toggled under the
    fields (art-path row is the exemplar; image-resize and subtitle-
-   shift follow it). **Never a modal** — ConfirmSave is the only one.
+   shift follow it). **Never a modal** for options. Modals are for a
+   DESTRUCTIVE FORK mid-write, where no answer can be inferred, and
+   there are exactly two: ConfirmSave, and ConfirmCaseRename (Nick,
+   2026-08-25 — a folder that already exists under a different casing:
+   rename keeping contents / rename trashing them / cancel).
+6b. Anything the user's keypress WRITES says so when it lands — a
+   silent success reads as a dead key (`^s` acknowledges through the
+   same toast the converts use, 2026-08-25).
 7. Multi-file plans (folderize, multi-artist): engine builds a
    dataclass plan → pane previews it → `apply`/`cancel` own the bar;
    esc from the tree cancels.
@@ -268,7 +289,51 @@ Test-driven, calibrated by layer — this replaces Nick-as-only-QA:
    enzyme EBML for mkv — .avi/.mov unhandled on purpose, 0 of 71
    sampled library files carry a title tag); and details.launch is
    cross-platform. ffmpeg (gif), alass, and Calibre convert remain
-   external and are the irreducible three. ⬅ you are here
+   external and are the irreducible three. Session 7 (2026-08-22, Opus —
+   logged in notes/qa/todo-2.md): the SMB freeze. Every filesystem probe
+   the Path Input made ran on the event loop (`parse_view`'s `is_dir`
+   and the suggester's listing, both PER KEYSTROKE), and each keystroke
+   re-rooted the tree on top of that — so a spun-down NAS didn't make
+   mediasmith slow, it made it stop. Fixed by rule 4's new clause: `fs`
+   has an async front door, typing is debounced, matches are CachedPaths
+   (free `is_dir`), the suggester sits out when unfocused, and
+   `_apply_restore` waits on Textual's load queue under a timeout so an
+   orphaned queue degrades instead of wedging the tree's message pump.
+   Same session, five more of Nick's asks: ONE TOAST PER JOB
+   (progress.py — a running job owns its toast, updates it in place, and
+   only `done=True` lets it fade; every long action is converted, and
+   one-shot refusals stay plain `notify`), a poster search that scores
+   results instead of taking TMDB's first (primary_release_year, title
+   grading, the raw filename as a last query — a remake no longer loses
+   to the famous original), video chord moves (^folderize, fetch
+   s^ubtitles), the poster staging folder renamed to
+   ~/Downloads/Mediasmith, and FOLDERIZE FROM THE TREE on ^f — the
+   first action reachable from both views, printed on the tree strip
+   only while the selection offers one. Session 9 (2026-08-25, Opus —
+   logged in notes/qa/todo-2.md): CASE-BLIND FILESYSTEMS. APFS and the
+   SMB share fold case, so `The Matrix/` and `the matrix/` are one
+   directory with one spelling and `mkdir` hands back whichever is
+   already there — which cost a video folderize both the wrapper folder
+   and the video (moved into itself), made audio folderize renumber
+   files that were already in place, and blocked the action Nick tried
+   to run. casing.py is the answer: the plan stays case-SENSITIVE, a
+   second folder is made where the volume allows one, and otherwise the
+   existing folder is renamed into the wanted spelling through
+   ConfirmCaseRename (keep contents / trash them / cancel) — wired into
+   all four wrapping actions. Same session: ^DEL takes the TREE's
+   cursor instead of the pane's debounced copy of it (a delete within
+   150ms of an arrow key hit the previous row, or nothing at all) and
+   lands the cursor on the row that slides up into the gap, ^s
+   acknowledges its write, and every action button prints a POSITIONAL
+   chord beside its letter one (^1…^9, pane bar first — Nick's A/B
+   before deciding on a refactor). Measured, don't re-derive:
+   ctrl+digit CANNOT cross tmux — only ^1 and ^9 survive, the rest
+   collapse into their C0 codes (^3 IS escape, ^7 is the app's ^/, ^8
+   is backspace) whatever `extended-keys` says — so ⌥+digit is wired
+   up beside it, arriving either as `alt+<digit>` or as the macOS
+   Option glyph (¡™£¢∞§¶•ª), which is what Ghostty types and what
+   tmux's ESC+digit decodes to.
+   ⬅ you are here
 4. **Batch operations.** Partially done ahead of schedule: shift-range
    and album-folder bulk editing shipped (2026-07-10); space-marking +
    batch bar still to come as a third gesture over the same selection

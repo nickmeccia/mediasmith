@@ -150,7 +150,7 @@ def build_plan(root: Path) -> FolderizePlan:
     for file in find_audio(root):
         state, result = _placement(file, read_tags(file), root)
         if state == "ok":
-            target = _free_name(result, claimed)        # type: ignore[arg-type]
+            target = _free_name(result, claimed, file)  # type: ignore[arg-type]
             claimed.add(target)
             moves.append(Move(file, target))
         elif state == "skip":
@@ -158,15 +158,48 @@ def build_plan(root: Path) -> FolderizePlan:
     return FolderizePlan(root=root, moves=moves, skips=skips)
 
 
-def _free_name(target: Path, claimed: set[Path]) -> Path:
+def _free_name(target: Path, claimed: set[Path],
+               source: Path | None = None) -> Path:
     """Dodge collisions with existing files and this plan's own targets
-    ('name (1).ext', Chrome convention). Directories are reused."""
+    ('name (1).ext', Chrome convention). Directories are reused.
+
+    ``source`` is the file being placed: on a case-insensitive volume a
+    file already sitting in ``the beatles/abbey road/`` collides with
+    ITSELF at ``The Beatles/Abbey Road/``, and folderize used to answer
+    that by renaming it "01 Song (1).mp3" — every run adding another
+    number (Nick, 2026-08-25). A candidate that is the source file is not
+    a collision.
+    """
     candidate = target
     i = 1
-    while candidate in claimed or candidate.exists():
+    while candidate in claimed or (candidate.exists()
+                                   and not _is_source(candidate, source)):
         candidate = target.with_name(f"{target.stem} ({i}){target.suffix}")
         i += 1
     return candidate
+
+
+def _is_source(candidate: Path, source: Path | None) -> bool:
+    if source is None:
+        return False
+    try:
+        return os.path.samefile(candidate, source)
+    except OSError:
+        return False
+
+
+def wanted_dirs(plan: FolderizePlan) -> list[Path]:
+    """Every directory ``plan`` means to create or reuse — artist folders
+    before their albums. The pane checks these for case-only collisions
+    before executing (``casing.clashes``)."""
+    out: list[Path] = []
+    for move in plan.moves:
+        album = move.target.parent
+        out.append(album.parent)
+        out.append(album)
+    if plan.skips:
+        out.append(plan.root / SKIPPED_DIR_NAME)
+    return out
 
 
 def probe(root: Path, budget: int = PROBE_BUDGET) -> bool:
