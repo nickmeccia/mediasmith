@@ -2,7 +2,11 @@
 # mediasmith launcher — run from any directory.
 # Resolves the repo through this file's symlink, then hands off to uv, which
 # keeps dependencies in sync with pyproject.toml on every launch (no build
-# step; editing the source takes effect on the next run). The working
-# directory is preserved, so `mediasmith .` means where you are.
+# step; editing the source takes effect on the next run).
+#
+# The launch directory is passed EXPLICITLY rather than left to a "." the
+# app resolves later: nothing between the shell and Python can then move
+# the working directory out from under it. `mediasmith <dir>` still wins.
 REPO="$(dirname "$(dirname "$(readlink -f "$0")")")"
+[ "$#" -eq 0 ] && set -- "$PWD"
 exec uv run --project "$REPO" mediasmith "$@"

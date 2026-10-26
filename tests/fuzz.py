@@ -38,13 +38,15 @@ KEYS = ([b"\x1b[B"] * 5 + [b"\x1b[A"] * 3
                                          # cover, paste, write opf
            b"\x18",                      # ^x: cut / strip multi-artist
            b"\x0e",                      # ^n: new directory
-           b"\x16",                      # ^v: paste
+           b"\x16",                      # ^v: paste / trace view source
            b"\x1b[1;5D",                 # ctrl+←: collapse level
            b"\x04",                      # ^d: folderize a video
            b"\x05",                      # ^e: split omnibus / resize div
-           b"\x01",                      # ^a: plan apply / resize apply
+           b"\x01",                      # ^a: plan apply / image trace
            b"\x10", b"\x02", b"\x19",    # ^p ^b ^y: converts (books are
-                                         # OFFLINE-guarded; images run)
+                                         # OFFLINE-guarded; images run).
+                                         # ^p is also "rescue to pdf" and
+                                         # ^v "rescue to svg" on a vector
            b"\x14", b"\x07",             # ^t ^g: extract cover, make gif
            b"\x1b[49;5u", b"\x1b[50;5u", b"\x1b[51;5u",   # ^1 ^2 ^3:
            b"\x1b[52;5u", b"\x1b[53;5u",  # ^4 ^5 — the positional chords

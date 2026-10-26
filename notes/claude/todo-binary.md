@@ -8,9 +8,9 @@ tedious, and what is genuinely impossible. Read it before answering the
 question again.
 
 **The one-line answer:** a binary removes the *Python* dependency, not
-the *toolchain* dependency. mediasmith shells out to three tools that
+the *toolchain* dependency. mediasmith shells out to four tools that
 cannot reasonably be bundled, so even a perfect binary ships as "works
-fully if you also have ffmpeg and Calibre." That is the ceiling, and no
+fully if you also have ffmpeg, potrace, and Calibre." That is the ceiling, and no
 amount of build engineering raises it.
 
 
@@ -22,8 +22,8 @@ amount of build engineering raises it.
 - It is the prerequisite for the portfolio goal in CLAUDE.md's roadmap —
   handing someone a thing that runs.
 
-What it does NOT buy: independence from ffmpeg, alass, or Calibre. See
-"The external three" below.
+What it does NOT buy: independence from ffmpeg, alass, potrace, or
+Calibre. See "The external four" below.
 
 
 ## Already retired — do not redo this work
@@ -89,10 +89,10 @@ bundle. A binary user still has to place that TMDB key by hand; worth a
 line in the README if a build ever ships.
 
 
-## The external three — the real ceiling
+## The external four — the real ceiling
 
 Ordered by how hard they are to remove. None is a build-system problem;
-all three are "what would replace this."
+all four are "what would replace this." (potrace joined 2026-09-16.)
 
 ### 1. ffmpeg — `gif.py` (replaceable, real port)
 
@@ -155,6 +155,26 @@ already degrades gracefully.
 
 **Accept this.** A binary that says "book conversion needs Calibre
 installed" is the correct product, not a compromise.
+
+### 4. potrace — `trace.py` (chosen with the port measured)
+
+Image Trace (2026-09-16) shells out to Homebrew's `potrace`. A
+pure-Python port exists (`potracer`, pip-installable, freezes cleanly),
+and Nick chose the binary with the numbers in hand. Timed on a
+detail-dense image, one full trace per preview refresh:
+
+| image | potrace | potracer |
+|-------|---------|----------|
+| 1 MP  | 0.14 s  | 4.2 s    |
+| 4 MP  | 0.54 s  | 46 s     |
+| 9 MP  | 1.2 s   | 3½ min   |
+
+The port can't keep the stepper live. Swapping it in later is contained
+— the pane only calls `trace.preview` and `trace.trace` — but the port
+returns curves only, so it would also need the SVG/EPS/PDF writers and
+the preview rasterizer that the binary brings. potrace is one small C
+binary, so bundling it as package data is the likelier road than the
+port — check its GPL obligations before shipping it beside mediasmith.
 
 
 ## Distribution mechanics — not code, but not free

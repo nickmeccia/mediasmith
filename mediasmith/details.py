@@ -31,14 +31,16 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Checkbox, Input, Label, Static
 
 from . import (adapters, artfetch, booksort, calibre, casing, epub,
-               folderize, fs, gif, imageops, kinds, multiartist, omnibus,
-               posters, progress, srt, standardize, subsync, videofolder)
+               illustrator,
+               folderize, fs, gif, imageops, images, kinds, multiartist,
+               omnibus, posters, progress, srt, standardize, subsync, trace,
+               videofolder)
 from . import actions
 from .actions import Action, ActionBar, ActionButton
 from .images import image_widget
 
 PANELS = [kinds.AUDIO, kinds.VIDEO, kinds.BOOK, kinds.IMAGE,
-          kinds.FOLDER, kinds.OTHER]
+          kinds.VECTOR, kinds.FOLDER, kinds.OTHER]
 
 
 def _image_size(data: bytes | None) -> tuple[int, int] | None:
@@ -101,11 +103,20 @@ PANE_ACTIONS = [
     Action("rotate", "rotate", "r"),
     # ^z is reserved (suspend): ^e stands in — "r^esize" (the old chord)
     Action("resize", "resize", "e"),
+    # Illustrator's Image Trace (Nick, 2026-09-16): "tr^ace" — ^t is
+    # convert to tiff on the same bar
+    Action("trace", "trace", "a"),
     # ^j is reserved (newline alias): ^g stands in — "convert to jp^g"
     Action("convert_jpg", "convert to jpg", "g"),
     Action("convert_png", "convert to png", "p"),
     Action("convert_tiff", "convert to tiff", "t"),
     Action("convert_webp", "convert to webp", "w"),
+    # -- vector: recover the artwork an .ai parks outside its artboard
+    # (illustrator.py). Two buttons, one per product, the convert_* way.
+    # ^s is save and ^o is open on the same bar, so the chords sit on the
+    # format: "rescue to ^pdf" / "rescue to s^vg"
+    Action("rescue_pdf", "rescue to pdf", "p"),
+    Action("rescue_svg", "rescue to svg", "v"),
     # -- video: the subtitle suite, then posters/gif (spec order, minus
     # "watch" — it is the universal "open" button above now)
     # ^f is "folderize" on a video too (Nick, 2026-08-22 — and the tree's
@@ -151,6 +162,26 @@ def human_size(n: float) -> str:
         if n < 1024 or unit == "TB":
             return f"{n:.1f} {unit}" if unit != "B" else f"{n:.0f} B"
         n /= 1024
+
+
+def audio_info_label(filetypes: tuple[str, ...], bitrates: tuple[int, int],
+                     length_seconds: float, size: int) -> str:
+    """The audio info line: type · bitrate · length · size.
+
+    Takes the bulk shapes so one selection or many render identically; a
+    part nothing reported (an unknown bitrate, say) drops out of the line
+    rather than printing a dash.
+    """
+    low, high = bitrates
+    if not high:
+        rate = ""
+    elif low and round(low / 1000) != round(high / 1000):
+        rate = f"{round(low / 1000)}–{round(high / 1000)} kbps"
+    else:
+        rate = f"{round(high / 1000)} kbps"
+    return " · ".join(part for part in
+                      ("/".join(filetypes), rate, f"{length_seconds:.0f}s",
+                       human_size(size)) if part)
 
 
 def _mk(text: str) -> str:
@@ -443,6 +474,33 @@ class ShiftControl(Static, can_focus=True):
 
     def action_close(self) -> None:
         self.screen.query_one(DetailsView)._shift_close()
+
+
+TRACE_HINT = "←→ adjust · ⇧←→ ×10 · esc close"
+
+
+class TraceControl(Static, can_focus=True):
+    """One Image Trace control: a stepper like ShiftControl. ←→ nudge a
+    number by one (⇧ by ten), flip a switch, or cycle the format."""
+
+    BINDINGS = [
+        Binding("left", "nudge(-1)", show=False),
+        Binding("right", "nudge(1)", show=False),
+        Binding("shift+left", "nudge(-1, True)", show=False),
+        Binding("shift+right", "nudge(1, True)", show=False),
+        Binding("escape", "close", show=False),
+    ]
+
+    def __init__(self, control: str, **kwargs) -> None:
+        super().__init__("", classes="trace-control", **kwargs)
+        self.control = control
+
+    def action_nudge(self, direction: int, big: bool = False) -> None:
+        self.screen.query_one(DetailsView)._trace_nudge(
+            self.control, direction, big)
+
+    def action_close(self) -> None:
+        self.screen.query_one(DetailsView)._trace_close()
 
 
 class EditForm(Vertical):
@@ -842,6 +900,16 @@ class DetailsView(VerticalScroll, can_focus=True):
         self._shift_entries: list[srt.Entry] | None = None  # ORIGINAL parse
         self._shift_target_ms = 0   # pending total shift (the display)
         self._shift_applied_ms = 0  # total already written this session
+        self._trace_open = False
+        # settings outlive the div: the next image opens where the last
+        # one left off (Illustrator remembers its last trace too)
+        self._trace_settings = trace.TraceSettings()
+        self._trace_gray = None         # full-res greyscale source (PIL)
+        self._trace_source = None       # the original, for "view source"
+        self._trace_view = "trace"      # which one the picture shows
+        self._trace_gen = 0             # bumps per render: stale drops
+        self._trace_debounce = None
+        self._image_data: bytes | None = None   # shown image's bytes
         # refuse-overwrite escape hatch: (action title, source) armed by a
         # refusal; the next same-action press on the same file overwrites
         self._overwrite_arm: tuple[str, Path] | None = None
@@ -889,6 +957,7 @@ class DetailsView(VerticalScroll, can_focus=True):
             width = len("embedded title") + LABEL_GUTTER
             yield self._row("embedded title", "video-title", width)
             yield self._row("container", "video-container", width)
+            yield self._row("codec", "video-codec", width)
             yield self._row("size", "video-size", width)
             yield self._row("subtitles", "video-subs", width)
             yield self._row("posters", "video-posters", width)
@@ -929,8 +998,10 @@ class DetailsView(VerticalScroll, can_focus=True):
 
         with Vertical(id="panel-image", classes="panel"):
             width = len("dimensions") + LABEL_GUTTER
-            yield self._row("size", "image-size", width)
-            yield self._row("dimensions", "image-dims", width)
+            yield self._row("size", "image-size", width,
+                            row_id="row-image-size")
+            yield self._row("dimensions", "image-dims", width,
+                            row_id="row-image-dims")
             with Vertical(id="resize-div"):     # the wizard div, shift-style
                 with Horizontal(id="resize-row"):
                     yield Label(f"{'resize':<{width}}", classes="fkey")
@@ -946,10 +1017,36 @@ class DetailsView(VerticalScroll, can_focus=True):
                     Action("resize_apply", "save", "s",
                            button_id="resize-apply-btn"),
                     id="resize-bar")
+            with Vertical(id="trace-div"):      # Image Trace
+                width = len("ignore white") + LABEL_GUTTER
+                for name, label in trace.CONTROLS:
+                    with Horizontal(classes="trace-row"):
+                        yield Label(f"{label:<{width}}", classes="fkey")
+                        yield TraceControl(name, id=f"trace-{name}")
+                yield Static(TRACE_HINT, id="trace-hint")
+                yield ActionBar(
+                    Action("trace_save", "save", "s",
+                           button_id="trace-save-btn"),
+                    Action("trace_view", "view source", "v",
+                           button_id="trace-view-btn"),
+                    id="trace-bar")
             yield image_widget(self.images, id="cover-image")
 
+        with Vertical(id="panel-vector", classes="panel"):
+            width = len("artboard") + LABEL_GUTTER
+            yield self._row("size", "vector-size", width)
+            # the canvas rows fill in late: reading them inflates the .ai's
+            # private data, which is worker work (_probe_canvas)
+            yield self._row("artboard", "vector-artboard", width)
+            yield self._row("artwork", "vector-artwork", width)
+            yield self._row("hidden", "vector-hidden", width)
+
         with Vertical(id="panel-folder", classes="panel"):
-            yield self._row("contains", "folder-counts", 8 + LABEL_GUTTER)
+            width = len("contains") + LABEL_GUTTER
+            yield self._row("contains", "folder-counts", width)
+            # recursive totals — a walk, so they fill in late (Nick, todo-5)
+            yield self._row("files", "folder-files", width)
+            yield self._row("size", "folder-size", width)
             with Vertical(id="plan-preview"):   # folderize, multi-artist, …
                 yield Static("", id="plan-tree")
 
@@ -966,8 +1063,8 @@ class DetailsView(VerticalScroll, can_focus=True):
 
         yield ActionBar(*PANE_ACTIONS, id="pane-bar")
         # parked below save while its final home is decided (audio only);
-        # width matches the widest standard audio label (albumartist, 11)
-        yield self._row("info", "audio-info", 11 + LABEL_GUTTER,
+        # width matches the widest standard audio label (album artist, 12)
+        yield self._row("info", "audio-info", 12 + LABEL_GUTTER,
                         row_id="row-audio-info")
 
     def on_mount(self) -> None:
@@ -985,6 +1082,7 @@ class DetailsView(VerticalScroll, can_focus=True):
         self.query_one("#shift-div").display = False
         self.query_one("#gif-div").display = False
         self.query_one("#resize-div").display = False
+        self.query_one("#trace-div").display = False
         self._sync_pane_bar()
 
     def _sync_button_chrome(self, focused) -> None:
@@ -1007,13 +1105,15 @@ class DetailsView(VerticalScroll, can_focus=True):
     def _set_cover(self, id: str, data: bytes | None) -> None:
         widget = self.query_one(f"#{id}")
         size: tuple[int, int] | None = None
+        truncated = False
         if isinstance(widget, Static):     # images off / unavailable
             size = _image_size(data)       # dims still show where a label exists
         else:
             try:
                 if data:
-                    from PIL import Image as PILImage
-                    image = PILImage.open(io.BytesIO(data))
+                    # decoded HERE, not in the widget's render(): a damaged
+                    # cover must fail where it can be caught (images.decode)
+                    image, truncated = images.decode(data)
                     widget.image = image
                     widget.display = True
                     size = image.size
@@ -1021,18 +1121,21 @@ class DetailsView(VerticalScroll, can_focus=True):
                     widget.display = False
             except Exception:
                 widget.display = False
-        self._set_cover_dims(f"{id}-dims", size)
+        self._set_cover_dims(f"{id}-dims", size, truncated)
 
-    def _set_cover_dims(self, id: str, size: tuple[int, int] | None) -> None:
+    def _set_cover_dims(self, id: str, size: tuple[int, int] | None,
+                        truncated: bool = False) -> None:
         """Print the cover's pixel dimensions ('600 × 600') beneath it, for
         the kinds that carry a dims label (album art, book cover, video
-        poster)."""
+        poster). A salvaged image says so — the missing bottom of the art
+        is the file's fault, not the pane's."""
         labels = self.query(f"#{id}")
         if not labels:
             return
         label = labels.first(Label)
         if size:
-            label.update(f"{size[0]} × {size[1]}")
+            label.update(f"{size[0]} × {size[1]}"
+                         + (" · damaged" if truncated else ""))
         label.display = size is not None
 
     # -- selection → panels --------------------------------------------------------
@@ -1048,6 +1151,7 @@ class DetailsView(VerticalScroll, can_focus=True):
         self.kind = None
         self._readable = False
         self._baseline = None
+        self._trace_hide(restore=False)
         self.query_one("#dtitle", Label).update("")
         self.query_one("#dtitle").display = True
         self.query_one("#row-fname").display = False
@@ -1075,7 +1179,7 @@ class DetailsView(VerticalScroll, can_focus=True):
         else:
             self._debounce = self.set_timer(DEBOUNCE_SECONDS, self._apply_pending)
 
-    def _reset_state(self) -> None:
+    def _reset_state(self, keep_trace: bool = False) -> None:
         self._readable = False
         self._baseline = None
         self._pending_art = None
@@ -1090,6 +1194,7 @@ class DetailsView(VerticalScroll, can_focus=True):
         self.query_one("#panel-omnibus").display = False
         self._folderize_ready = False
         self._folderize_plan = None
+        self._rescue_ready = False
         self._standardize_ready = False
         self._sort_ready = False
         self._sort_plan = None
@@ -1104,6 +1209,8 @@ class DetailsView(VerticalScroll, can_focus=True):
         self._resize_hide()     # browsing away closes the divs (no pending
         self._gif_hide()        # state to lose — both write siblings)
         self._shift_hide()      # browsing away drops a pending shift
+        if not keep_trace:
+            self._trace_hide(restore=False)
 
     def _apply_pending(self) -> None:
         if self._pending is None:
@@ -1117,10 +1224,11 @@ class DetailsView(VerticalScroll, can_focus=True):
         # an open wizard div shut under the user
         keep_resize = self._resize_open and target == self.path
         keep_gif = self._gif_open and target == self.path
+        keep_trace = self._trace_open and target == self.path
         self.path = target
         self.paths = None
         self.kind = kinds.kind_of(target)
-        self._reset_state()
+        self._reset_state(keep_trace=keep_trace)
         if self.kind == kinds.FOLDER:
             bulk = adapters.bulk_paths_for_folder(target)
             if bulk:      # an album-like folder edits as its contents
@@ -1135,6 +1243,7 @@ class DetailsView(VerticalScroll, can_focus=True):
             details = adapters.read_details(self.path)
         except Exception as error:
             title.update(f"{self.path.name} — unreadable ({error})")
+            self._trace_hide(restore=False)
             self._show_editable(False)
             return
         self._readable = True
@@ -1149,6 +1258,11 @@ class DetailsView(VerticalScroll, can_focus=True):
         if keep_gif and self.kind == kinds.VIDEO:
             self._gif_open = True
             self.query_one("#gif-div").display = True
+        if self._trace_open:
+            # a trace just landed beside the image and the tree re-listed:
+            # the fill re-showed what trace mode hides, so hide it again
+            self._trace_apply_layout()
+            self._trace_schedule()
 
     # -- bulk view: one form applied to many files -----------------------------------
 
@@ -1226,7 +1340,8 @@ class DetailsView(VerticalScroll, can_focus=True):
             self.query_one("#art-buttons-pad", Label).update(gutter)
             self.query_one("#art-path-pad", Label).update(gutter)
             self._set("audio-info",
-                      f"{bulk.length_seconds:.0f}s · {human_size(bulk.size)}")
+                      audio_info_label(bulk.filetypes, bulk.bitrates,
+                                       bulk.length_seconds, bulk.size))
             self.query_one("#row-audio-info").display = True
             self._baseline_art = bulk.cover
             self._art_mixed = bulk.cover_mixed
@@ -1261,7 +1376,9 @@ class DetailsView(VerticalScroll, can_focus=True):
         self.query_one("#art-buttons-pad", Label).update(gutter)
         self.query_one("#art-path-pad", Label).update(gutter)
         self._set("audio-info",
-                  f"{d.length_seconds:.0f}s · {human_size(d.size)}")
+                  audio_info_label((d.filetype,) if d.filetype else (),
+                                   (d.bitrate, d.bitrate),
+                                   d.length_seconds, d.size))
         self.query_one("#row-audio-info").display = True
         self._baseline_art = d.cover
         self._show_art(d.cover)
@@ -1277,7 +1394,10 @@ class DetailsView(VerticalScroll, can_focus=True):
     def _fill_video(self, path: Path, d: adapters.VideoDetails) -> None:
         self._set("video-size", human_size(d.size))
         self._set("video-container", d.container or "—")
+        # both fill in late: the title and the codec are header reads, and
+        # a header on the NAS is not an event-loop call (rule 4)
         self._set("video-title", "…")
+        self._set("video-codec", "…")
         self._set("video-subs", d.subtitle_name or "none")
         self._set("video-posters", d.poster_name or "none")
         self._set_cover("cover-video", d.poster_bytes)
@@ -1287,13 +1407,16 @@ class DetailsView(VerticalScroll, can_focus=True):
                            if d.subtitle_name
                            and d.subtitle_name.endswith(".srt") else None)
         self._sync_pane_bar()       # subtitle buttons appear with the file
-        self._probe_title(path)
+        self._probe_container(path)
 
     @work(thread=True, exclusive=True, group="probe")
-    def _probe_title(self, path: Path) -> None:
+    def _probe_container(self, path: Path) -> None:
+        """Title and codec in one worker: two reads of the same header."""
         title = adapters.probe_video_title(path) or "—"
+        codec = adapters.probe_video_codec(path) or "—"
         if self.path == path:
             self.app.call_from_thread(self._set, "video-title", title)
+            self.app.call_from_thread(self._set, "video-codec", codec)
 
     def _fill_book(self, path: Path, d: adapters.BookDetails) -> None:
         self.query_one("#form-book", EditForm).set_fields(d.fields)
@@ -1310,7 +1433,9 @@ class DetailsView(VerticalScroll, can_focus=True):
         self._set("image-dims",
                   f"{d.width} × {d.height}" if has_dims else "—")
         self._resize_base = (d.width, d.height) if has_dims else None
-        self._set_cover("cover-image", d.data)
+        self._image_data = d.data
+        if not self._trace_open:        # the trace preview owns the picture
+            self._set_cover("cover-image", d.data)
         self._sync_pane_bar()       # convert/resize/rotate ride the kind
 
     def _fill_folder(self, path: Path, d: adapters.FolderDetails) -> None:
@@ -1320,10 +1445,71 @@ class DetailsView(VerticalScroll, can_focus=True):
                       kinds.BOOK, kinds.IMAGE, kinds.OTHER)
             if d.counts.get(k)) or "empty"
         self._set("folder-counts", summary)
+        self._set("folder-files", "…")
+        self._set("folder-size", "…")
+        self._probe_totals(path)
         self._probe_folderize(path)
         self._probe_multiartist(path)
         self._probe_standardize(path)
         self._probe_sort(path)
+
+    @work(thread=True, exclusive=True, group="folder-totals")
+    def _probe_totals(self, root: Path) -> None:
+        """Files and bytes under the folder — one stat per file, so a
+        worker, and a budget inside the walk (fs.tree_totals).
+
+        The walk gives up as soon as the selection moves: a thread can't
+        be cancelled from outside, and arrowing down a list of folders
+        would otherwise leave one live walk per row on the same share.
+        """
+        try:
+            totals = fs.tree_totals(root, should_stop=lambda: self.path != root)
+        except OSError:
+            totals = None
+        try:
+            self.app.call_from_thread(self._totals_probed, root, totals)
+        except Exception:
+            pass    # the app closed while we walked; there is nobody to tell
+                    # (a walk outlives the pane by design — every other probe
+                    # returns in milliseconds, this one can be seconds)
+
+    def _totals_probed(self, root: Path, totals: fs.Totals | None) -> None:
+        if self.path != root:               # selection moved on
+            return
+        if totals is None:                  # unreadable: say so, don't hang
+            self._set("folder-files", "—")
+            self._set("folder-size", "—")
+            return
+        # a budget-capped walk reports a FLOOR: "1,204+ files · 8.7 GB+"
+        more = "" if totals.complete else "+"
+        self._set("folder-files", f"{totals.files:,}{more}")
+        self._set("folder-size", human_size(totals.bytes) + more)
+
+    def _fill_vector(self, path: Path, d: adapters.VectorDetails) -> None:
+        self._set("vector-size", human_size(d.size))
+        for row in ("vector-artboard", "vector-artwork", "vector-hidden"):
+            self._set(row, "—")
+        if illustrator.is_illustrator(path):
+            self._probe_canvas(path)    # the canvas rows fill in late
+
+    @work(thread=True, exclusive=True, group="canvas-probe")
+    def _probe_canvas(self, path: Path) -> None:
+        """Read the .ai's own header for its artboard and artwork bounds.
+
+        Off the event loop on purpose: it inflates the file's private data
+        (½ MB on a real logo), and the library lives on SMB."""
+        canvas = illustrator.read_canvas(path)
+        if canvas is not None:
+            self.app.call_from_thread(self._canvas_probed, path, canvas)
+
+    def _canvas_probed(self, path: Path, canvas) -> None:
+        if self.path != path or self.kind != kinds.VECTOR:
+            return                      # the selection moved while we read
+        self._set("vector-artboard", illustrator.measure(canvas.artboard))
+        self._set("vector-artwork", illustrator.measure(canvas.artwork))
+        self._set("vector-hidden", illustrator.describe_hidden(canvas))
+        self._rescue_ready = canvas.offboard
+        self._sync_pane_bar()           # the buttons appear with the finding
 
     def _fill_other(self, path: Path, d: adapters.OtherDetails) -> None:
         self._set("other-size", human_size(d.size))
@@ -1409,7 +1595,11 @@ class DetailsView(VerticalScroll, can_focus=True):
             self._refresh_marks()
 
     def focus(self, scroll_visible: bool = True):
-        """Focusing the pane means editing: land on the filename input."""
+        """Focusing the pane means editing: land on the filename input
+        (or, while Image Trace owns the panel, on its first control)."""
+        if self._trace_open:
+            self.query_one(TraceControl).focus(scroll_visible)
+            return self
         inputs = self._field_inputs()
         if inputs:
             inputs[0].focus(scroll_visible)
@@ -1488,7 +1678,12 @@ class DetailsView(VerticalScroll, can_focus=True):
                     names |= {f"convert_{fmt}"
                               for fmt in imageops.CONVERT_FORMATS
                               if fmt != own}
-                    names |= {"resize", "rotate"}
+                    names |= {"resize", "rotate", "trace"}
+                # the probe found work outside the artboard: the buttons
+                # showing up ARE the finding (Nick, 2026-09-29)
+                if (self.kind == kinds.VECTOR and self.paths is None
+                        and self._rescue_ready):
+                    names |= {"rescue_pdf", "rescue_svg"}
             if self._folderize_ready:           # probe: work to do below
                 names.add("folderize")
             if self._standardize_ready:         # probe: uncleaned epubs
@@ -1606,6 +1801,8 @@ class DetailsView(VerticalScroll, can_focus=True):
             return {"resize_apply", "resize"}
         if self._within("#gif-div"):            # Make GIF
             return {"gif_make", "gif"}
+        if self._within("#trace-div"):          # Image Trace
+            return {"trace_save", "trace_view"}
         if self._within("#panel-omnibus"):      # Split Omnibus
             return {"plan_apply", "plan_cancel"}
         return None
@@ -1649,6 +1846,9 @@ class DetailsView(VerticalScroll, can_focus=True):
                     self.query_one("#resize-h", FieldInput),
                     self.query_one("#resize-link", Checkbox),
                     *self.query_one("#resize-bar", ActionBar).buttons()]
+        if self._within("#trace-div"):
+            return [*self.query(TraceControl),
+                    *self.query_one("#trace-bar", ActionBar).buttons()]
         if self._within("#gif-div"):
             return [self.query_one("#gif-fps", FieldInput),
                     self.query_one("#gif-width", FieldInput),
@@ -1712,6 +1912,9 @@ class DetailsView(VerticalScroll, can_focus=True):
     def action_release(self) -> None:
         if self.plan_preview_open():        # esc backs out of a plan/split
             self.action_plan_cancel()       # (which returns focus to the tree)
+            return
+        if self._trace_open:                # esc (or ←) from a trace button
+            self._trace_close()
             return
         if not self.dirty:
             self.app.action_focus_tree()
@@ -2091,6 +2294,24 @@ class DetailsView(VerticalScroll, can_focus=True):
                  f"{label} — press again to overwrite",
                  severity="warning", done=True)
 
+    def action_rescue_pdf(self) -> None:
+        self._rescue("pdf")
+
+    def action_rescue_svg(self) -> None:
+        self._rescue("svg")
+
+    def _rescue(self, fmt: str) -> None:
+        """Write the whole canvas beside the .ai — artboard and beyond."""
+        path = self.path
+        if (self.kind != kinds.VECTOR or path is None
+                or self.paths is not None or not self._rescue_ready):
+            return
+        self._run_producer(
+            f"rescue to {fmt}",
+            lambda source, overwrite: illustrator.recover(
+                source, fmt, overwrite=overwrite).target,
+            path)
+
     def action_extract_cover(self) -> None:
         self._produce("extract cover",
                       lambda p, ow: adapters.extract_cover(p, overwrite=ow))
@@ -2280,6 +2501,244 @@ class DetailsView(VerticalScroll, can_focus=True):
                     title="rotate")
         if self.path == path:
             self.preview(path, immediate=True)  # fresh image + dimensions
+
+    # -- image trace: the full-panel wizard (trace.py) -----------------------------
+    # Illustrator's Image Trace (Nick, 2026-09-16). The fourth wizard div,
+    # and the only one that TAKES OVER its panel: the pane bar, the filename
+    # row, and the size/dimension rows step aside so the picture fills
+    # every cell the details view has left under the controls. Each control
+    # is a stepper (shift-subs' ←→ model); a nudge re-traces the FULL-
+    # resolution source in a worker, and potrace draws the result at the
+    # picture's exact pixel size — a preview, never a thumbnail of one.
+    # Nothing pends (the source is never touched; save writes a sibling),
+    # so esc simply closes: no ConfirmSave leg.
+
+    def action_trace(self) -> None:
+        image = self._image_target()
+        if image is None or self._trace_open:
+            return
+        if trace.find_potrace() is None:
+            self.notify(trace.INSTALL_HINT, title="image trace",
+                        severity="error")
+            return
+        self._trace_status("loading…")
+        self._trace_load_worker(image)
+
+    @work(thread=True, exclusive=True, group="trace-load")
+    def _trace_load_worker(self, path: Path) -> None:
+        # a whole-image decode, possibly off the NAS: never on the loop
+        try:
+            from PIL import ImageOps
+            gray = trace.load_gray(path)
+            source, _ = images.decode(path.read_bytes())
+            source = ImageOps.exif_transpose(source)    # match the trace
+            if source.mode not in ("RGB", "RGBA", "L", "LA"):
+                source = source.convert("RGBA")
+        except Exception as error:
+            self.app.call_from_thread(self._trace_load_failed, path, error)
+            return
+        self.app.call_from_thread(self._trace_loaded, path, gray, source)
+
+    def _trace_load_failed(self, path: Path, error: Exception) -> None:
+        if self.path == path:
+            self._trace_status("")
+        self.notify(str(error), title="image trace", severity="error")
+
+    def _trace_loaded(self, path: Path, gray, source) -> None:
+        self._trace_status("")
+        if (self.path != path or self.kind != kinds.IMAGE
+                or self.paths is not None or self._trace_open):
+            return                              # selection moved on
+        self._trace_gray = gray
+        self._trace_source = source
+        self._trace_view = "trace"
+        self._resize_hide()                     # one wizard at a time
+        self._trace_open = True
+        self._trace_apply_layout()
+        self._trace_refresh_controls()
+        self.app.reveal_details()               # narrow: display, then focus
+        self.query_one(TraceControl).focus()
+        self.scroll_home(animate=False)
+        if isinstance(self.query_one("#cover-image"), Static):
+            self.notify("images are off — no preview, but save still traces",
+                        title="image trace", severity="warning")
+        self.call_after_refresh(self._trace_render)
+
+    def _trace_apply_layout(self) -> None:
+        """Show trace mode's pieces and hide the rest — or the reverse."""
+        on = self._trace_open
+        editable = self.can_edit()
+        self.query_one("#trace-div").display = on
+        self.query_one("#pane-bar").display = not on
+        self.query_one("#row-image-size").display = not on
+        self.query_one("#row-image-dims").display = not on
+        self.query_one("#dtitle").display = on or not editable
+        self.query_one("#row-fname").display = editable and not on
+        if not on:
+            cover = self.query_one("#cover-image")
+            cover.styles.width = None           # back to the .cover CSS
+            cover.styles.height = None
+        self.query_one("#trace-view-btn", ActionButton).set_word(
+            "view source" if self._trace_view == "trace" else "view tracing")
+
+    def _trace_status(self, status: str) -> None:
+        """Say what the preview is doing beside the file name."""
+        if self.path is None:
+            return
+        self.query_one("#dtitle", Label).update(
+            self.path.name + (f" · {status}" if status else ""))
+
+    def _trace_refresh_controls(self) -> None:
+        for control in self.query(TraceControl):
+            control.update(
+                f"◂ {self._trace_settings.display(control.control)} ▸")
+
+    def _trace_close(self) -> None:
+        """esc: trace mode ends and focus ascends to the tree."""
+        self._trace_hide()
+        self.app.action_focus_tree()
+
+    def _trace_hide(self, restore: bool = True) -> None:
+        if not self._trace_open:
+            return
+        self._trace_open = False
+        self._trace_gen += 1                    # in-flight previews: stale
+        if self._trace_debounce is not None:
+            self._trace_debounce.stop()
+            self._trace_debounce = None
+        self._trace_gray = None
+        self._trace_source = None
+        self._trace_view = "trace"
+        self._trace_apply_layout()
+        self._trace_status("")
+        if restore:                             # the image, as it was
+            self._set_cover("cover-image", self._image_data)
+
+    def _trace_nudge(self, control: str, direction: int, big: bool) -> None:
+        if not self._trace_open:
+            return
+        before = self._trace_settings
+        stepper = next((s for s in trace.STEPPERS if s.name == control), None)
+        steps = direction * (stepper.big_step if big and stepper
+                             else stepper.step if stepper else 1)
+        self._trace_settings = before.nudged(control, steps)
+        self._trace_refresh_controls()
+        if (self._trace_settings == before
+                or control not in trace.PREVIEW_CONTROLS):
+            return
+        if self._trace_view == "source":        # a change shows its result
+            self._trace_view = "trace"
+            self._trace_apply_layout()
+        self._trace_schedule()
+
+    def _trace_schedule(self) -> None:
+        """Debounced like the tree highlight: holding → re-traces once,
+        when the key lets go, not once per repeat."""
+        if self._trace_debounce is not None:
+            self._trace_debounce.stop()
+        self._trace_debounce = self.set_timer(DEBOUNCE_SECONDS,
+                                              self._trace_render)
+
+    def on_resize(self, event) -> None:
+        if self._trace_open:                    # the picture refits
+            self._trace_schedule()
+
+    def _trace_box(self) -> tuple[int, int] | None:
+        """The (columns, rows) the picture may fill: from its own top-left
+        corner to the pane's bottom-right, inside the scrollbars."""
+        cover = self.query_one("#cover-image")
+        area = self.scrollable_content_region
+        if not cover.display or cover.region.width < 1:
+            return None
+        top = cover.region.y + round(self.scroll_y)
+        columns = area.right - cover.region.x
+        rows = area.bottom - top - cover.styles.margin.bottom
+        if columns < 1 or rows < 1:
+            return None
+        return columns, rows
+
+    def _trace_render(self) -> None:
+        self._trace_debounce = None
+        if not self._trace_open or self._trace_gray is None:
+            return
+        cover = self.query_one("#cover-image")
+        if isinstance(cover, Static):           # images off: nothing to draw
+            return
+        cover.display = True                    # _trace_box measures it
+        box = self._trace_box()
+        if box is None:
+            return
+        columns, rows = box
+        cell_width, cell_height = images.cell_pixels()
+        width, height = trace.fit(*self._trace_gray.size,
+                                  columns * cell_width, rows * cell_height)
+        cells = (max(1, min(columns, round(width / cell_width))),
+                 max(1, min(rows, round(height / cell_height))))
+        self._trace_gen += 1
+        if self._trace_view == "trace":
+            self._trace_status("tracing…")
+        self._trace_preview_worker(self._trace_gen, self.path,
+                                   self._trace_view, self._trace_gray,
+                                   self._trace_source, self._trace_settings,
+                                   (width, height), cells)
+
+    @work(thread=True, exclusive=True, group="trace-preview")
+    def _trace_preview_worker(self, gen: int, path: Path, view: str, gray,
+                              source, settings: trace.TraceSettings,
+                              size: tuple[int, int],
+                              cells: tuple[int, int]) -> None:
+        # a full-resolution trace is ~0.1–1s: always a worker, and a
+        # newer render makes this one's result stale (the gen check)
+        try:
+            if view == "source":
+                from PIL import Image
+                picture = source.resize(size, Image.Resampling.LANCZOS)
+            else:
+                picture = trace.preview(gray, settings, size)
+        except Exception as error:
+            self.app.call_from_thread(self._trace_preview_failed, gen, error)
+            return
+        self.app.call_from_thread(self._trace_previewed, gen, path, picture,
+                                  cells)
+
+    def _trace_previewed(self, gen: int, path: Path, picture,
+                         cells: tuple[int, int]) -> None:
+        if gen != self._trace_gen or not self._trace_open or self.path != path:
+            return
+        cover = self.query_one("#cover-image")
+        cover.styles.width, cover.styles.height = cells
+        cover.image = picture
+        cover.display = True
+        self._trace_status("")
+
+    def _trace_preview_failed(self, gen: int, error: Exception) -> None:
+        if gen != self._trace_gen or not self._trace_open:
+            return
+        self._trace_status("")
+        self.notify(str(error), title="image trace", severity="error")
+
+    def action_trace_view(self) -> None:
+        """Illustrator's View menu, as one key: the tracing or the source."""
+        if not self._trace_open:
+            return
+        self._trace_view = "source" if self._trace_view == "trace" else "trace"
+        self._trace_apply_layout()
+        self._trace_render()
+
+    def action_trace_save(self) -> None:
+        image = self._image_target()
+        if image is None or not self._trace_open:
+            return
+        settings = self._trace_settings
+        # per format: an armed overwrite of photo.svg must not carry over
+        # to photo.pdf after the picker moves
+        title = f"trace to {settings.format}"
+        self.job(self._produce_job(title, image), title,
+                 f"tracing {image.name}…")
+        self._run_producer(
+            title,
+            lambda path, ow, s=settings: trace.trace(path, s, overwrite=ow),
+            image)
 
     # -- folder plans: probe → button → preview → apply/cancel ---------------------
     # Folderize and fix-multi-artist share the mechanism: probes fill in

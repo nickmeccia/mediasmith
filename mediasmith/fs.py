@@ -30,11 +30,13 @@ from __future__ import annotations
 import asyncio
 import os
 import re
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from stat import S_ISDIR
 
 _cache: dict[str, tuple[tuple[int, int, int], tuple["Entry", ...]]] = {}
+_totals: dict[str, tuple[tuple[int, int, int], "Totals"]] = {}
 
 _digit_runs = re.compile(r"(\d+)")
 
@@ -58,13 +60,19 @@ class Entry:
 
 def clear_cache() -> None:
     _cache.clear()
+    _totals.clear()
+
+
+def _signature(path: Path) -> tuple[int, int, int]:
+    """The mtime signature every cache here is keyed by. Raises OSError."""
+    st = path.stat()
+    return (st.st_mtime_ns, st.st_ino, st.st_nlink)
 
 
 def list_dir(path: Path | str) -> tuple[Entry, ...]:
     """Entries of ``path`` in ``sort_key`` order. Raises OSError."""
     path = Path(path)
-    st = path.stat()
-    sig = (st.st_mtime_ns, st.st_ino, st.st_nlink)
+    sig = _signature(path)
     key = str(path)
     hit = _cache.get(key)
     if hit is not None and hit[0] == sig:
@@ -150,3 +158,94 @@ def node_type(path: Path | str) -> str:
     except OSError:
         return "missing"
     return "dir" if S_ISDIR(st.st_mode) else "file"
+
+
+# -- recursive totals: how many files, how many bytes (Nick, todo-5) ----------
+
+
+@dataclass(frozen=True, slots=True)
+class Totals:
+    files: int
+    bytes: int
+    complete: bool = True
+    """False when the budget ran out: the numbers are a floor, not a sum."""
+
+
+TOTALS_BUDGET_SECONDS = 8.0
+"""How long a walk may run before it reports what it has. Sizes cost one
+stat PER FILE — the exact thing rule 1 avoids elsewhere, and unavoidable
+here — so a season folder is instant and VIDEO/ entire is not. A budget
+keeps the worker (and the share) from grinding for minutes on a number
+nobody is waiting for; the pane prints the floor with a "+"."""
+
+_CLOCK_EVERY = 256      # files between clock reads (time.monotonic is cheap,
+                        # but not 50,000-times-per-directory cheap)
+
+
+def tree_totals(path: Path | str,
+                budget: float = TOTALS_BUDGET_SECONDS,
+                should_stop=None) -> Totals:
+    """Count the files under ``path`` and add up their bytes, recursively.
+
+    Thread-only, like everything here — and slower than its neighbors by
+    a wide margin, so the details pane fills it in late.
+
+    Cached against the folder's OWN signature, which catches every change
+    to its direct children (what mediasmith's own actions make) but not
+    one buried three levels down; ``^r`` drops the cache. Dot entries are
+    skipped, matching the ``contains`` counts. Symlinked directories are
+    counted, never descended — a loop would never finish.
+
+    An unreadable subfolder contributes nothing rather than raising: a
+    permission-denied corner should cost accuracy, not the whole number.
+    Raises OSError only when ``path`` itself cannot be stat'ed.
+
+    ``should_stop`` is asked as often as the clock is: a thread worker
+    cannot be interrupted, so a walk whose selection has moved on has to
+    give up from the inside — otherwise arrowing down a list of folders
+    leaves one live walk per row, all of them on the same share.
+    """
+    path = Path(path)
+    sig = _signature(path)
+    key = str(path)
+    hit = _totals.get(key)
+    if hit is not None and hit[0] == sig:
+        return hit[1]
+
+    deadline = time.monotonic() + budget
+    files = total = seen = 0
+    complete = True
+    stack = [path]
+
+    def out_of_road() -> bool:
+        return (time.monotonic() > deadline
+                or (should_stop is not None and should_stop()))
+
+    while stack and complete:
+        current = stack.pop()
+        if out_of_road():           # …between directories, and every
+            complete = False        # _CLOCK_EVERY entries within one
+            break
+        try:
+            with os.scandir(current) as it:
+                for entry in it:
+                    if entry.name.startswith("."):
+                        continue
+                    seen += 1
+                    if not seen % _CLOCK_EVERY and out_of_road():
+                        complete = False
+                        break
+                    try:
+                        if entry.is_dir(follow_symlinks=False):
+                            stack.append(Path(entry.path))
+                            continue
+                        files += 1
+                        total += entry.stat(follow_symlinks=False).st_size
+                    except OSError:
+                        continue
+        except OSError:
+            continue
+    result = Totals(files=files, bytes=total, complete=complete)
+    if complete:            # a floor is not worth remembering
+        _totals[key] = (sig, result)
+    return result

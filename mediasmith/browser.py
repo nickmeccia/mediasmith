@@ -132,6 +132,9 @@ class PathInput(Input):
         # cursor itself can't be removed: cursor_line=-1 gets clamped to 0.)
         self.cursor_position = len(self.value)
         self.app.query_one(LibraryTree).add_class("-editing")
+        # ...and the pane it sits in stops advertising focus: while the
+        # path is being typed the only lit box is this one (Nick, todo-5)
+        self.app.query_one(TreeView).add_class("-path-editing")
         self.app.query_one(DetailsView).clear()
 
     async def action_cancel(self) -> None:
@@ -223,6 +226,7 @@ class PathInput(Input):
         self._cancel_nav()
         tree = self.app.query_one(LibraryTree)
         tree.remove_class("-editing")
+        self.app.query_one(TreeView).remove_class("-path-editing")
         if tree.view_filter is not None:
             matches = await self._matches()
             top = matches[0] if matches else None
@@ -264,11 +268,14 @@ class LibraryTree(DirectoryTree):
     BINDINGS = [
         Binding("right", "expand", "expand", show=False),
         Binding("left", "collapse", "collapse", show=False),
-        # Pane hierarchy: the browser controls the details view. tab/enter
-        # hand focus down — only when the selection is editable. (These also
-        # shadow the Screen's tab cycling and the Tree's enter=select.)
-        Binding("tab", "edit", "details", show=False),
+        # Pane hierarchy: the browser controls the details view. ⏎ hands
+        # focus down — only when the selection is editable. (It also
+        # shadows the Tree's enter=select.)
         Binding("enter", "edit", "details", show=False),
+        # TAB folds instead of descending (Nick, todo-5): one key for
+        # →/← on the directory under the cursor. It also shadows the
+        # Screen's focus cycling, which is what kept the pane home base.
+        Binding("tab", "toggle_fold", "expand/collapse", show=False),
         Binding("shift+tab", "stay", show=False),   # home base: no cycling out
         # narrow "view" (details shown, tree focused): esc swaps it back out
         Binding("escape", "close_view", show=False),
@@ -302,6 +309,9 @@ class LibraryTree(DirectoryTree):
 
     _search_buffer: str = ""
     _search_timer = None
+    _search_scope = None
+    """The node whose children a running type-ahead searches — pinned when
+    the buffer starts so later keystrokes keep hunting the same list."""
 
     view_filter: str | None = None
     """Prefix filter on the root directory's entries (path-bar filter view)."""
@@ -608,6 +618,24 @@ class LibraryTree(DirectoryTree):
         elif node.parent is not None:
             self._move_cursor(node.parent.line)   # scroll so it re-centers
 
+    def action_toggle_fold(self) -> None:
+        """TAB: fold the directory under the cursor open or shut.
+
+        The two halves of →/← in one key (Nick, todo-5) — so TAB no
+        longer descends into the details view; ⏎ is the one edit key.
+        A file has nothing to fold, exactly as → has nothing to expand.
+        Collapsing goes through ``collapse_all`` like ←, so re-opening a
+        folder always shows a plain child list rather than the shape it
+        happened to have last time.
+        """
+        node = self.cursor_node
+        if node is None or not node.allow_expand:
+            return
+        if node.is_expanded:
+            node.collapse_all()
+        else:
+            node.expand()
+
     # -- the clipboard: cut / paste / new directory (tree commands) --------------
     # The heavy lifting (liftable/place targets, the move worker, pane-bar
     # sync) stays on DetailsView, which mirrors the selection; the tree
@@ -822,13 +850,20 @@ class LibraryTree(DirectoryTree):
     def _tint_level(self):
         """The child list whose guide column the cursor tints, or None.
 
-        The cursor's own connector is drawn in its parent's column, so that
-        parent identifies the whole tinted level. It is part of the line
-        cache key: every row under it renders differently depending on it,
-        including rows whose path holds neither cursor node.
+        A guide column belongs to a node's parent, so the parent names the
+        level. The cursor tints its OWN level — its siblings' spine — except
+        over an expanded folder, which tints its CHILDREN's spine instead
+        (Nick, 2026-09-03): the level type-ahead searches is the level that
+        lights up, so the tint tracks where typing would land.
+
+        It is part of the line cache key: every row under it renders
+        differently depending on it, including rows whose path holds
+        neither cursor node.
         """
         cursor = self.cursor_node if self.has_focus else None
-        return None if cursor is None else cursor.parent
+        if cursor is None:
+            return None
+        return cursor if self._is_open_folder(cursor) else cursor.parent
 
     def watch_cursor_line(self, previous_line: int, line: int) -> None:
         super().watch_cursor_line(previous_line, line)
@@ -886,13 +921,12 @@ class LibraryTree(DirectoryTree):
             )
 
             hover = line.path[0]._hover
-            # Which guide column the cursor lights up (Nick, 2026-09-01):
-            # the one its OWN connector is drawn in — the spine of its
-            # sibling level, running the whole height of that level and on
-            # through the subtrees hanging off it. A node's column belongs
-            # to its parent's child list, so "same parent as the cursor" is
-            # the whole test. (It used to be the cursor's CHILDREN's column,
-            # which lit up only the rows beneath it.)
+            # Which guide column the cursor lights up: the spine of the
+            # level `_tint_level` names — its siblings', or its children's
+            # when it is an expanded folder. A node's column belongs to its
+            # parent's child list, so "parent is that level" is the whole
+            # test, and the tint runs the full height of the level plus the
+            # subtrees hanging off it.
             siblings = self._tint_level()
 
             def get_guides(style: Style, hidden: bool):
@@ -999,6 +1033,8 @@ class LibraryTree(DirectoryTree):
             return   # a bare space stays a key; mid-search it is text
         event.stop()
         event.prevent_default()
+        if not self._search_buffer:
+            self._search_scope = self._scope_node()
         self._search_buffer += event.character
         if self._search_timer is not None:
             self._search_timer.stop()
@@ -1011,17 +1047,40 @@ class LibraryTree(DirectoryTree):
             self._search_timer.stop()
         self._search_timer = None
         self._search_buffer = ""
+        self._search_scope = None
 
-    def _jump_to(self, text: str) -> None:
-        """Scope is the folder holding the selection: its siblings only —
-        never rows above or below that belong to other folders."""
-        text = text.lower()
+    def _scope_node(self):
+        """Which folder a type-ahead searches inside. An EXPANDED folder
+        under the cursor searches its own children — typing descends the
+        way ↓ then typing used to, and the folder itself is not a
+        candidate (Nick, 2026-09-02). Anything else searches the folder
+        holding the cursor: its siblings only, never rows above or below
+        that belong to other folders. Pinned for the life of the buffer,
+        so the second keystroke doesn't descend into whatever child the
+        first one landed on."""
         node = self.cursor_node
         if node is None:
+            return None
+        if self._is_open_folder(node):
+            return node                 # loading/empty folders fall through
+        return node.parent if node.parent is not None else node
+
+    @staticmethod
+    def _is_open_folder(node) -> bool:
+        """An expanded folder with children already loaded — the case where
+        the cursor's level is its own child list rather than its siblings'.
+        Shared by type-ahead scope and the guide tint so the two agree."""
+        return bool(node.allow_expand and node.is_expanded
+                    and any(child.data is not None for child in node.children))
+
+    def _jump_to(self, text: str) -> None:
+        text = text.lower()
+        parent = self._search_scope
+        if parent is None:
             return
-        parent = node.parent if node.parent is not None else node
         rows = [(child.line, Path(child.data.path).name.lower())
-                for child in parent.children if child.data is not None]
+                for child in parent.children
+                if child.data is not None and child.line >= 0]
         for line, name in rows:
             if name.startswith(text):
                 self._move_cursor(line)

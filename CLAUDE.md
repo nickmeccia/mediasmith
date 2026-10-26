@@ -64,9 +64,11 @@ deliberate, ascending is always esc-shaped.
         ┌──────▼───────┐
         │  tree view   │   what it controls: which file (or selection)
         └──────┬───────┘   the details view shows — HOME BASE: never
-   descend: ⏎ (⇥ hidden     gives up focus implicitly, ↑ at top stays put
-     alias) — every kind is enterable (rename form at minimum);
+   descend: ⏎ — every kind   gives up focus implicitly, ↑ at top stays put
+     is enterable (rename form at minimum); ⏎ is the ONLY descent —
+     ⇥ was a hidden alias for it and is now the fold key (todo-5);
      · → expands folders ONLY (the "→ edit" duplicate is retired);
+     · ⇥ folds the folder under the cursor: → and ← in one key;
      · tree commands: ^x cut, ^y copy, ^v paste, ^n new directory,
        ^DEL delete, ^← (⇧← alias) collapse level — clipboard state
        forbids ⏎ edit and a second cut
@@ -332,7 +334,32 @@ Test-driven, calibrated by layer — this replaces Nick-as-only-QA:
    is backspace) whatever `extended-keys` says — so ⌥+digit is wired
    up beside it, arriving either as `alt+<digit>` or as the macOS
    Option glyph (¡™£¢∞§¶•ª), which is what Ghostty types and what
-   tmux's ESC+digit decodes to.
+   tmux's ESC+digit decodes to. Session 17 (2026-09-16, Opus — logged
+   in notes/qa/todo-2.md): IMAGE TRACE, Illustrator's feature on potrace
+   (trace.py). Illustrator's control names and scales outside the
+   engine, potrace's inside it; every control a ←→ stepper; the fourth
+   wizard div, and the first that takes over its panel — pane bar,
+   filename, and size rows hide so the picture fills the details view,
+   re-traced at full resolution and drawn by potrace's PGM backend at
+   the picture's exact pixel size (`images.cell_pixels`). potrace is
+   the fourth external tool; the pure-Python port was measured 30–180×
+   slower and turned down (todo-binary.md). Session 18 (2026-09-29,
+   Opus — logged in notes/qa/todo-2.md): ILLUSTRATOR RESCUE
+   (illustrator.py). An .ai saved with PDF compatibility is two
+   documents in one container, and Illustrator writes only the ARTBOARD
+   into the PDF half — so work parked beside the artboard is invisible
+   to every non-Adobe reader, and enlarging the artboard reveals
+   nothing. The module reads the other half (`/AIPrivateData`, inflated
+   from `%AI12_CompressedData`) and rewrites the whole canvas as a PDF
+   or SVG beside the source. Two constructs decide whether the product
+   looks like the original, both measured against Illustrator's own PDF
+   half: a run of subpaths sharing paint is ONE nonzero fill (that is
+   what makes compound holes work), and a gradient object inside a
+   group is a CLIP the gradient paints through, not a fill on top of
+   it. Miss the second and a gradient logo comes back as a black
+   silhouette. New kind: VECTOR (.ai/.eps/.svg/.pdf), the seventh
+   panel; the canvas probe is a worker because `read_details` is on the
+   event loop and the private data is ½ MB to inflate.
    ⬅ you are here
 4. **Batch operations.** Partially done ahead of schedule: shift-range
    and album-folder bulk editing shipped (2026-07-10); space-marking +
@@ -342,8 +369,8 @@ Test-driven, calibrated by layer — this replaces Nick-as-only-QA:
    tree-first two-step flow on narrow screens.
 
 Distributable binary: `notes/claude/todo-binary.md` is the STANDING
-ANSWER — what a binary buys, the four code blockers, the three external
-tools that cannot be bundled (ffmpeg, alass, Calibre convert), and why
+ANSWER — what a binary buys, the four code blockers, the four external
+tools that cannot be bundled (ffmpeg, alass, potrace, Calibre convert), and why
 `uv tool install` keeps winning. Read it before re-deriving the question.
 
 Session notes: `notes/qa/todo-2.md` is the ACTIVE QA ledger — what

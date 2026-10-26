@@ -91,6 +91,8 @@ noun
 
 - **Make GIF** -- A form to generate a GIF image from a video.
 
+- **Image Trace** -- A form to turn an image into a black-and-white vector file (SVG, EPS, or PDF), modeled on Illustrator's Image Trace. While it is open, the image fills the rest of Details View and redraws as the tracing after each change; a key flips between the tracing and the source image.
+
 - **Split Omnibus** -- A form to extract individual books from an omnibus ebook.
 
 ##### Plan Previews

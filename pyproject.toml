@@ -18,6 +18,8 @@ dependencies = [
     # declared directly.
     "subliminal>=2.7.1",
     "enzyme>=0.5.2",
+    # Illustrator 2020+ private data is Zstandard; stdlib from 3.14 on
+    "backports.zstd; python_version < '3.14'",
 ]
 
 [project.scripts]

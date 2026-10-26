@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import io
 import zipfile
+import zlib
 from pathlib import Path
 
 # A single silent MPEG-1 Layer III frame (128 kbps, 44.1 kHz): enough for
@@ -20,6 +21,23 @@ def make_png(path: Path | None = None, size=(8, 8), color=(200, 60, 60)) -> byte
     buf = io.BytesIO()
     Image.new("RGB", size, color).save(buf, format="PNG")
     data = buf.getvalue()
+    if path is not None:
+        path.write_bytes(data)
+    return data
+
+
+def make_truncated_jpeg(path: Path | None = None, size=(64, 64),
+                        cut: int = 16) -> bytes:
+    """A JPEG whose header parses but whose scan ends early — the shape of
+    the album art that crashed the pane's render (2026-09-02).
+
+    ``cut`` bytes come off the tail: a small bite ends the scan a few
+    pixels short (salvageable), a large one takes the scan's structure
+    with it (nothing to show)."""
+    from PIL import Image
+    buf = io.BytesIO()
+    Image.new("RGB", size, (30, 90, 160)).save(buf, format="JPEG", quality=95)
+    data = buf.getvalue()[:-cut]
     if path is not None:
         path.write_bytes(data)
     return data
@@ -188,6 +206,95 @@ def make_omnibus(path: Path, books: int = 2, chapters: int = 2,
         z.writestr("OEBPS/pic.png", make_png())
         for name, content in files.items():
             z.writestr(name, content)
+    return path
+
+
+def make_illustrator(path: Path, artboard=(0, 0, 200, 200),
+                     offboard: bool = True, compressed: bool | str = True,
+                     gradient: bool = False, placed_image: bool = False,
+                     pdf_container: bool = True) -> Path:
+    """A tiny .ai in the shape that matters: artwork in the AI private data,
+    an artboard in the PDF portion that does not contain all of it.
+
+    ``offboard`` adds a second square past the artboard's right edge — the
+    work Illustrator keeps and every other reader drops. ``gradient`` wraps
+    the artwork in a group painted by a gradient, which is the construct
+    that reads as a clip rather than a fill.
+    """
+    art = ["20 20 m", "80 20 L", "80 80 L", "20 80 L", "f"]
+    if offboard:
+        art += ["220 20 m", "280 20 L", "280 80 L", "220 80 L", "f"]
+    if placed_image:
+        art = ["0 0 0 0 0 0 XI"] + art
+    if gradient:
+        # The group's own paths, then one more path and the gradient object
+        # that paints THROUGH every path the group collected.
+        art = ["*u"] + art + [
+            "10 10 m", "290 10 L", "290 90 L", "10 90 L",
+            "Bb",
+            "1 (Ramp) 0 0 0 1 1 0 0 1 0 0 1 Bg",
+            "100 0 0 100 20 20 Xm",
+            "f",
+            "0 BB",
+            "*U",
+        ]
+    right = 280 if offboard else 80
+    head = [
+        "%!PS-Adobe-3.0 ",
+        "%%Creator: Adobe Illustrator(R) 15.0",
+        "%%Title: (%s)" % path.stem,
+        "%%%%BoundingBox: 20 20 %d 80" % right,
+        "%%%%HiResBoundingBox: 20 20 %d 80" % right,
+        "%%%%AI3_Cropmarks: %s" % " ".join(str(v) for v in artboard),
+        "%%EndComments",
+        "%%BeginSetup",
+    ]
+    if gradient:
+        head += [
+            "%AI5_BeginGradient: (Ramp)",
+            "(Ramp) 0 2 Bd",
+            "[",
+            "0 0 0 1 1 1 6 50 100 %_BS",
+            "1 0 0 0 1 1 6 50 0 %_BS",
+            "BD",
+            "%AI5_EndGradient",
+        ]
+    head += ["%%EndSetup", "%AI5_BeginLayer",
+             "1 1 1 1 0 0 1 0 79 128 255 0 50 0 Lb", "(Layer 1) Ln",
+             "0 A", "0 XR", "0 g"]
+    tail = ["LB", "%AI5_EndLayer--", "%%Trailer", "%%EOF", ""]
+    stream = "\r".join(head + art + tail).encode("latin-1")
+
+    if compressed == "zstd":            # Illustrator 2020 and later
+        from mediasmith.illustrator import zstd
+        stream = b"%AI24_ZStandard_Data" + zstd.compress(stream)
+    elif compressed:
+        stream = b"%AI12_CompressedData" + zlib.compress(stream)
+    if not pdf_container:
+        path.write_bytes(stream)
+        return path
+
+    objects = {
+        1: b"<</Type/Catalog/Pages 3 0 R>>",
+        3: b"<</Type/Pages/Count 1/Kids[4 0 R]>>",
+        4: ("<</Type/Page/Parent 3 0 R/MediaBox[%s]/PieceInfo<</Illustrator "
+            "6 0 R>>>>" % " ".join(str(v) for v in artboard)).encode(),
+        6: b"<</Private 7 0 R>>",
+        7: b"<</AIPrivateData1 8 0 R/NumBlock 1>>",
+        8: b"<</Length %d>>stream\r\n%s\rendstream" % (len(stream), stream),
+    }
+    out = bytearray(b"%PDF-1.5\r")
+    offsets = {}
+    for number in sorted(objects):
+        offsets[number] = len(out)
+        out += b"%d 0 obj\r" % number + objects[number] + b"\rendobj\r"
+    start = len(out)
+    top = max(objects) + 1
+    out += b"xref\r\n0 %d\r\n" % top + b"0000000000 65535 f \r\n"
+    for number in range(1, top):
+        out += b"%010d 00000 n \r\n" % offsets.get(number, 0)
+    out += b"trailer\r<</Size %d/Root 1 0 R>>\rstartxref\r%d\r%%%%EOF\r" % (top, start)
+    path.write_bytes(bytes(out))
     return path
 
 

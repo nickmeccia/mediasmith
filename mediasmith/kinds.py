@@ -9,6 +9,7 @@ AUDIO = "audio"
 VIDEO = "video"
 BOOK = "book"
 IMAGE = "image"
+VECTOR = "vector"
 OTHER = "other"
 
 AUDIO_EXTENSIONS = {
@@ -18,6 +19,10 @@ AUDIO_EXTENSIONS = {
 VIDEO_EXTENSIONS = {'.mp4', '.mkv', '.avi', '.mov', '.m4v'}
 BOOK_EXTENSIONS = {'.epub', '.mobi', '.azw3'}
 IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.tiff', '.tif'}
+# Vector documents: artwork the pane can describe but not decode. .ai is
+# the one with an action behind it (illustrator.py); the others share the
+# kind so the vocabulary is honest and the panel has somewhere to grow.
+VECTOR_EXTENSIONS = {'.ai', '.eps', '.svg', '.pdf'}
 
 # Sibling-subtitle suffixes for videos, in preference order.
 SUBTITLE_SUFFIXES = ['.en.srt', '.srt', '.en.ass', '.ass', '.en.vtt', '.vtt']
@@ -27,6 +32,7 @@ _BY_EXTENSION = {
     **{ext: VIDEO for ext in VIDEO_EXTENSIONS},
     **{ext: BOOK for ext in BOOK_EXTENSIONS},
     **{ext: IMAGE for ext in IMAGE_EXTENSIONS},
+    **{ext: VECTOR for ext in VECTOR_EXTENSIONS},
 }
 
 

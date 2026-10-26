@@ -38,8 +38,12 @@ class Entry:
 
 _NAVIGATE = [
     Entry("↓↑", "navigate"),
-    Entry("→", "expand"),
-    Entry("←", "collapse"),
+    # TAB is →/← in one key (Nick, todo-5): it expands a closed folder and
+    # collapses an open one, so it rides BOTH entries — the strip prints
+    # keys per command ("↓↑ navigate"), not commands per key, and a lone
+    # "TAB expand/collapse" entry cost the wide strip its single line.
+    Entry("→ TAB", "expand"),
+    Entry("← TAB", "collapse"),
     Entry("^←", "collapse level"),
 ]
 

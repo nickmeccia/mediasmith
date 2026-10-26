@@ -11,7 +11,7 @@ import io
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import container
+from . import casing, container
 from . import epub as epublib
 from . import fs, kinds, posters
 
@@ -23,8 +23,8 @@ BOOK_FIELDS = ['title', 'author', 'author sort', 'series', 'series number',
 # Display labels for fields whose internal key isn't what we want on screen.
 # The keys stay as-is (audio keys double as mutagen tag names); only the
 # rendered label differs. See EditForm.set_fields.
-FIELD_LABELS = {'tracknumber': 'track no.', 'discnumber': 'disc no.',
-                'series number': 'series no.'}
+FIELD_LABELS = {'albumartist': 'album artist', 'tracknumber': 'track no.',
+                'discnumber': 'disc no.', 'series number': 'series no.'}
 
 
 @dataclass(frozen=True)
@@ -33,6 +33,8 @@ class AudioDetails:
     length_seconds: float
     size: int
     cover: bytes | None
+    filetype: str = ""          # suffix name ("mp3"), as VideoDetails.container
+    bitrate: int = 0            # bits per second; 0 when nothing reports one
 
 
 @dataclass(frozen=True)
@@ -65,13 +67,22 @@ class FolderDetails:
 
 
 @dataclass(frozen=True)
+class VectorDetails:
+    size: int
+    suffix: str
+    """The canvas is NOT read here: an .ai's private data is ~½MB to
+    inflate, and this read is on the event loop. DetailsView probes it in
+    a worker and fills the rows in late."""
+
+
+@dataclass(frozen=True)
 class OtherDetails:
     size: int
     suffix: str
 
 
 Details = (AudioDetails | VideoDetails | BookDetails | ImageDetails
-           | FolderDetails | OtherDetails)
+           | FolderDetails | VectorDetails | OtherDetails)
 
 
 def read_details(path: Path) -> Details:
@@ -93,9 +104,18 @@ def _read_audio(path: Path) -> AudioDetails:
     fields = {name: joined(tags.get(name, [])) for name in AUDIO_FIELDS}
     for name in sorted(set(tags.keys()) - set(AUDIO_FIELDS)):
         fields[name] = joined(tags.get(name, []))
-    length = float(getattr(getattr(audio, "info", None), "length", 0) or 0)
+    info = getattr(audio, "info", None)
+    length = float(getattr(info, "length", 0) or 0)
+    size = path.stat().st_size
+    # every mutagen info class carries .bitrate; a format that doesn't
+    # still yields the average one the file's own bytes imply
+    bitrate = int(getattr(info, "bitrate", 0) or 0)
+    if not bitrate and length:
+        bitrate = int(size * 8 / length)
     return AudioDetails(fields=fields, length_seconds=length,
-                        size=path.stat().st_size, cover=cover_bytes(path))
+                        size=size, cover=cover_bytes(path),
+                        filetype=path.suffix.lstrip(".").lower(),
+                        bitrate=bitrate)
 
 
 def _read_video(path: Path) -> VideoDetails:
@@ -170,6 +190,10 @@ def _read_folder(path: Path) -> FolderDetails:
     return FolderDetails(counts=counts)
 
 
+def _read_vector(path: Path) -> VectorDetails:
+    return VectorDetails(size=path.stat().st_size, suffix=path.suffix)
+
+
 def _read_other(path: Path) -> OtherDetails:
     return OtherDetails(size=path.stat().st_size, suffix=path.suffix)
 
@@ -180,6 +204,7 @@ _READERS = {
     kinds.BOOK: _read_book,
     kinds.IMAGE: _read_image,
     kinds.FOLDER: _read_folder,
+    kinds.VECTOR: _read_vector,
     kinds.OTHER: _read_other,
 }
 
@@ -219,6 +244,8 @@ class BulkDetails:
     cover_mixed: bool
     length_seconds: float       # totals across the selection
     size: int
+    filetypes: tuple[str, ...] = ()     # every suffix present, sorted
+    bitrates: tuple[int, int] = (0, 0)  # (low, high) bits per second
 
 
 def read_bulk(paths: list[Path]) -> BulkDetails:
@@ -239,12 +266,17 @@ def read_bulk(paths: list[Path]) -> BulkDetails:
             mixed.add(name)
     covers = [getattr(d, "cover", None) for d in all_details]
     cover_mixed = any(c != covers[0] for c in covers)
+    # a VBR album diverges file by file, so the pane shows the range
+    rates = [r for r in (getattr(d, "bitrate", 0) for d in all_details) if r]
     return BulkDetails(
         kind=kind, fields=fields, mixed=frozenset(mixed),
         cover=None if cover_mixed else covers[0], cover_mixed=cover_mixed,
         length_seconds=sum(getattr(d, "length_seconds", 0.0)
                            for d in all_details),
-        size=sum(getattr(d, "size", 0) for d in all_details))
+        size=sum(getattr(d, "size", 0) for d in all_details),
+        filetypes=tuple(sorted({t for t in (getattr(d, "filetype", "")
+                                            for d in all_details) if t})),
+        bitrates=(min(rates), max(rates)) if rates else (0, 0))
 
 
 def save_bulk(paths: list[Path], fields: dict[str, str],
@@ -363,17 +395,40 @@ def write_cover(path: Path, data: bytes) -> None:
 
 
 def rename(path: Path, new_name: str) -> Path:
-    """Rename ``path`` within its directory; returns the new path."""
+    """Rename ``path`` within its directory; returns the new path.
+
+    A CASE-ONLY rename is the same file, not a collision (Nick, 2026-09-02:
+    "…Yet to be.mp3" → "…Yet to Be.mp3" was refused as "already exists").
+    On a case-blind volume ``target.exists()`` is the file ITSELF, so the
+    refuse-overwrite guard asks ``samefile`` before refusing, and the
+    respell goes through ``casing.rename`` — the same halfway-name dance
+    folders need, because SMB treats a case-only rename as a no-op.
+    """
     new_name = new_name.strip()
     if not new_name or "/" in new_name or new_name in (".", ".."):
         raise ValueError(f"invalid filename: {new_name!r}")
     if new_name == path.name:
         return path
     target = path.with_name(new_name)
-    if target.exists():
+    # only a case-only pair may be "the same file"; two DIFFERENT names
+    # that share an inode are hardlinks, and clobbering one is a real loss
+    case_only = new_name.lower() == path.name.lower()
+    if target.exists() and not (case_only and _same_file(path, target)):
         raise FileExistsError(f"{new_name} already exists")
-    path.rename(target)
+    if case_only:
+        casing.rename(path, target)
+    else:
+        path.rename(target)
     return target
+
+
+def _same_file(a: Path, b: Path) -> bool:
+    """Whether two paths are one file on this filesystem — ``casing``'s
+    ``same_dir``, for the rename guard."""
+    try:
+        return a.samefile(b)
+    except OSError:
+        return False
 
 
 def create_folder(parent: Path, base: str = "untitled folder") -> Path:
@@ -446,3 +501,13 @@ def probe_video_title(path: Path) -> str | None:
     necessity. The seam is kept: the UI monkeypatches this name.
     """
     return container.read_title(path)
+
+
+def probe_video_codec(path: Path) -> str | None:
+    """The video track's codec as the standard names it ("H.265"), or None.
+
+    A header read (``container.read_video_codec``), on the same seam as
+    ``probe_video_title`` and read by the same worker — never on the
+    event loop, because the header lives on the NAS.
+    """
+    return container.read_video_codec(path)

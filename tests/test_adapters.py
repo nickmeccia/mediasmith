@@ -1,6 +1,8 @@
+import os
+
 import pytest
 
-from mediasmith import adapters, kinds
+from mediasmith import adapters, casing, kinds
 
 from .mediafactory import make_epub
 
@@ -14,6 +16,29 @@ def test_audio_details(media_tree):
     assert d.fields["genre"] == ""          # absent tags are empty, not missing
     assert d.size > 0
     assert d.cover is not None and d.cover[:4] == b"\x89PNG"
+
+
+def test_audio_filetype_and_bitrate(media_tree):
+    d = adapters.read_details(media_tree / "Music" / "01 Song One.mp3")
+    assert d.filetype == "mp3"
+    assert d.bitrate > 0
+
+
+def test_audio_info_label_formats_type_and_bitrate():
+    from mediasmith.details import audio_info_label
+    assert audio_info_label(("mp3",), (320000, 320000), 238, 9_650_000) == (
+        "mp3 · 320 kbps · 238s · 9.2 MB")
+    # a VBR selection shows the range; unknown bitrates drop out entirely
+    assert audio_info_label(("flac", "mp3"), (192000, 320000), 60, 1024) == (
+        "flac/mp3 · 192–320 kbps · 60s · 1.0 KB")
+    assert audio_info_label((), (0, 0), 60, 1024) == "60s · 1.0 KB"
+
+
+def test_bulk_audio_bitrate_range(media_tree):
+    songs = sorted((media_tree / "Music").glob("*.mp3"))
+    bulk = adapters.read_bulk(songs)
+    assert bulk.filetypes == ("mp3",)
+    assert bulk.bitrates[0] > 0 and bulk.bitrates[0] <= bulk.bitrates[1]
 
 
 def test_audio_without_cover(media_tree):
@@ -97,6 +122,13 @@ def test_probe_video_title_survives_junk(media_tree):
     assert title is None
 
 
+def test_probe_video_codec_survives_junk(media_tree):
+    # the codec seam answers the same way the title's does (todo-5)
+    codec = adapters.probe_video_codec(
+        media_tree / "Movies" / "Alien (1979)" / "Alien.1979.mkv")
+    assert codec is None
+
+
 # -- write half ---------------------------------------------------------------
 
 
@@ -160,6 +192,16 @@ def test_rename(media_tree):
         adapters.rename(new, "a/b.mp3")
     with pytest.raises(FileExistsError):
         adapters.rename(new, "02 Song Two.mp3")
+
+
+def test_rename_changing_only_case(media_tree):
+    """Nick, 2026-09-02: "…Yet to be.mp3" → "…Yet to Be.mp3" was refused as
+    "already exists" — on a case-blind volume the target IS the file."""
+    path = media_tree / "Music" / "01 Song One.mp3"
+    new = adapters.rename(path, "01 SONG one.mp3")
+    assert new == path.with_name("01 SONG one.mp3")
+    assert casing.spelled_exactly(new)                 # the disk agrees
+    assert "01 Song One.mp3" not in os.listdir(new.parent)
 
 
 def test_can_write(media_tree):

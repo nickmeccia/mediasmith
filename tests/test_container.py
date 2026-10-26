@@ -56,3 +56,67 @@ def test_suffix_match_is_case_insensitive(tmp_path):
         loud = tmp_path / name
         loud.write_bytes((FIXTURES / source).read_bytes())
         assert container.read_title(loud) == RELEASE
+
+
+# -- the video codec (todo-5) ------------------------------------------------
+
+
+@pytest.mark.parametrize("name", ["titled.mkv", "titled.mp4",
+                                  "untitled.mkv", "untitled.mp4"])
+def test_reads_the_video_codec(name):
+    """Both fixtures carry an AVC track; the pane prints the standard's
+    name, not the encoder's ("H.264", never "x264")."""
+    assert container.read_video_codec(FIXTURES / name) == "H.264"
+
+
+def _retyped(source: Path, target: Path, fourcc: bytes) -> Path:
+    """The fixture .mp4 with its sample-description type swapped — the
+    one field ``_sample_format`` reads, so no other box has to move."""
+    target.write_bytes((FIXTURES / source).read_bytes()
+                       .replace(b"avc1", fourcc))
+    return target
+
+
+def test_hevc_and_av1_mp4s_read_as_their_standards(tmp_path):
+    assert container.read_video_codec(
+        _retyped("titled.mp4", tmp_path / "h265.mp4", b"hvc1")) == "H.265"
+    assert container.read_video_codec(
+        _retyped("titled.mp4", tmp_path / "av1.mp4", b"av01")) == "AV1"
+
+
+def test_an_unknown_codec_prints_raw(tmp_path):
+    """A file nothing here has a name for still says something."""
+    assert container.read_video_codec(
+        _retyped("titled.mp4", tmp_path / "odd.mp4", b"zzzz")) == "zzzz"
+
+
+def test_mov_reads_a_codec_though_it_has_no_title(tmp_path):
+    """QuickTime is the same box layout: .mov is unhandled for the TITLE
+    (nothing in Nick's library carries one) but not for the codec."""
+    clip = _retyped("titled.mp4", tmp_path / "clip.mov", b"avc1")
+    assert container.read_video_codec(clip) == "H.264"
+    assert container.read_title(clip) is None
+
+
+def test_avi_stays_unhandled(tmp_path):
+    """Its codec lives in a RIFF stream header — a third format for one
+    suffix, deliberately not parsed."""
+    clip = tmp_path / "clip.avi"
+    clip.write_bytes((FIXTURES / "titled.mp4").read_bytes())
+    assert container.read_video_codec(clip) is None
+
+
+def test_codec_junk_never_raises(tmp_path):
+    truncated = tmp_path / "half.mkv"
+    truncated.write_bytes((FIXTURES / "titled.mkv").read_bytes()[:40])
+    assert container.read_video_codec(truncated) is None
+
+    empty = tmp_path / "empty.mp4"
+    empty.write_bytes(b"")
+    assert container.read_video_codec(empty) is None
+
+    headerless = tmp_path / "junk.mp4"
+    headerless.write_bytes(b"not a real container")
+    assert container.read_video_codec(headerless) is None
+
+    assert container.read_video_codec(tmp_path / "gone.mkv") is None

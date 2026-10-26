@@ -706,9 +706,9 @@ child list, so it tints when `node.parent is cursor.parent`
 (`LibraryTree._tint_level`, used by both the render and the line cache
 key).
 
-- [ ] **The root row has no siblings, so selecting it tints nothing.**
-      Under the old rule it lit up the first column. Say the word if you
-      want the root to keep tinting its children as a special case.
+- [ ] ~~**The root row has no siblings, so selecting it tints nothing.**~~
+      Answered by session 14 below: the root is an expanded folder, so it
+      tints its children again — no special case needed.
 - [ ] The tint still only shows while the TREE holds focus (unchanged);
       an idle tree draws every guide in the idle grey.
 - [ ] Colors are Textual's defaults here — `tree--guides-selected` has
@@ -725,3 +725,445 @@ key.
 Regression: `tests/test_app.py::test_guides_tint_the_cursors_own_sibling_level`
 (includes the cross-level move, which is what the stale-cache bug looked
 like).
+
+
+## Session 11 (2026-09-02, Opus) — audio info + a fatal cover
+
+### 14. The audio info line carries type and bitrate
+
+`info` under the save row read `238s · 9.2 MB`; it now reads
+`mp3 · 320 kbps · 238s · 9.2 MB`. `AudioDetails` gained `filetype` (the
+suffix, spelled like `VideoDetails.container`) and `bitrate`; mutagen
+reports one for every format it parses, and a format that doesn't gets
+the average its own bytes imply (`size * 8 / length`).
+
+- [ ] **A selection shows the RANGE, not an average**: a VBR album is
+      `mp3 · 192–320 kbps · …`, and a mixed-format folder prints both
+      suffixes (`flac/mp3`). Say the word if a single averaged number
+      reads better to you.
+- [ ] Nothing prints a dash — a part no file reported drops out of the
+      line entirely (`details.audio_info_label`).
+
+### 15. A truncated album cover killed the app (found, fixed)
+
+`I See Stars/Renegades Forever` — all eleven tracks carry the same 746 KB
+JPEG that ends 3 bytes early. PIL decodes LAZILY: `Image.open` reads only
+the header, so `_set_cover`'s try/except saw a perfectly good image and
+the actual decode happened later, inside the widget's `render()` — on
+Textual's render path, where an OSError is fatal.
+
+`images.decode` now pulls the pixels at assignment time, where the
+caller can catch it. A file that ends mid-scan still decodes as far as it
+got, so the art shows rather than vanishing; PIL's truncation escape is
+global state, so it is set only around the salvage and put straight back
+(the write paths — imageops, epub — keep refusing damaged input).
+
+- [ ] **A salvaged cover says `1500 × 1500 · damaged` under it**, so a
+      cover with a gray strip at the bottom reads as the file's fault,
+      not the pane's. Drop the word if you find it noisy.
+- [ ] Art too far gone to decode still hides the widget, as before.
+- [ ] The same path serves book covers, video posters, and the image
+      panel — all four go through `_set_cover`.
+
+### Session 11 gates
+
+New: `tests/test_images.py` (5 — intact, salvaged, unsalvageable,
+non-image, and that the global flag comes back). Additions:
+`tests/test_adapters.py` (+3 — filetype/bitrate, the label's three
+shapes, the bulk range) and `tests/test_app.py` (+2 — the damaged cover
+renders and is labelled; the unreadable one hides). `mediafactory` grew
+`make_truncated_jpeg`. No new chords, so `tests/fuzz.py` KEYS is
+unchanged.
+
+Full suite **474 passed**; fuzz gate **0 deaths / 6 seeds** (seeds 7–12,
+from a snapshot per CLAUDE.md).
+
+
+## Session 12 (2026-09-02, Opus) — type-ahead descends
+
+- [ ] **Typing on an EXPANDED folder now searches its CHILDREN**, not its
+      siblings — so selecting a folder, expanding it, and typing no longer
+      needs a ↓ first (your ask: the hand stays on the home row). The
+      folder itself is not a candidate, so its own letter reaches a child
+      (or the nearest-before fallback within the children).
+- [ ] A COLLAPSED folder is unchanged: typing still walks its siblings.
+- [ ] The scope is PINNED when the buffer starts (`_search_scope`, cleared
+      by the same timer/navigation that clears the buffer). Without it,
+      "01…" typed as `0` then `1` would descend again on the second key if
+      the first landed on an expanded child.
+- [ ] A folder expanded but still LOADING (children not in yet) falls back
+      to the sibling scope rather than searching an empty list.
+
+### Session 12 gates
+
+`browser.LibraryTree._scope_node` is the new seam; `_jump_to` reads the
+pinned scope instead of recomputing the cursor's parent. Tests:
+`tests/test_app.py` +2 (descends into an expanded folder and keeps the
+scope across keystrokes; stays on siblings when collapsed). No new
+chords, so `tests/fuzz.py` KEYS is unchanged. Full suite **476 passed**.
+
+Fuzz gate **0 deaths / 6 seeds** (seeds 7–12, from a snapshot per
+CLAUDE.md).
+
+
+## Session 13 (2026-09-03, Opus) — a case-only rename is not a collision
+
+- [ ] **`1-09 All Things Yet to be.mp3` → `…Yet to Be.mp3` saves now.**
+      Your report (2026-09-02): save failed with "already exists". The
+      refuse-overwrite guard in `adapters.rename` asked
+      `target.exists()`, and on a case-blind volume (APFS, the SMB share)
+      the target IS the file you are renaming — so every capitalization
+      fix was refused. The guard now allows the one case where the target
+      is the same file, and only for a case-only pair: two DIFFERENT names
+      sharing an inode are hardlinks, and clobbering one is a real loss.
+- [ ] The respell itself goes through `casing.rename` — the halfway-name
+      dance the folder actions already needed, because SMB can treat a
+      case-only rename as a no-op and silently keep the old spelling. Try
+      one on the NAS and confirm the tree shows the new casing.
+- [ ] Renaming ONTO another file (`02 Song Two.mp3` when it exists) still
+      refuses, as before.
+
+### Session 13 gates
+
+`tests/test_adapters.py` +1 (`test_rename_changing_only_case`, verified
+red before the fix). No new chords, so `tests/fuzz.py` KEYS is unchanged.
+Full suite **477 passed**.
+
+
+## Session 14 (2026-09-03, Opus) — the tint follows type-ahead
+
+- [ ] **An EXPANDED folder under the cursor tints its CHILDREN's guide
+      column** again, not its siblings' — the partial revert you asked
+      for. Anything else (a file, a collapsed folder) still tints its own
+      sibling level, which is what session 10 changed.
+- [ ] The rule is now the SAME rule type-ahead uses, in one place
+      (`LibraryTree._is_open_folder`, read by both `_scope_node` and
+      `_tint_level`): the level the tint marks is the level typing
+      searches. A folder expanded but still LOADING falls back to
+      siblings in both, so the tint never marks an empty list.
+- [ ] Consequence, and it closes session 10's open question: the ROOT row
+      tints its children again, since the root is an expanded folder.
+- [ ] Unchanged: tint only while the TREE holds focus; colors are still
+      Textual's `tree--guides-selected` default, not a theme.py token.
+
+### Session 14 gates
+
+`tests/test_app.py::test_guides_tint_the_level_type_ahead_searches`
+(rewritten from `…_the_cursors_own_sibling_level`) — expanded folder
+drops the tint a level, the leaf below keeps it, a collapsed sibling
+lifts it back, and the cross-level move repaints the stale rows. No new
+chords, so `tests/fuzz.py` KEYS is unchanged. Full suite **477 passed**.
+
+
+## Session 15 (2026-09-03, Opus) — todo-5: fold, focus, folders, codec
+
+### TAB folds the directory under the cursor
+
+- [ ] **TAB no longer descends into the details view.** It expands a
+      closed folder and collapses an open one — →/← under one key. ⏎ is
+      the only key that descends now; it always was the one edit key on
+      the strip, and TAB was an unadvertised duplicate of it.
+- [ ] Collapsing goes through `collapse_all`, exactly as ← does: re-open
+      a folder and you get a plain child list, never the shape it
+      happened to have last time.
+- [ ] On a FILE, TAB does nothing — the same silence → gives. It still
+      shadows Textual's focus cycling, so the tree stays home base.
+- [ ] **The strip prints `→ TAB expand · ← TAB collapse`** — the key
+      rides BOTH entries rather than taking a third of its own. The strip
+      lists keys per command ("↓↑ navigate"), not commands per key, and a
+      standalone `TAB expand/collapse` entry was 8 columns wider: enough
+      to push the tree state (with `^f folderize` on show) onto a second
+      line at 220 columns. It wants 222 for one line as it stands; your
+      mockups run ~245, so this only bites a narrower window.
+- [ ] It shows in the clipboard state too: folding is navigation, and
+      carrying a cut file never stopped you navigating.
+
+### The path input is the only lit box while you type in it
+
+- [ ] **Focusing the Path Input drops the Tree View's border back to
+      idle**, so the input's own box is the only lit thing. Leaving it
+      (⏎, esc, or clicking into the tree) puts the pane border back.
+- [ ] `PathInput.on_focus` toggles `-path-editing` on the container,
+      beside the `-editing` class it already puts on the tree; the CSS
+      rule sits next to `TreeView:focus-within` in app.py. Narrow mode is
+      untouched — the details-open rule still wins there.
+
+### Folders say how many files they hold and how much they weigh
+
+- [ ] **Two rows under `contains`: `files` and `size`**, both RECURSIVE —
+      the whole subtree, not the top level. (`contains` still counts the
+      top level only, which is why Movies reads `1 folder` and `3`.)
+- [ ] They fill in late, starting as `…`: a size total costs one stat per
+      file — the thing rule 1 avoids everywhere else, and unavoidable
+      here — so the walk runs in a worker (`fs.tree_totals`).
+- [ ] **A walk still going after 8 seconds reports what it has, with a
+      `+`** (`1,204+ files · 8.7 GB+`), rather than grinding for minutes
+      on a library root. Say the word if you would rather it always
+      finished, however long a whole volume takes.
+- [ ] Dot entries are skipped (matching the `contains` counts); a locked
+      subfolder costs accuracy, not the number; a symlinked folder counts
+      once and is never descended.
+- [ ] Cached against the folder's OWN mtime, so revisits are free and the
+      app's own actions (which change the folder) re-count. A change
+      buried levels down goes unnoticed until `^r` drops the cache.
+- [ ] Empty reads `0` / `0 B`; unreadable reads `—`, never a stuck `…`.
+- [ ] Album-like folders are unaffected: they still descend into the bulk
+      form, whose info line already totals length and size.
+
+### Video files show their codec
+
+- [ ] **A `codec` row sits under `container`**, filled in late by the
+      same worker that reads the embedded title — one header, two reads.
+- [ ] It prints the STANDARD's name — `H.264`, `H.265`, `AV1`, `VP9`,
+      `ProRes` — not the encoder's. x265 is one program that writes HEVC,
+      and the container records the format, never the tool; a file
+      encoded by something else would be mislabelled `x265`. If you want
+      the row to read that way anyway, it is one dict in container.py
+      (`_MP4_CODECS` / `_MKV_CODECS`).
+- [ ] Still no ffprobe. `.mkv` reads through enzyme's video track;
+      `.mp4` / `.m4v` / `.mov` through a box walk down to the sample
+      description. mutagen is no help here — its MP4 parser reads the
+      first AUDIO track, so `info.codec` is empty on a video file.
+- [ ] `.mov` answers for the codec even though it has no title tag: the
+      two reads no longer cover the same suffixes. `.avi` stays
+      unhandled — its codec lives in a RIFF stream header, a third
+      parser for one suffix.
+- [ ] A codec nothing here has a name for prints raw (`zzzz`); an
+      unparsable file prints `—`.
+
+### Session 15 gates
+
+New seams: `LibraryTree.action_toggle_fold`, `fs.tree_totals` (+ `Totals`,
+`TOTALS_BUDGET_SECONDS`), `container.read_video_codec` (+ the ISO box
+walk), `adapters.probe_video_codec`, `DetailsView._probe_totals`, and
+`_probe_title` widened into `_probe_container`.
+
+Tests: `tests/test_fs.py` +9 (subtree, dot entries, the cache and its
+documented blind spot, the budget floor, an abandoned walk, a locked
+subfolder, a missing folder, a symlink loop); `tests/test_container.py`
++9 cases (both fixtures, HEVC/AV1 re-typed in a copy, an unknown fourcc,
+.mov, .avi, junk); `tests/test_app.py` +7 (TAB folds, TAB on a file is
+inert, path focus lights one box, folder totals fill in and count what is
+nested, the codec row and its dash); `tests/test_adapters.py` +1.
+Rewritten: the two TAB-descend tests now press ⏎, and the two strip
+width tests moved 220 → 240 columns.
+
+No new chords (TAB is already in `tests/fuzz.py` KEYS). Fuzz gate
+**0 deaths / 6 seeds** (seeds 7–12, from a snapshot per CLAUDE.md).
+
+Full suite **503 passed**. One flake surfaced while the fuzz gate ran on
+the same machine: `test_opt_up_down_at_top_level` died with a
+`textual.worker` error and passed alone and in its neighborhood
+afterwards. The exposure is real, though — a totals walk can outlive the
+pane by seconds where every other probe returns in milliseconds, and a
+`call_from_thread` into a closed app raises inside the worker — so
+`_probe_totals` now drops its result rather than reporting into an app
+that has gone.
+
+
+## Session 16 (2026-09-10, Opus) — where the app opens, "album artist"
+
+### `albumartist` prints as two words
+
+- [ ] The audio form's third field reads **album artist** now
+      (`adapters.FIELD_LABELS`). Display only — the tag key stays
+      `albumartist`, which is what mutagen writes and what every
+      adapter/test still keys on.
+- [ ] It is the widest audio label, so the label column grew one cell
+      (12 + gutter). The form measures itself, but the parked `info` row
+      under save carries that width BY HAND and was pinned at 11; it
+      moved to 12. Check on a track with art that `info`, `album art`,
+      and the fields still share one left edge.
+
+### Where the app opens
+
+- [ ] Your report: launched from `/Volumes/Room of Requirement/AUDIO/
+      Music Library`, the app opened on `~/code`. I could not reproduce
+      it. From that directory `mediasmith` roots the tree on `AUDIO`
+      with `Music Library` expanded and the cursor on it — checked twice
+      through the real launcher in a pty, once on the NAS itself.
+      `uv run --project` does not move the working directory (measured),
+      and `Path.resolve()` can only walk symlinks OUT of a path — it
+      cannot invent `~/code`. `~/code` is exactly what parent-context
+      rooting shows when the shell's cwd is `~/code/mediasmith`. Two ways
+      that happens without your noticing: an unquoted
+      `cd /Volumes/Room of Requirement/...` (zsh reads the spaces as
+      extra words, refuses the cd, and leaves you where you were), and
+      `t1`…`t9` attaching to a tmux session whose pane never left the
+      repo. If it happens again, `pwd` in that pane before launching —
+      that answers it in one line.
+- [ ] Hardened regardless: `bin/mediasmith` passes `$PWD` explicitly
+      instead of letting the app resolve a `"."` later, so nothing
+      between the shell and Python can move the directory out from under
+      it. An explicit `mediasmith <dir>` still wins.
+- [ ] New `app.start_directory`: a start path that is not a listable
+      directory climbs to the nearest one that is (a file → its folder; a
+      cwd whose volume went away → the nearest live parent), and a path
+      with nothing above it lands at home rather than at `/`. Before, the
+      tree was handed a root it could not list.
+
+### Session 16 gates
+
+`tests/test_app.py` +1 (`test_start_directory_is_where_the_app_was_launched`).
+No new chords and no new interactive surface, so `tests/fuzz.py` KEYS is
+unchanged and the fuzz gate was NOT re-run this session. Full suite
+**504 passed** (223 app + 38 adapters + 243 everything else).
+
+
+## Session 17 (2026-09-16, Opus) — Image Trace
+
+Illustrator's Image Trace on an image file: **tr^ace** (^a) on the image
+bar, after resize. Engine in `mediasmith/trace.py`; the pane side is the
+"image trace" section of `details.py`.
+
+### Your decisions, as built
+
+- [ ] Controls, with Illustrator's names and scales: **threshold** 0–255,
+      **paths** 0–100%, **corners** 0–100%, **noise** 1–100 px, **invert**,
+      **ignore white**, plus the **format** picker (svg → eps → pdf). No
+      presets, no color or grayscale modes.
+- [ ] Every control is a stepper: ←→ ±1, ⇧←→ ±10; switches flip and the
+      format cycles on either arrow. ↑↓ walk the rows, then the buttons.
+- [ ] While trace is open, the image fills the Details view. The pane
+      bar, the filename row, and the size/dimensions rows hide, and the
+      picture takes every row from under the controls to the pane's
+      floor, scaled to fit without cropping or stretching. It refits
+      when the window resizes.
+- [ ] **^view source / ^view tracing** (^v) is Illustrator's View menu
+      as one key. Changing a setting while the source is shown switches
+      back to the tracing, so the change is visible.
+- [ ] **^save** writes `photo.svg` (or .eps/.pdf) beside the image and
+      keeps trace open, so a second format costs one keypress. It
+      refuses to overwrite, and pressing it again overwrites — the same
+      second-press escape as convert and resize.
+- [ ] Tracer: Homebrew `potrace`. Without it, ^a says
+      `brew install potrace`.
+
+### Judgment calls to confirm
+
+- [ ] **Default values** are potrace's own defaults on Illustrator's
+      scales (threshold 128, paths 80%, corners 25%, noise 2 px), NOT
+      Illustrator's defaults (paths 50%, corners 75%, noise 25 px).
+      The mapping between the two scales is mine, so Illustrator's
+      numbers wouldn't reproduce Illustrator's look anyway, and potrace's
+      defaults give its best first result. Mapping:
+      corners 0→100% = alphamax 4/3→0; paths 0→100% = opttolerance 1→0;
+      noise = turdsize.
+- [ ] **Settings carry over** from one image to the next for the whole
+      session (Illustrator remembers its last trace). They reset when
+      the app restarts.
+- [ ] **esc closes trace entirely** and returns to the tree, like shift
+      subs. Resize, by contrast, stays open when focus leaves it. ← on
+      the leftmost button also closes it (← with no other job = esc).
+- [ ] **"ignore white" doesn't show in the preview**: turning it off
+      adds white fills to the saved file, and white on the white preview
+      is invisible. Check the saved file to see it.
+- [ ] **Stepper look**: values print as `◂ 128 ▸`, reversed when
+      focused (the shift-subs control's focus style). The title line
+      reads `photo.png · tracing…` while a preview renders.
+- [ ] **Chords**: ^a trace (^t is taken by convert to tiff on the same
+      bar), ^v view. Both are placeholders for your rename pass.
+
+### Try these by hand
+
+- [ ] A large photo (8+ MP): a preview takes about a second, and holding
+      an arrow re-traces once when you let go, not once per repeat.
+- [ ] A transparent PNG logo: transparency is laid over white, so the
+      logo traces rather than a black box.
+- [ ] Open the saved EPS and PDF in Illustrator.
+- [ ] Narrow width (tmux column swap): trace fills the details column.
+
+### Session 17 gates
+
+`tests/test_trace.py` new (16 engine tests: mapping, bitmap prep,
+preview size, each format, refuse-overwrite, missing potrace);
+`tests/test_app.py` +8 trace pilots, including a check that the picture
+runs to the pane's floor without spilling past it. The image bar test
+now expects "trace" after "resize". No new fuzz KEYS: ^a and ^v were
+already pressed.
+Full suite **528 passed**. Fuzz gate **0 deaths / 6 seeds** (seeds 7–12,
+from a snapshot). Measured by hand: a 12 MP photo loads in 0.14s and
+previews at a 1400×1050 box in about 0.5s.
+
+## Session 18 (2026-09-29, Opus) — Illustrator rescue
+
+An .ai file saved with "Create PDF Compatible File" is two documents in
+one container: the PDF half (which every non-Adobe reader opens, and
+which Illustrator fills with the ARTBOARD ONLY) and `/AIPrivateData`,
+Illustrator's own art stream, which carries the whole canvas. So work
+parked beside the artboard survives the save and is invisible to
+Affinity, Preview and Inkscape — enlarging the artboard reveals nothing,
+because the paths are not in the half that got enlarged.
+
+Found on your own `Consider The Ravens/Image/Identity/Final/logo.ai`:
+862 pt of artwork (a second, all-black version of the logo) sitting off
+the right edge of a 936 × 936 artboard. Engine in
+`mediasmith/illustrator.py`; the pane side is `_fill_vector` /
+`_probe_canvas` / `_rescue` in `details.py`.
+
+### Your decisions, as built
+
+- [ ] **A new VECTOR kind** (`kinds.VECTOR`), claiming `.ai .eps .svg
+      .pdf`. Only `.ai` has an action behind it today; the others share
+      the kind so the vocabulary is honest and the panel has somewhere
+      to grow. They used to be OTHER.
+- [ ] **The pane reports the canvas**: size, artboard, artwork, and a
+      `hidden` line — `862 pt past the right edge`, or `nothing outside
+      the artboard`. The three canvas rows fill in LATE (see below).
+- [ ] **Two buttons, one per product**, the `convert_*` way:
+      **rescue to ^pdf** (^p) and **rescue to s^vg** (^v). PDF keeps the
+      CMYK numbers and carries the document's embedded ICC profile
+      verbatim; SVG is RGB, resolved through that same profile by
+      littleCMS (Pillow), so it matches rather than approximates.
+- [ ] **The buttons appear only when work is hidden** — a probe worker
+      reads the canvas and flips them on, so the button showing up IS
+      the finding. On a clean .ai there is no button.
+
+### Judgment calls to confirm
+
+- [ ] **Chords ^p and ^v.** On the vector bar ^s is save and ^o is open,
+      so the chords sit on the format word rather than on "rescue".
+      Both letters are already in the fuzz gate's KEYS.
+- [ ] **The probe is a worker, not part of `read_details`.** Reading the
+      canvas inflates the .ai's private data (½ MB on your logo) and
+      `adapters.read_details` runs on the event loop — on the NAS that
+      is the 2026-08-22 freeze all over again. Cost: the canvas rows and
+      the buttons arrive a beat after the filename.
+- [ ] **The product is flattened artwork.** Paths, fills, strokes,
+      compound holes, clipping groups, linear gradients and the colour
+      profile survive; layer and group NAMES do not. Placed rasters,
+      live text, mesh/radial gradients and patterns are reported in
+      `Recovery.skipped` rather than dropped silently.
+- [ ] **Coordinates are the document's own**, so on-artboard work lands
+      exactly where it was and the rescued work sits off to whichever
+      side it was parked. The page box is the artwork's bounds plus a
+      24 pt margin — it is NOT the old artboard.
+- [ ] **Verification, if you want to re-run it**: the recovered PDF,
+      cropped back to the original 936 × 936 artboard and rendered at
+      150 dpi, differs from Illustrator's own rendering by a mean of
+      0.004/255, with 11 pixels of 3.8 M over a 32/255 threshold and
+      zero contiguous mismatched regions — every differing pixel is on
+      an anti-aliased edge.
+- [ ] **`.pdf` is a VECTOR now.** If you keep PDFs you think of as
+      documents rather than artwork, say so and I will narrow
+      `VECTOR_EXTENSIONS`.
+
+## Session 19 (2026-10-11, Opus) — rescue on Illustrator 2020+ files
+
+Nick's `Traces.ai` (Character Logos/06 Final Vector) showed no rescue
+buttons. Two bugs, both fixed in illustrator.py:
+
+- [ ] **Zstandard private data.** Illustrator 2020+ (AI24) compresses
+      `/AIPrivateData` behind `%AI24_ZStandard_Data`, not zlib's
+      `%AI12_CompressedData`. `read_canvas` read nothing → no buttons.
+      Decoded with stdlib `compression.zstd` (3.14+), `backports.zstd`
+      below that (new pyproject dependency, 3.12–3.13 only).
+- [ ] **Negative canvas coordinates.** The page box was anchored at 0,0,
+      cropping everything parked left of or below the origin — on
+      Traces.ai, half the canvas. The box now reaches the artwork's
+      negative edge; the PDF keeps its page at 0,0 and shifts the art
+      with one `cm`, because Preview/Quick Look draw a negative-origin
+      MediaBox as blank.
+- [ ] Re-run rescue to pdf/svg on Traces.ai and check the whole canvas
+      (≈16,180 pt square) is there. Acrobat caps pages at 14,400 pt, so
+      this one may open clipped or refused there; Preview renders it.

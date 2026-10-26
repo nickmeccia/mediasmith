@@ -115,6 +115,10 @@ class MediasmithApp(App):
     TreeView { width: 38%; min-width: 30; border: round $border-fg-idle;
                padding: 0 1; }
     TreeView:focus-within { border: round $border-fg-focus; }
+    /* ...except while the PATH is being typed: the input is its own box,
+       and two nested lit borders read as two focused things (Nick,
+       todo-5). PathInput toggles the class on focus/blur. */
+    TreeView.-path-editing:focus-within { border: round $border-fg-idle; }
     PathInput { height: 3; background: $surface;
               border: round $border-fg-idle; color: $text-fg-idle; }
     PathInput:focus { border: round $border-fg-focus;
@@ -234,6 +238,15 @@ class MediasmithApp(App):
     .wsep { width: auto; color: $label-fg-idle; padding: 0 1; }
     DetailsView:focus-within .wsep { color: $label-fg-focus; }
     #gif-bar { margin-top: 1; }
+    /* Image Trace: the stepper rows, then the picture filling the rest
+       (its cell size is set in code — DetailsView._trace_previewed) */
+    #trace-div { height: auto; margin-top: 1; }
+    .trace-row { height: 1; }
+    TraceControl { width: auto; }
+    TraceControl:focus { text-style: reverse; }
+    #trace-hint { height: auto; color: $label-fg-idle; }
+    DetailsView:focus-within #trace-hint { color: $label-fg-focus; }
+    #trace-bar { margin-top: 1; }
     #plan-preview { height: auto; margin-top: 1; }
     #plan-tree { height: auto; }
     /* the editable split-omnibus form (shares .frow/.fkey/.fval) */
@@ -552,6 +565,26 @@ class MediasmithApp(App):
         tree.cursor_to_gap(parent, index)
 
 
+def start_directory(given: Path) -> Path:
+    """The directory the tree opens in: the launch directory (bin/mediasmith
+    passes it explicitly) or the one named on the command line.
+
+    A path that is not a directory — a file, or a cwd whose volume went
+    away — climbs to the nearest directory above it rather than handing
+    the tree a root it cannot list. A path with nothing above it either
+    (a typo) lands at home rather than at the filesystem root."""
+    try:
+        path = given.expanduser().resolve()
+    except OSError:                     # a cwd that no longer exists
+        return Path.home()
+    climbed = path
+    while not climbed.is_dir() and climbed.parent != climbed:
+        climbed = climbed.parent
+    if not climbed.is_dir() or (climbed != path and climbed == Path(climbed.anchor)):
+        return Path.home()
+    return climbed
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("start_dir", nargs="?", default=".", type=Path)
@@ -560,7 +593,7 @@ def main() -> None:
                         help="image renderer (auto = best protocol)")
     args = parser.parse_args()
     try:
-        MediasmithApp(args.start_dir.resolve(), images=args.images).run()
+        MediasmithApp(start_directory(args.start_dir), images=args.images).run()
     except Exception:
         import traceback
         log = Path(__file__).resolve().parent.parent / "crash.log"

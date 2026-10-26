@@ -1,0 +1,851 @@
+After using Mediasmith for a while, I have a few complaints against my design:
+• Needing to navigate into details view to execute any action is annoying:
+  • There is a <1s delay when entering details view, and entering for many files in a session is time that adds up
+  • The extra keystrokes of "ent" and "esc" to enter and exit details view also add up during a session
+  • Plus, the extra keystrokes don't connect to my mental model of what I'm doing--I visualize them almost as keys modifying the actiom I intend, instead of representing actions that I want to take
+
+As a result, I want to change the mental model from "move focus between tree view and details view" to "move focus along a path."
+
+Legend:
+█ (mockup) = #ffa62b PRIMARY bg color (TUI) = focusable element, currently focused
+▒ (mockup) = #474747 GREY_30 bg color (TUI) = focusable element, currently unfocused
+- (mockup) = #e2e2e2 GREY_30 fg color when unfocused, #ffa62b PRIMARY fg color when connecting focused elements (TUI) = path connecting focusable elements
+░ (mockup) = #ffa62b PRIMARY fg color (TUI) = action available regardless of focus
+═ (mockup) = viewport width
+
+
+Rules:
+• Focus is represented by #orange bg color behind one single element at a time
+• If this element is editable, it is the only element able to be edited while focused
+• The user is able to move focus to adjacent focusable elements with the arrow keys
+• Adjacency is imdicated by box-drawing characters connecting the elements
+_ Unfocused, focusable elemnents are indicated by a #grey background color
+• From each focusable element, a variety of actions are available, indicated by #orange fg text. This text is not necessarily connected to or adjacent to the currently-focused element, and may appear anywhere in the UI.
+
+Mockups:
+
+══ Layer 1: Background Color ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+ ╭──────────────────────────────────────────────────────────────────────────────────────╮                                                                                                                                                      
+ │  ^/   /Users/nick/Downloads/Books/02 Ready to Convert/A Clockwork Orange _ Restore   │  ╭──▒▒▒▒▒▒▒▒▒▒     A Clockwork Orange _ Restored Edition -- Anthony Burgess, 2013
+ ╰──────────────────────────────────────────────────────────────────────────────────────╯  │                                                                                                                                                      
+ │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒                                                                    ├──▒▒▒▒▒▒▒        A Clockwork Orange
+ │  ├─▒▒▒▒▒▒▒▒▒▒                                                                           ├──▒▒▒▒▒▒▒▒       Anthony Burgess
+ │  ├─▒▒▒▒▒▒▒▒▒                                                                            ├──▒▒▒▒▒▒▒▒▒▒▒▒▒  -
+ │  ├─▒▒▒▒▒▒▒▒▒▒▒▒                                                                         ├──▒▒▒▒▒▒▒▒       -
+ │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒                                                                       ├──▒▒▒▒▒▒▒▒▒▒▒▒   -
+ │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒                                                                       ├──▒▒▒▒▒▒▒▒▒▒▒    Penguin Books Ltd
+ │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒                                                               ├──▒▒▒▒▒▒▒▒▒▒     en
+ │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒                   ├──▒▒▒▒▒▒         2013-12-05
+ │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒                                                            │ 
+ │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒                                                                      ├──▒▒▒▒▒▒▒        􎻮̅̅٘􎻮̅̍٘􎻮̅̎٘􎻮̅̐٘􎻮̅̒٘􎻮̅̽٘􎻮̅̾٘􎻮̅̿٘􎻮̅͆٘􎻮
+ │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒                                                    │                 􎻮̍̅٘􎻮̍̍٘􎻮̍̎٘􎻮̍̐٘􎻮̍̒٘􎻮̍̽٘􎻮̍̾٘􎻮̍̿٘􎻮̍͆٘􎻮
+ │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒                                                                    │                 􎻮̍̅٘􎻮̍̍٘􎻮̍̎٘􎻮̍̐٘􎻮̍̒٘􎻮̍̽٘􎻮̍̾٘􎻮̍̿٘􎻮̍͆٘􎻮
+ │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒                                                                   │                 􎻮̍̅٘􎻮̍̍٘􎻮̍̎٘􎻮̍̐٘􎻮̍̒٘􎻮̍̽٘􎻮̍̾٘􎻮̍̿٘􎻮̍͆٘􎻮
+ │  │  ├─▒▒▒▒▒▒▒▒▒▒                                                                        │                 􎻮̍̅٘􎻮̍̍٘􎻮̍̎٘􎻮̍̐٘􎻮̍̒٘􎻮̍̽٘􎻮̍̾٘􎻮̍̿٘􎻮̍͆٘􎻮
+ │  │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒                                                             │                 􎻮̍̅٘􎻮̍̍٘􎻮̍̎٘􎻮̍̐٘􎻮̍̒٘􎻮̍̽٘􎻮̍̾٘􎻮̍̿٘􎻮̍͆٘􎻮
+ │  │  │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒                                                              │                 􎻮̍̅٘􎻮̍̍٘􎻮̍̎٘􎻮̍̐٘􎻮̍̒٘􎻮̍̽٘􎻮̍̾٘􎻮̍̿٘􎻮̍͆٘􎻮
+ │  │  │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒   │                 􎻮̍̅٘􎻮̍̍٘􎻮̍̎٘􎻮̍̐٘􎻮̍̒٘􎻮̍̽٘􎻮̍̾٘􎻮̍̿٘􎻮̍͆٘􎻮
+ │  │  │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒                                                      │                 􎻮̍̅٘􎻮̍̍٘􎻮̍̎٘􎻮̍̐٘􎻮̍̒٘􎻮̍̽٘􎻮̍̾٘􎻮̍̿٘􎻮̍͆٘􎻮
+ │  │  │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒  │                 􎻮̍̅٘􎻮̍̍٘􎻮̍̎٘􎻮̍̐٘􎻮̍̒٘􎻮̍̽٘􎻮̍̾٘􎻮̍̿٘􎻮̍͆٘􎻮
+ │  │  │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒  │                 􎻮̍̅٘􎻮̍̍٘􎻮̍̎٘􎻮̍̐٘􎻮̍̒٘􎻮̍̽٘􎻮̍̾٘􎻮̍̿٘􎻮̍͆٘􎻮
+ │  │  │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒                                    │                 􎻮̍̅٘􎻮̍̍٘􎻮̍̎٘􎻮̍̐٘􎻮̍̒٘􎻮̍̽٘􎻮̍̾٘􎻮̍̿٘􎻮̍͆٘􎻮
+ │  │  │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒                                    │                 􎻮̍̅٘􎻮̍̍٘􎻮̍̎٘􎻮̍̐٘􎻮̍̒٘􎻮̍̽٘􎻮̍̾٘􎻮̍̿٘􎻮̍͆٘􎻮
+ │  │  │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒  │                 􎻮̍̅٘􎻮̍̍٘􎻮̍̎٘􎻮̍̐٘􎻮̍̒٘􎻮̍̽٘􎻮̍̾٘􎻮̍̿٘􎻮̍͆٘􎻮
+ │  │  │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒  │                 􎻮̍̅٘􎻮̍̍٘􎻮̍̎٘􎻮̍̐٘􎻮̍̒٘􎻮̍̽٘􎻮̍̾٘􎻮̍̿٘􎻮̍͆٘􎻮
+ │  │  │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒                                               │                 􎻮̍̅٘􎻮̍̍٘􎻮̍̎٘􎻮̍̐٘􎻮̍̒٘􎻮̍̽٘􎻮̍̾٘􎻮̍̿٘􎻮̍͆٘􎻮
+ │  │  │  │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒                                                           │                 521x850
+ │  │  │  │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒                              │                                                                                                                                                       
+ │  │  │  │  │  ╰─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒                                                        ├──▒▒▒▒▒▒▒▒▒──▒▒▒▒▒▒▒▒──▒▒▒▒▒▒▒▒▒──▒▒▒▒▒▒▒▒▒▒▒▒▒
+ │  │  │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒  │                                                                                                                                                      
+ │  │  │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒                                                              ├──▒▒▒▒▒▒▒▒▒▒▒▒▒▒──▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒──▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒──▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒──▒▒▒▒▒▒▒▒▒▒▒▒▒▒──▒▒▒▒▒▒▒▒▒▒──▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒──▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒  
+ │  │  │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒   │  
+ │  │  │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒  │
+ │  │  │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒   │
+ │  │  │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒  │ 
+ │  │  │  │  ╰─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒  │ 
+ │  │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒                                                       │ 
+ │  │  │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒                                                              │ 
+ │  │  │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒  │ 
+ │  │  │  │  ├─███████████████████████████████████████████████████████████████████─────────╯ 
+ │  │  │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒                                                        
+ │  │  │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒
+ │  │  │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒
+ │  │  │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒
+ │  │  │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒
+ │  │  │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒
+ │  │  │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒
+ │  │  │  │  ╰─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒
+ │  │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒                                                            
+ │  │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒                                                                 
+ │  │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒                                                               
+ │  │  │  ├─▒▒▒▒▒▒▒▒▒▒▒                                                                  
+ │  │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒                                                                
+ │  │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒                                                      
+ │  │  │  ╰─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒                                            
+ │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒                                                                  
+ │  │  ├─▒▒▒▒▒▒▒▒▒▒▒                                                                     
+ │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒                                                                   
+ │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒                                                             
+ │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒                                                            
+ │  │  ├─▒▒▒▒▒▒▒▒▒                                                                       
+ │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒                                                        
+ │  │  ├─▒▒▒▒▒▒▒▒▒                                                                        
+ │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒                                                              
+ │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒                                                            
+ │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒                                                                
+ │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒                                                        
+ │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒                                                                   
+ │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒                                                                  
+ │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒                                                                   
+ │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒                                       
+ │  │  ├─▒▒▒▒▒▒▒▒▒▒                                                                       
+ │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒                                                                
+ │  │  ╰─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒                                                 
+ │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒                                                                       
+ │  ├─▒▒▒▒▒▒▒                                                                             
+ │  │  ╰─▒▒▒▒▒▒▒▒                                                                         
+ │  ├─▒▒▒▒▒▒▒▒▒▒▒▒                                                                        
+ ▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂                                                           
+
+ ↓↑ navigate · → expand · ← collapse · ^← collapse level · ^r refresh · ^. toggle hidden files · ^n new directory · ^q quit                                                                                   𜵎𜵎▖𜷇🯦𜷇▌𜵅𜷃𜵈𜷓𜴀𜵎𜵎▖𜵅𜶍▐𜶓
+═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+══ Layer 2: Foreground Content ════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+ ╭──────────────────────────────────────────────────────────────────────────────────────╮
+ │  ^/   /Users/nick/Downloads/Books/02 Ready to Convert/A Clockwork Orange _ Restore   │  ╭── filename      A Clockwork Orange _ Restored Edition -- Anthony Burgess, 2013
+ ╰──────────────────────────────────────────────────────────────────────────────────────╯  │                                                                                                                                                      
+ │  ├─ 📁 Applications                                                                     ├── title         A Clockwork Orange                                                                                                                     
+ │  ├─ 📁 Books                                                                            ├── author        Anthony Burgess                                                                                                                        
+ │  ├─ 📁 code                                                                             ├── author sort   -                                                                                                                                      
+ │  ├─ 📁 Desktop                                                                          ├── series        -                                                                                                                                      
+ │  ├─ 📁 Documents                                                                        ├── series no.    -                                                                                                                                      
+ │  ├─ 📂 Downloads                                                                        ├── publisher     Penguin Books Ltd                                                                                                                      
+ │  │  ├─ 📄 01-book-1.epub                                                                ├── language      en                                                                                                                                     
+ │  │  ├─ 📄 2026-08-31---Jonathan-Jalbert---9300111043900015806926.pdf                    ├── date          2013-12-05                                                                                                                             
+ │  │  ├─ 📄 5179932805744.mp4                                                             │                                                                                                                                                        
+ │  │  ├─ 📁 .claude                                                                       ├── cover         􎻮̅̅٘􎻮̅̍٘􎻮̅̎٘􎻮̅̐٘􎻮̅̒٘􎻮̅̽٘􎻮̅̾٘􎻮̅̿٘􎻮̅͆٘􎻮                                                                                                               
+ │  │  ├─ 📄 .com.brave.Browser.QFarYa                                                     │                 􎻮̍̅٘􎻮̍̍٘􎻮̍̎٘􎻮̍̐٘􎻮̍̒٘􎻮̍̽٘􎻮̍̾٘􎻮̍̿٘􎻮̍͆٘􎻮                                                                                                               
+ │  │  ├─ 📄 .DS_Store                                                                     │                 􎻮̎̅٘􎻮̎̍٘􎻮̎̎٘􎻮̎̐٘􎻮̎̒٘􎻮̎̽٘􎻮̎̾٘􎻮̎̿٘􎻮̎͆٘􎻮                                                                                                               
+ │  │  ├─ 📄 .localized                                                                    │                 􎻮̐̅٘􎻮̐̍٘􎻮̐̎٘􎻮̐̐٘􎻮̐̒٘􎻮̐̽٘􎻮̐̾٘􎻮̐̿٘􎻮̐͆٘􎻮                                                                                                               
+ │  │  ├─ 📂 Books                                                                         │                 􎻮̒̅٘􎻮̒̍٘􎻮̒̎٘􎻮̒̐٘􎻮̒̒٘􎻮̒̽٘􎻮̒̾٘􎻮̒̿٘􎻮̒͆٘􎻮                                                                                                               
+ │  │  │  ├─ 📂 01 Downloaded                                                              │                 􎻮̽̅٘􎻮̽̍٘􎻮̽̎٘􎻮̽̐٘􎻮̽̒٘􎻮̽̽٘􎻮̽̾٘􎻮̽̿٘􎻮̽͆٘􎻮                                                                                                               
+ │  │  │  │  ├─ 📄 .DS_Store                                                               │                 􎻮̾̅٘􎻮̾̍٘􎻮̾̎٘􎻮̾̐٘􎻮̾̒٘􎻮̾̽٘􎻮̾̾٘􎻮̾̿٘􎻮̾͆٘􎻮                                                                                                               
+ │  │  │  │  ├─ 📄 A Fire Upon the Deep -- Vernor Vinge -- ePub r1_2, 1992 -- ePubLibre    │                 􎻮̿̅٘􎻮̿̍٘􎻮̿̎٘􎻮̿̐٘􎻮̿̒٘􎻮̿̽٘􎻮̿̾٘􎻮̿̿٘􎻮̿͆٘􎻮                                                                                                               
+ │  │  │  │  ├─ 📁 Edge Chronicles 2                                                       │                 􎻮͆̅٘􎻮͆̍٘􎻮͆̎٘􎻮͆̐٘􎻮͆̒٘􎻮͆̽٘􎻮͆̾٘􎻮͆̿٘􎻮͆͆٘􎻮                                                                                                               
+ │  │  │  │  ├─ 📄 Hyperion Cantos [02] - The Fall of Hyperion -- Simmons, Dan -- 1990 -   │                 􎻮͊̅٘􎻮͊̍٘􎻮͊̎٘􎻮͊̐٘􎻮͊̒٘􎻮͊̽٘􎻮͊̾٘􎻮͊̿٘􎻮͊͆٘􎻮                                                                                                               
+ │  │  │  │  ├─ 📄 Hyperion Cantos [04] - Rise of Endymion -- Simmons, Dan -- Hyperion C   │                 􎻮͋̅٘􎻮͋̍٘􎻮͋̎٘􎻮͋̐٘􎻮͋̒٘􎻮͋̽٘􎻮͋̾٘􎻮͋̿٘􎻮͋͆٘􎻮                                                                                                               
+ │  │  │  │  ├─ 📄 John le Carré Novels Volume 1.epub                                      │                 􎻮͌̅٘􎻮͌̍٘􎻮͌̎٘􎻮͌̐٘􎻮͌̒٘􎻮͌̽٘􎻮͌̾٘􎻮͌̿٘􎻮͌͆٘􎻮                                                                                                               
+ │  │  │  │  ├─ 📄 john lecarre The Karla Trilogy.epub                                     │                 􎻮͐̅٘􎻮͐̍٘􎻮͐̎٘􎻮͐̐٘􎻮͐̒٘􎻮͐̽٘􎻮͐̾٘􎻮͐̿٘􎻮͐͆٘􎻮                                                                                                               
+ │  │  │  │  ├─ 📄 Locke Lamora and the Bottled Serpent_ Part 1 [Grimdark -- Scott Lynch   │                 􎻮͑̅٘􎻮͑̍٘􎻮͑̎٘􎻮͑̐٘􎻮͑̒٘􎻮͑̽٘􎻮͑̾٘􎻮͑̿٘􎻮͑͆٘􎻮                                                                                                               
+ │  │  │  │  ├─ 📄 Locke Lamora and the Bottled Serpent_ Part 2 [Grimdark -- Scott Lynch   │                 􎻮͒̅٘􎻮͒̍٘􎻮͒̎٘􎻮͒̐٘􎻮͒̒٘􎻮͒̽٘􎻮͒̾٘􎻮͒̿٘􎻮͒͆٘􎻮                                                                                                               
+ │  │  │  │  ├─ 📂 Mark Danielewski (18190)                                                │                 􎻮͗̅٘􎻮͗̍٘􎻮͗̎٘􎻮͗̐٘􎻮͗̒٘􎻮͗̽٘􎻮͗̾٘􎻮͗̿٘􎻮͗͆٘􎻮                                                                                                               
+ │  │  │  │  │  ├─ 📄 cover.jpg                                                            │                 521 × 850                                                                                                                                           
+ │  │  │  │  │  ├─ 📄 Mark Danielewski - House of Leaves.cbz                               │                                                                                                                                                       
+ │  │  │  │  │  ╰─ 📄 metadata.opf                                                         ├── ^o Open ── ^x Cut ── ^y Copy ── ^DEL Delete
+ │  │  │  │  ├─ 📄 No one belongs here more than you _ stories -- July, Miranda -- First   │                                                                                                                                                      
+ │  │  │  │  ├─ 📁 Omnibuses                                                               ├── ^1 Folderize ── ^2 Split Omnibus ── ^3 Convert to MOBI ── ^4 Convert to AZW3 ── ^5 Write OPF ── ^6 Clean ── ^7 Upload Cover ── ^8 Extract Cover  
+ │  │  │  │  ├─ 📄 Simmons, Dan - Hyperion 01 - Hyperion -- Simmons, Dan [Simmons, Dan]    │  
+ │  │  │  │  ├─ 📄 Simmons, Dan - Hyperion 02 - The Fall of Hyperion -- Simmons, Dan [Si   │
+ │  │  │  │  ├─ 📄 Simmons, Dan - Hyperion 03 - Endymion -- Simmons, Dan [Simmons, Dan]    │ 
+ │  │  │  │  ├─ 📄 Simmons, Dan - Hyperion 04 - The Rise of Endymion -- Simmons, Dan [Si   │ 
+ │  │  │  │  ╰─ 📄 The Zones of Thought Series_ (A Fire Upon the Deep, the -- Vernor Vin   │ 
+ │  │  │  ├─ 📂 02 Ready to Convert                                                        │ 
+ │  │  │  │  ├─ 📄 .DS_Store                                                               │ 
+ │  │  │  │  ├─ 📄 [Asian Saga_ Chronological Order 01] • Shogun -- Clavell, James -- 19   │ 
+ │  │  │  │  ├─ 📄 A Clockwork Orange _ Restored Edition -- Anthony Burgess, 2013 ─────────╯ 
+ │  │  │  │  ├─ 📁 John Le Carré                                                         
+ │  │  │  │  ├─ 📄 The Broken Earth (Book 1-3) -- N_ K_ Jemisin -- 2025 -- Orbit -- 610b 
+ │  │  │  │  ├─ 📄 The Brothers Karamazov -- Dostoyevsky, Fyodor -- 2009 -- Sony CONNECT 
+ │  │  │  │  ├─ 📄 The Count of Monte Cristo -- Dumas, Alexandre -- 1997 -- f6a9b9325895 
+ │  │  │  │  ├─ 📄 The Hunt for Red October -- Clancy, Tom -- Jack Ryan 4, 2010 -- c25fd 
+ │  │  │  │  ├─ 📄 The Prince of Tides _ A Novel -- Pat Conroy -- New York, 2010 -- Open 
+ │  │  │  │  ├─ 📄 The Tunnel -- William H_ Gass -- 1st Dalkey Archive ed, Normal, IL, 1 
+ │  │  │  │  ╰─ 📄 The tunnel -- William H_ Gass -- A Borzoi book, 2_ print, New York, 1 
+ │  │  │  ├─ 📁 03 Converted                                                             
+ │  │  │  ├─ 📁 .claude                                                                  
+ │  │  │  ├─ 📄 .DS_Store                                                                
+ │  │  │  ├─ 📁 Covers                                                                   
+ │  │  │  ├─ 📁 Examples                                                                 
+ │  │  │  ├─ 📄 wildbow - Seek.jpg                                                       
+ │  │  │  ╰─ 📄 Wildbow Book Covers.afdesign                                             
+ │  │  ├─ 📁 Childrens                                                                   
+ │  │  ├─ 📁 Comics                                                                      
+ │  │  ├─ 📄 deck.pdf                                                                    
+ │  │  ├─ 📄 eat-purely.svg                                                              
+ │  │  ├─ 📄 eat-purely.webp                                                             
+ │  │  ├─ 📁 Ebay                                                                        
+ │  │  ├─ 📄 HandBrake-1.11.2.dmg                                                         
+ │  │  ├─ 📁 Ideo                                                                         
+ │  │  ├─ 📄 IMG_4102-1.png                                                               
+ │  │  ├─ 📄 IMG_4102-4x6.png                                                             
+ │  │  ├─ 📄 IMG_4102.png                                                                 
+ │  │  ├─ 📄 IPHONE-6-BW-OC-2.svg                                                         
+ │  │  ├─ 📄 meals.txt                                                                    
+ │  │  ├─ 📁 Mediasmith                                                                   
+ │  │  ├─ 📁 MTG Proxy                                                                    
+ │  │  ├─ 📄 openclipart-vectors-iphone-160307.svg                                        
+ │  │  ├─ 📁 Progs                                                                        
+ │  │  ├─ 📁 Transmission                                                                 
+ │  │  ╰─ 📄 Vending Machine Letter.jpeg                                                  
+ │  ├─ 📁 FontBase                                                                        
+ │  ├─ 📂 go                                                                              
+ │  │  ╰─ 📁 pkg                                                                          
+ │  ├─ 📁 Library                                                                         
+ ▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂                                                           
+
+ ↓↑ navigate · → expand · ← collapse · ^← collapse level · ^r refresh · ^. toggle hidden files · ^n new directory · ^q quit                                                                                   𜵎𜵎▖𜷇🯦𜷇▌𜵅𜷃𜵈𜷓𜴀𜵎𜵎▖𜵅𜶍▐𜶓
+═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+══ Layer 3: Foreground Color ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+ ╭──────────────────────────────────────────────────────────────────────────────────────╮
+ │  ░░░  /Users/nick/Downloads/Books/02 Ready to Convert/A Clockwork Orange _ Restore   │  ╭── filename      A Clockwork Orange _ Restored Edition -- Anthony Burgess, 2013
+ ╰──────────────────────────────────────────────────────────────────────────────────────╯  │                                                                                                                                                      
+ │  ├─ 📁 Applications                                                                     ├── title         A Clockwork Orange                                                                                                                     
+ │  ├─ 📁 Books                                                                            ├── author        Anthony Burgess                                                                                                                        
+ │  ├─ 📁 code                                                                             ├── author sort   -                                                                                                                                      
+ │  ├─ 📁 Desktop                                                                          ├── series        -                                                                                                                                      
+ │  ├─ 📁 Documents                                                                        ├── series no.    -                                                                                                                                      
+ │  ├─ 📂 Downloads                                                                        ├── publisher     Penguin Books Ltd                                                                                                                      
+ │  │  ├─ 📄 01-book-1.epub                                                                ├── language      en                                                                                                                                     
+ │  │  ├─ 📄 2026-08-31---Jonathan-Jalbert---9300111043900015806926.pdf                    ├── date          2013-12-05                                                                                                                             
+ │  │  ├─ 📄 5179932805744.mp4                                                             │                                                                                                                                                        
+ │  │  ├─ 📁 .claude                                                                       ├── cover         􎻮̅̅٘􎻮̅̍٘􎻮̅̎٘􎻮̅̐٘􎻮̅̒٘􎻮̅̽٘􎻮̅̾٘􎻮̅̿٘􎻮̅͆٘􎻮                                                                                                               
+ │  │  ├─ 📄 .com.brave.Browser.QFarYa                                                     │                 􎻮̍̅٘􎻮̍̍٘􎻮̍̎٘􎻮̍̐٘􎻮̍̒٘􎻮̍̽٘􎻮̍̾٘􎻮̍̿٘􎻮̍͆٘􎻮                                                                                                               
+ │  │  ├─ 📄 .DS_Store                                                                     │                 􎻮̎̅٘􎻮̎̍٘􎻮̎̎٘􎻮̎̐٘􎻮̎̒٘􎻮̎̽٘􎻮̎̾٘􎻮̎̿٘􎻮̎͆٘􎻮                                                                                                               
+ │  │  ├─ 📄 .localized                                                                    │                 􎻮̐̅٘􎻮̐̍٘􎻮̐̎٘􎻮̐̐٘􎻮̐̒٘􎻮̐̽٘􎻮̐̾٘􎻮̐̿٘􎻮̐͆٘􎻮                                                                                                               
+ │  │  ├─ 📂 Books                                                                         │                 􎻮̒̅٘􎻮̒̍٘􎻮̒̎٘􎻮̒̐٘􎻮̒̒٘􎻮̒̽٘􎻮̒̾٘􎻮̒̿٘􎻮̒͆٘􎻮                                                                                                               
+ │  │  │  ├─ 📂 01 Downloaded                                                              │                 􎻮̽̅٘􎻮̽̍٘􎻮̽̎٘􎻮̽̐٘􎻮̽̒٘􎻮̽̽٘􎻮̽̾٘􎻮̽̿٘􎻮̽͆٘􎻮                                                                                                               
+ │  │  │  │  ├─ 📄 .DS_Store                                                               │                 􎻮̾̅٘􎻮̾̍٘􎻮̾̎٘􎻮̾̐٘􎻮̾̒٘􎻮̾̽٘􎻮̾̾٘􎻮̾̿٘􎻮̾͆٘􎻮                                                                                                               
+ │  │  │  │  ├─ 📄 A Fire Upon the Deep -- Vernor Vinge -- ePub r1_2, 1992 -- ePubLibre    │                 􎻮̿̅٘􎻮̿̍٘􎻮̿̎٘􎻮̿̐٘􎻮̿̒٘􎻮̿̽٘􎻮̿̾٘􎻮̿̿٘􎻮̿͆٘􎻮                                                                                                               
+ │  │  │  │  ├─ 📁 Edge Chronicles 2                                                       │                 􎻮͆̅٘􎻮͆̍٘􎻮͆̎٘􎻮͆̐٘􎻮͆̒٘􎻮͆̽٘􎻮͆̾٘􎻮͆̿٘􎻮͆͆٘􎻮                                                                                                               
+ │  │  │  │  ├─ 📄 Hyperion Cantos [02] - The Fall of Hyperion -- Simmons, Dan -- 1990 -   │                 􎻮͊̅٘􎻮͊̍٘􎻮͊̎٘􎻮͊̐٘􎻮͊̒٘􎻮͊̽٘􎻮͊̾٘􎻮͊̿٘􎻮͊͆٘􎻮                                                                                                               
+ │  │  │  │  ├─ 📄 Hyperion Cantos [04] - Rise of Endymion -- Simmons, Dan -- Hyperion C   │                 􎻮͋̅٘􎻮͋̍٘􎻮͋̎٘􎻮͋̐٘􎻮͋̒٘􎻮͋̽٘􎻮͋̾٘􎻮͋̿٘􎻮͋͆٘􎻮                                                                                                               
+ │  │  │  │  ├─ 📄 John le Carré Novels Volume 1.epub                                      │                 􎻮͌̅٘􎻮͌̍٘􎻮͌̎٘􎻮͌̐٘􎻮͌̒٘􎻮͌̽٘􎻮͌̾٘􎻮͌̿٘􎻮͌͆٘􎻮                                                                                                               
+ │  │  │  │  ├─ 📄 john lecarre The Karla Trilogy.epub                                     │                 􎻮͐̅٘􎻮͐̍٘􎻮͐̎٘􎻮͐̐٘􎻮͐̒٘􎻮͐̽٘􎻮͐̾٘􎻮͐̿٘􎻮͐͆٘􎻮                                                                                                               
+ │  │  │  │  ├─ 📄 Locke Lamora and the Bottled Serpent_ Part 1 [Grimdark -- Scott Lynch   │                 􎻮͑̅٘􎻮͑̍٘􎻮͑̎٘􎻮͑̐٘􎻮͑̒٘􎻮͑̽٘􎻮͑̾٘􎻮͑̿٘􎻮͑͆٘􎻮                                                                                                               
+ │  │  │  │  ├─ 📄 Locke Lamora and the Bottled Serpent_ Part 2 [Grimdark -- Scott Lynch   │                 􎻮͒̅٘􎻮͒̍٘􎻮͒̎٘􎻮͒̐٘􎻮͒̒٘􎻮͒̽٘􎻮͒̾٘􎻮͒̿٘􎻮͒͆٘􎻮                                                                                                               
+ │  │  │  │  ├─ 📂 Mark Danielewski (18190)                                                │                 􎻮͗̅٘􎻮͗̍٘􎻮͗̎٘􎻮͗̐٘􎻮͗̒٘􎻮͗̽٘􎻮͗̾٘􎻮͗̿٘􎻮͗͆٘􎻮                                                                                                               
+ │  │  │  │  │  ├─ 📄 cover.jpg                                                            │                 521 × 850                                                                                                                                           
+ │  │  │  │  │  ├─ 📄 Mark Danielewski - House of Leaves.cbz                               │                                                                                                                                                       
+ │  │  │  │  │  ╰─ 📄 metadata.opf                                                         ├── ░░░░░░░ ── ░░░░░░ ── ░░░░░░░ ── ░░░░░░░░░░░
+ │  │  │  │  ├─ 📄 No one belongs here more than you _ stories -- July, Miranda -- First   │                                                                                                                                                      
+ │  │  │  │  ├─ 📁 Omnibuses                                                               ├── ░░░░░░░░░░░░ ── ░░░░░░░░░░░░░░░░ ── ░░░░░░░░░░░░░░░░░░ ── ░░░░░░░░░░░░░░░░░░ ── ░░░░░░░░░░░░ ── ░░░░░░░░ ── ░░░░░░░░░░░░░░░ ── ░░░░░░░░░░░░░░░░  
+ │  │  │  │  ├─ 📄 Simmons, Dan - Hyperion 01 - Hyperion -- Simmons, Dan [Simmons, Dan]    │  
+ │  │  │  │  ├─ 📄 Simmons, Dan - Hyperion 02 - The Fall of Hyperion -- Simmons, Dan [Si   │
+ │  │  │  │  ├─ 📄 Simmons, Dan - Hyperion 03 - Endymion -- Simmons, Dan [Simmons, Dan]    │ 
+ │  │  │  │  ├─ 📄 Simmons, Dan - Hyperion 04 - The Rise of Endymion -- Simmons, Dan [Si   │ 
+ │  │  │  │  ╰─ 📄 The Zones of Thought Series_ (A Fire Upon the Deep, the -- Vernor Vin   │ 
+ │  │  │  ├─ 📂 02 Ready to Convert                                                        │ 
+ │  │  │  │  ├─ 📄 .DS_Store                                                               │ 
+ │  │  │  │  ├─ 📄 [Asian Saga_ Chronological Order 01] • Shogun -- Clavell, James -- 19   │ 
+ │  │  │  │  ├─ 📄 A Clockwork Orange _ Restored Edition -- Anthony Burgess, 2013 ─────────╯ 
+ │  │  │  │  ├─ 📁 John Le Carré                                                         
+ │  │  │  │  ├─ 📄 The Broken Earth (Book 1-3) -- N_ K_ Jemisin -- 2025 -- Orbit -- 610b 
+ │  │  │  │  ├─ 📄 The Brothers Karamazov -- Dostoyevsky, Fyodor -- 2009 -- Sony CONNECT 
+ │  │  │  │  ├─ 📄 The Count of Monte Cristo -- Dumas, Alexandre -- 1997 -- f6a9b9325895 
+ │  │  │  │  ├─ 📄 The Hunt for Red October -- Clancy, Tom -- Jack Ryan 4, 2010 -- c25fd 
+ │  │  │  │  ├─ 📄 The Prince of Tides _ A Novel -- Pat Conroy -- New York, 2010 -- Open 
+ │  │  │  │  ├─ 📄 The Tunnel -- William H_ Gass -- 1st Dalkey Archive ed, Normal, IL, 1 
+ │  │  │  │  ╰─ 📄 The tunnel -- William H_ Gass -- A Borzoi book, 2_ print, New York, 1 
+ │  │  │  ├─ 📁 03 Converted                                                             
+ │  │  │  ├─ 📁 .claude                                                                  
+ │  │  │  ├─ 📄 .DS_Store                                                                
+ │  │  │  ├─ 📁 Covers                                                                   
+ │  │  │  ├─ 📁 Examples                                                                 
+ │  │  │  ├─ 📄 wildbow - Seek.jpg                                                       
+ │  │  │  ╰─ 📄 Wildbow Book Covers.afdesign                                             
+ │  │  ├─ 📁 Childrens                                                                   
+ │  │  ├─ 📁 Comics                                                                      
+ │  │  ├─ 📄 deck.pdf                                                                    
+ │  │  ├─ 📄 eat-purely.svg                                                              
+ │  │  ├─ 📄 eat-purely.webp                                                             
+ │  │  ├─ 📁 Ebay                                                                        
+ │  │  ├─ 📄 HandBrake-1.11.2.dmg                                                         
+ │  │  ├─ 📁 Ideo                                                                         
+ │  │  ├─ 📄 IMG_4102-1.png                                                               
+ │  │  ├─ 📄 IMG_4102-4x6.png                                                             
+ │  │  ├─ 📄 IMG_4102.png                                                                 
+ │  │  ├─ 📄 IPHONE-6-BW-OC-2.svg                                                         
+ │  │  ├─ 📄 meals.txt                                                                    
+ │  │  ├─ 📁 Mediasmith                                                                   
+ │  │  ├─ 📁 MTG Proxy                                                                    
+ │  │  ├─ 📄 openclipart-vectors-iphone-160307.svg                                        
+ │  │  ├─ 📁 Progs                                                                        
+ │  │  ├─ 📁 Transmission                                                                 
+ │  │  ╰─ 📄 Vending Machine Letter.jpeg                                                  
+ │  ├─ 📁 FontBase                                                                        
+ │  ├─ 📂 go                                                                              
+ │  │  ╰─ 📁 pkg                                                                          
+ │  ├─ 📁 Library                                                                         
+ ▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂                                                           
+
+ ░░░░░░░░░░░ · ░░░░░░░░ · ░░░░░░░░░░ · ░░░░░░░░░░░░░░░░░ · ░░░░░░░░░░ · ░░░░░░░░░░░░░░░░░░░░░░ · ░░░░░░░░░░░░░░░░ · ░░░░░░░                                                                                   𜵎𜵎▖𜷇🯦𜷇▌𜵅𜷃𜵈𜷓𜴀𜵎𜵎▖𜵅𜶍▐𜶓
+═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+══ Alternate Content Example ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+ ╭──────────────────────────────────────────────────────────────────────────────────────╮                                                                                                                                                      
+ │  ^/   /Users/nick/Downloads/01-book-1.epub                                           │  ╭──▒▒▒▒▒▒▒▒▒▒     A Clockwork Orange _ Restored Edition -- Anthony Burgess, 2013
+ ╰──────────────────────────────────────────────────────────────────────────────────────╯  │                                                                                                                                                     
+    ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒                                                                    ├──▒▒▒▒▒▒▒        A Clockwork Orange
+    ├─▒▒▒▒▒▒▒▒▒▒                                                                           ├──▒▒▒▒▒▒▒▒       Anthony Burgess
+    ├─▒▒▒▒▒▒▒▒▒                                                                            ├──▒▒▒▒▒▒▒▒▒▒▒▒▒  -
+    ├─▒▒▒▒▒▒▒▒▒▒▒▒                                                                         ├──▒▒▒▒▒▒▒▒       -
+    ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒                                                                       ├──▒▒▒▒▒▒▒▒▒▒▒▒   -
+    ╰─▒▒▒▒▒▒▒▒▒▒▒▒▒▒                                                                       ├──▒▒▒▒▒▒▒▒▒▒▒    Penguin Books Ltd
+       ├─███████████████████───────────────────────────────────────────────────────────────┼──▒▒▒▒▒▒▒▒▒▒     en
+       ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒                   ├──▒▒▒▒▒▒         2013-12-05
+       ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒                                                            │
+       ├─▒▒▒▒▒▒▒▒▒▒▒▒                                                                      ├──▒▒▒▒▒▒▒        􎻮̅̅٘􎻮̅̍٘􎻮̅̎٘􎻮̅̐٘􎻮̅̒٘􎻮̅̽٘􎻮̅̾٘􎻮̅̿٘􎻮̅͆٘􎻮
+       ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒                                                    │                 􎻮̍̅٘􎻮̍̍٘􎻮̍̎٘􎻮̍̐٘􎻮̍̒٘􎻮̍̽٘􎻮̍̾٘􎻮̍̿٘􎻮̍͆٘􎻮
+       ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒                                                                    │                 􎻮̍̅٘􎻮̍̍٘􎻮̍̎٘􎻮̍̐٘􎻮̍̒٘􎻮̍̽٘􎻮̍̾٘􎻮̍̿٘􎻮̍͆٘􎻮
+       ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒                                                                   │                 􎻮̍̅٘􎻮̍̍٘􎻮̍̎٘􎻮̍̐٘􎻮̍̒٘􎻮̍̽٘􎻮̍̾٘􎻮̍̿٘􎻮̍͆٘􎻮
+       ╰─▒▒▒▒▒▒▒▒▒▒                                                                        │                 􎻮̍̅٘􎻮̍̍٘􎻮̍̎٘􎻮̍̐٘􎻮̍̒٘􎻮̍̽٘􎻮̍̾٘􎻮̍̿٘􎻮̍͆٘􎻮
+                                                                                           │                 􎻮̍̅٘􎻮̍̍٘􎻮̍̎٘􎻮̍̐٘􎻮̍̒٘􎻮̍̽٘􎻮̍̾٘􎻮̍̿٘􎻮̍͆٘􎻮
+                                                                                           │                 􎻮̍̅٘􎻮̍̍٘􎻮̍̎٘􎻮̍̐٘􎻮̍̒٘􎻮̍̽٘􎻮̍̾٘􎻮̍̿٘􎻮̍͆٘􎻮
+                                                                                           │                 􎻮̍̅٘􎻮̍̍٘􎻮̍̎٘􎻮̍̐٘􎻮̍̒٘􎻮̍̽٘􎻮̍̾٘􎻮̍̿٘􎻮̍͆٘􎻮
+                                                                                           │                 􎻮̍̅٘􎻮̍̍٘􎻮̍̎٘􎻮̍̐٘􎻮̍̒٘􎻮̍̽٘􎻮̍̾٘􎻮̍̿٘􎻮̍͆٘􎻮
+                                                                                           │                 􎻮̍̅٘􎻮̍̍٘􎻮̍̎٘􎻮̍̐٘􎻮̍̒٘􎻮̍̽٘􎻮̍̾٘􎻮̍̿٘􎻮̍͆٘􎻮
+                                                                                           │                 􎻮̍̅٘􎻮̍̍٘􎻮̍̎٘􎻮̍̐٘􎻮̍̒٘􎻮̍̽٘􎻮̍̾٘􎻮̍̿٘􎻮̍͆٘􎻮
+                                                                                           │                 􎻮̍̅٘􎻮̍̍٘􎻮̍̎٘􎻮̍̐٘􎻮̍̒٘􎻮̍̽٘􎻮̍̾٘􎻮̍̿٘􎻮̍͆٘􎻮
+                                                                                           │                 􎻮̍̅٘􎻮̍̍٘􎻮̍̎٘􎻮̍̐٘􎻮̍̒٘􎻮̍̽٘􎻮̍̾٘􎻮̍̿٘􎻮̍͆٘􎻮
+                                                                                           │                 􎻮̍̅٘􎻮̍̍٘􎻮̍̎٘􎻮̍̐٘􎻮̍̒٘􎻮̍̽٘􎻮̍̾٘􎻮̍̿٘􎻮̍͆٘􎻮
+                                                                                           │                 􎻮̍̅٘􎻮̍̍٘􎻮̍̎٘􎻮̍̐٘􎻮̍̒٘􎻮̍̽٘􎻮̍̾٘􎻮̍̿٘􎻮̍͆٘􎻮
+                                                                                           │                 􎻮̍̅٘􎻮̍̍٘􎻮̍̎٘􎻮̍̐٘􎻮̍̒٘􎻮̍̽٘􎻮̍̾٘􎻮̍̿٘􎻮̍͆٘􎻮
+                                                                                           │                 521x850
+                                                                                           │                                                                                                                                                       
+                                                                                           ├──▒▒▒▒▒▒▒▒▒──▒▒▒▒▒▒▒▒──▒▒▒▒▒▒▒▒▒──▒▒▒▒▒▒▒▒▒▒▒▒▒
+                                                                                           │                                                                                                                                                      
+                                                                                           ╰──▒▒▒▒▒▒▒▒▒▒▒▒▒▒──▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒──▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒──▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒──▒▒▒▒▒▒▒▒▒▒▒▒▒▒──▒▒▒▒▒▒▒▒▒▒──▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒──▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒  
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ ▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂                                                           
+
+ ↓↑ navigate · → expand · ← collapse · ^← collapse level · ^r refresh · ^. toggle hidden files · ^n new directory · ^q quit                                                                                   𜵎𜵎▖𜷇🯦𜷇▌𜵅𜷃𜵈𜷓𜴀𜵎𜵎▖𜵅𜶍▐𜶓
+═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+══ Button Bar Overflow ════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+ ╭──────────────────────────────────────────────────────────────────────────────────────╮
+ │  ^/   /Users/nick/Downloads/Books/02 Ready to Convert/A Clockwork Orange _ Restore   │  ╭── filename      A Clockwork Orange _ Restored Edition -- Anthony Burgess, 2013
+ ╰──────────────────────────────────────────────────────────────────────────────────────╯  │                                                                                                                                                      
+ │  ├─ 📁 Applications                                                                     ├── title         A Clockwork Orange                                                                                                                     
+ │  ├─ 📁 Books                                                                            ├── author        Anthony Burgess                                                                                                                        
+ │  ├─ 📁 code                                                                             ├── author sort   -                                                                                                                                      
+ │  ├─ 📁 Desktop                                                                          ├── series        -                                                                                                                                      
+ │  ├─ 📁 Documents                                                                        ├── series no.    -                                                                                                                                      
+ │  ├─ 📂 Downloads                                                                        ├── publisher     Penguin Books Ltd                                                                                                                      
+ │  │  ├─ 📄 01-book-1.epub                                                                ├── language      en                                                                                                                                     
+ │  │  ├─ 📄 2026-08-31---Jonathan-Jalbert---9300111043900015806926.pdf                    ├── date          2013-12-05                                                                                                                             
+ │  │  ├─ 📄 5179932805744.mp4                                                             │                                                                                                                                                        
+ │  │  ├─ 📁 .claude                                                                       ├── cover         􎻮̅̅٘􎻮̅̍٘􎻮̅̎٘􎻮̅̐٘􎻮̅̒٘􎻮̅̽٘􎻮̅̾٘􎻮̅̿٘􎻮̅͆٘􎻮                                                                                                               
+ │  │  ├─ 📄 .com.brave.Browser.QFarYa                                                     │                 􎻮̍̅٘􎻮̍̍٘􎻮̍̎٘􎻮̍̐٘􎻮̍̒٘􎻮̍̽٘􎻮̍̾٘􎻮̍̿٘􎻮̍͆٘􎻮                                                                                                               
+ │  │  ├─ 📄 .DS_Store                                                                     │                 􎻮̎̅٘􎻮̎̍٘􎻮̎̎٘􎻮̎̐٘􎻮̎̒٘􎻮̎̽٘􎻮̎̾٘􎻮̎̿٘􎻮̎͆٘􎻮                                                                                                               
+ │  │  ├─ 📄 .localized                                                                    │                 􎻮̐̅٘􎻮̐̍٘􎻮̐̎٘􎻮̐̐٘􎻮̐̒٘􎻮̐̽٘􎻮̐̾٘􎻮̐̿٘􎻮̐͆٘􎻮                                                                                                               
+ │  │  ├─ 📂 Books                                                                         │                 􎻮̒̅٘􎻮̒̍٘􎻮̒̎٘􎻮̒̐٘􎻮̒̒٘􎻮̒̽٘􎻮̒̾٘􎻮̒̿٘􎻮̒͆٘􎻮                                                                                                               
+ │  │  │  ├─ 📂 01 Downloaded                                                              │                 􎻮̽̅٘􎻮̽̍٘􎻮̽̎٘􎻮̽̐٘􎻮̽̒٘􎻮̽̽٘􎻮̽̾٘􎻮̽̿٘􎻮̽͆٘􎻮                                                                                                               
+ │  │  │  │  ├─ 📄 .DS_Store                                                               │                 􎻮̾̅٘􎻮̾̍٘􎻮̾̎٘􎻮̾̐٘􎻮̾̒٘􎻮̾̽٘􎻮̾̾٘􎻮̾̿٘􎻮̾͆٘􎻮                                                                                                               
+ │  │  │  │  ├─ 📄 A Fire Upon the Deep -- Vernor Vinge -- ePub r1_2, 1992 -- ePubLibre    │                 􎻮̿̅٘􎻮̿̍٘􎻮̿̎٘􎻮̿̐٘􎻮̿̒٘􎻮̿̽٘􎻮̿̾٘􎻮̿̿٘􎻮̿͆٘􎻮                                                                                                               
+ │  │  │  │  ├─ 📁 Edge Chronicles 2                                                       │                 􎻮͆̅٘􎻮͆̍٘􎻮͆̎٘􎻮͆̐٘􎻮͆̒٘􎻮͆̽٘􎻮͆̾٘􎻮͆̿٘􎻮͆͆٘􎻮                                                                                                               
+ │  │  │  │  ├─ 📄 Hyperion Cantos [02] - The Fall of Hyperion -- Simmons, Dan -- 1990 -   │                 􎻮͊̅٘􎻮͊̍٘􎻮͊̎٘􎻮͊̐٘􎻮͊̒٘􎻮͊̽٘􎻮͊̾٘􎻮͊̿٘􎻮͊͆٘􎻮                                                                                                               
+ │  │  │  │  ├─ 📄 Hyperion Cantos [04] - Rise of Endymion -- Simmons, Dan -- Hyperion C   │                 􎻮͋̅٘􎻮͋̍٘􎻮͋̎٘􎻮͋̐٘􎻮͋̒٘􎻮͋̽٘􎻮͋̾٘􎻮͋̿٘􎻮͋͆٘􎻮                                                                                                               
+ │  │  │  │  ├─ 📄 John le Carré Novels Volume 1.epub                                      │                 􎻮͌̅٘􎻮͌̍٘􎻮͌̎٘􎻮͌̐٘􎻮͌̒٘􎻮͌̽٘􎻮͌̾٘􎻮͌̿٘􎻮͌͆٘􎻮                                                                                                               
+ │  │  │  │  ├─ 📄 john lecarre The Karla Trilogy.epub                                     │                 􎻮͐̅٘􎻮͐̍٘􎻮͐̎٘􎻮͐̐٘􎻮͐̒٘􎻮͐̽٘􎻮͐̾٘􎻮͐̿٘􎻮͐͆٘􎻮                                                                                                               
+ │  │  │  │  ├─ 📄 Locke Lamora and the Bottled Serpent_ Part 1 [Grimdark -- Scott Lynch   │                 􎻮͑̅٘􎻮͑̍٘􎻮͑̎٘􎻮͑̐٘􎻮͑̒٘􎻮͑̽٘􎻮͑̾٘􎻮͑̿٘􎻮͑͆٘􎻮                                                                                                               
+ │  │  │  │  ├─ 📄 Locke Lamora and the Bottled Serpent_ Part 2 [Grimdark -- Scott Lynch   │                 􎻮͒̅٘􎻮͒̍٘􎻮͒̎٘􎻮͒̐٘􎻮͒̒٘􎻮͒̽٘􎻮͒̾٘􎻮͒̿٘􎻮͒͆٘􎻮                                                                                                               
+ │  │  │  │  ├─ 📂 Mark Danielewski (18190)                                                │                 􎻮͗̅٘􎻮͗̍٘􎻮͗̎٘􎻮͗̐٘􎻮͗̒٘􎻮͗̽٘􎻮͗̾٘􎻮͗̿٘􎻮͗͆٘􎻮                                                                                                               
+ │  │  │  │  │  ├─ 📄 cover.jpg                                                            │                 521 × 850                                                                                                                                           
+ │  │  │  │  │  ├─ 📄 Mark Danielewski - House of Leaves.cbz                               │                                                                                                                                                       
+ │  │  │  │  │  ╰─ 📄 metadata.opf                                                         ├── ^o Open ── ^x Cut ── ^y Copy ── ^DEL Delete
+ │  │  │  │  ├─ 📄 No one belongs here more than you _ stories -- July, Miranda -- First   │                                                                                                                                                      
+ │  │  │  │  ├─ 📁 Omnibuses                                                               ├── ^1 Folderize ── ^2 Split Omnibus ── ^3 Convert to MOBI ── ^4 Convert to AZW3 ── ^5 Write OPF ── ^6 Clean 
+ │  │  │  │  ├─ 📄 Simmons, Dan - Hyperion 01 - Hyperion -- Simmons, Dan [Simmons, Dan]    │  
+ │  │  │  │  ├─ 📄 Simmons, Dan - Hyperion 02 - The Fall of Hyperion -- Simmons, Dan [Si   │── ^7 Upload Cover ── ^8 Extract Cover  
+ │  │  │  │  ├─ 📄 Simmons, Dan - Hyperion 03 - Endymion -- Simmons, Dan [Simmons, Dan]    │ 
+ │  │  │  │  ├─ 📄 Simmons, Dan - Hyperion 04 - The Rise of Endymion -- Simmons, Dan [Si   │ 
+ │  │  │  │  ╰─ 📄 The Zones of Thought Series_ (A Fire Upon the Deep, the -- Vernor Vin   │ 
+ │  │  │  ├─ 📂 02 Ready to Convert                                                        │ 
+ │  │  │  │  ├─ 📄 .DS_Store                                                               │ 
+ │  │  │  │  ├─ 📄 [Asian Saga_ Chronological Order 01] • Shogun -- Clavell, James -- 19   │ 
+ │  │  │  │  ├─ 📄 A Clockwork Orange _ Restored Edition -- Anthony Burgess, 2013 ─────────╯ 
+ │  │  │  │  ├─ 📁 John Le Carré                                                         
+ │  │  │  │  ├─ 📄 The Broken Earth (Book 1-3) -- N_ K_ Jemisin -- 2025 -- Orbit -- 610b 
+ │  │  │  │  ├─ 📄 The Brothers Karamazov -- Dostoyevsky, Fyodor -- 2009 -- Sony CONNECT 
+ │  │  │  │  ├─ 📄 The Count of Monte Cristo -- Dumas, Alexandre -- 1997 -- f6a9b9325895 
+ │  │  │  │  ├─ 📄 The Hunt for Red October -- Clancy, Tom -- Jack Ryan 4, 2010 -- c25fd 
+ │  │  │  │  ├─ 📄 The Prince of Tides _ A Novel -- Pat Conroy -- New York, 2010 -- Open 
+ │  │  │  │  ├─ 📄 The Tunnel -- William H_ Gass -- 1st Dalkey Archive ed, Normal, IL, 1 
+ │  │  │  │  ╰─ 📄 The tunnel -- William H_ Gass -- A Borzoi book, 2_ print, New York, 1 
+ │  │  │  ├─ 📁 03 Converted                                                             
+ │  │  │  ├─ 📁 .claude                                                                  
+ │  │  │  ├─ 📄 .DS_Store                                                                
+ │  │  │  ├─ 📁 Covers                                                                   
+ │  │  │  ├─ 📁 Examples                                                                 
+ │  │  │  ├─ 📄 wildbow - Seek.jpg                                                       
+ │  │  │  ╰─ 📄 Wildbow Book Covers.afdesign                                             
+ │  │  ├─ 📁 Childrens                                                                   
+ │  │  ├─ 📁 Comics                                                                      
+ │  │  ├─ 📄 deck.pdf                                                                    
+ │  │  ├─ 📄 eat-purely.svg                                                              
+ │  │  ├─ 📄 eat-purely.webp                                                             
+ │  │  ├─ 📁 Ebay                                                                        
+ │  │  ├─ 📄 HandBrake-1.11.2.dmg                                                         
+ │  │  ├─ 📁 Ideo                                                                         
+ │  │  ├─ 📄 IMG_4102-1.png                                                               
+ │  │  ├─ 📄 IMG_4102-4x6.png                                                             
+ │  │  ├─ 📄 IMG_4102.png                                                                 
+ │  │  ├─ 📄 IPHONE-6-BW-OC-2.svg                                                         
+ │  │  ├─ 📄 meals.txt                                                                    
+ │  │  ├─ 📁 Mediasmith                                                                   
+ │  │  ├─ 📁 MTG Proxy                                                                    
+ │  │  ├─ 📄 openclipart-vectors-iphone-160307.svg                                        
+ │  │  ├─ 📁 Progs                                                                        
+ │  │  ├─ 📁 Transmission                                                                 
+ │  │  ╰─ 📄 Vending Machine Letter.jpeg                                                  
+ │  ├─ 📁 FontBase                                                                        
+ │  ├─ 📂 go                                                                              
+ │  │  ╰─ 📁 pkg                                                                          
+ │  ├─ 📁 Library                                                                         
+ ▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂                                                           
+
+ ↓↑ navigate · → expand · ← collapse · ^← collapse level · ^r refresh · ^. toggle hidden files · ^n new directory · ^q quit                                                   𜵎𜵎▖𜷇🯦𜷇▌𜵅𜷃𜵈𜷓𜴀𜵎𜵎▖𜵅𜶍▐𜶓
+═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+══ Input Field Selected, BG ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+ ╭──────────────────────────────────────────────────────────────────────────────────────╮                                                                                                                                                      
+ │  ^/   /Users/nick/Downloads/Books/02 Ready to Convert/A Clockwork Orange _ Restore   │  ╭──▒▒▒▒▒▒▒▒▒▒     A Clockwork Orange _ Restored Edition -- Anthony Burgess, 2013
+ ╰──────────────────────────────────────────────────────────────────────────────────────╯  │                                                                                                                                                     
+ │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒                                                                    ├──▒▒▒▒▒▒▒        A Clockwork Orange
+ │  ├─▒▒▒▒▒▒▒▒▒▒                                                                           ╭──████████       Anthony Burgess
+ │  ├─▒▒▒▒▒▒▒▒▒                                                                            │──▒▒▒▒▒▒▒▒▒▒▒▒▒  -
+ │  ├─▒▒▒▒▒▒▒▒▒▒▒▒                                                                         │──▒▒▒▒▒▒▒▒       -
+ │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒                                                                       │──▒▒▒▒▒▒▒▒▒▒▒▒   -
+ │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒                                                                       │──▒▒▒▒▒▒▒▒▒▒▒    Penguin Books Ltd
+ │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒                                                               │──▒▒▒▒▒▒▒▒▒▒     en
+ │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒                   │──▒▒▒▒▒▒         2013-12-05
+ │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒                                                            │
+ │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒                                                                      │──▒▒▒▒▒▒▒        􎻮̅̅٘􎻮̅̍٘􎻮̅̎٘􎻮̅̐٘􎻮̅̒٘􎻮̅̽٘􎻮̅̾٘􎻮̅̿٘􎻮̅͆٘􎻮
+ │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒                                                    │                 􎻮̍̅٘􎻮̍̍٘􎻮̍̎٘􎻮̍̐٘􎻮̍̒٘􎻮̍̽٘􎻮̍̾٘􎻮̍̿٘􎻮̍͆٘􎻮
+ │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒                                                                    │                 􎻮̍̅٘􎻮̍̍٘􎻮̍̎٘􎻮̍̐٘􎻮̍̒٘􎻮̍̽٘􎻮̍̾٘􎻮̍̿٘􎻮̍͆٘􎻮
+ │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒                                                                   │                 􎻮̍̅٘􎻮̍̍٘􎻮̍̎٘􎻮̍̐٘􎻮̍̒٘􎻮̍̽٘􎻮̍̾٘􎻮̍̿٘􎻮̍͆٘􎻮
+ │  │  ├─▒▒▒▒▒▒▒▒▒▒                                                                        │                 􎻮̍̅٘􎻮̍̍٘􎻮̍̎٘􎻮̍̐٘􎻮̍̒٘􎻮̍̽٘􎻮̍̾٘􎻮̍̿٘􎻮̍͆٘􎻮
+ │  │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒                                                             │                 􎻮̍̅٘􎻮̍̍٘􎻮̍̎٘􎻮̍̐٘􎻮̍̒٘􎻮̍̽٘􎻮̍̾٘􎻮̍̿٘􎻮̍͆٘􎻮
+ │  │  │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒                                                              │                 􎻮̍̅٘􎻮̍̍٘􎻮̍̎٘􎻮̍̐٘􎻮̍̒٘􎻮̍̽٘􎻮̍̾٘􎻮̍̿٘􎻮̍͆٘􎻮
+ │  │  │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒   │                 􎻮̍̅٘􎻮̍̍٘􎻮̍̎٘􎻮̍̐٘􎻮̍̒٘􎻮̍̽٘􎻮̍̾٘􎻮̍̿٘􎻮̍͆٘􎻮
+ │  │  │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒                                                      │                 􎻮̍̅٘􎻮̍̍٘􎻮̍̎٘􎻮̍̐٘􎻮̍̒٘􎻮̍̽٘􎻮̍̾٘􎻮̍̿٘􎻮̍͆٘􎻮
+ │  │  │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒  │                 􎻮̍̅٘􎻮̍̍٘􎻮̍̎٘􎻮̍̐٘􎻮̍̒٘􎻮̍̽٘􎻮̍̾٘􎻮̍̿٘􎻮̍͆٘􎻮
+ │  │  │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒  │                 􎻮̍̅٘􎻮̍̍٘􎻮̍̎٘􎻮̍̐٘􎻮̍̒٘􎻮̍̽٘􎻮̍̾٘􎻮̍̿٘􎻮̍͆٘􎻮
+ │  │  │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒                                    │                 􎻮̍̅٘􎻮̍̍٘􎻮̍̎٘􎻮̍̐٘􎻮̍̒٘􎻮̍̽٘􎻮̍̾٘􎻮̍̿٘􎻮̍͆٘􎻮
+ │  │  │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒                                    │                 􎻮̍̅٘􎻮̍̍٘􎻮̍̎٘􎻮̍̐٘􎻮̍̒٘􎻮̍̽٘􎻮̍̾٘􎻮̍̿٘􎻮̍͆٘􎻮
+ │  │  │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒  │                 􎻮̍̅٘􎻮̍̍٘􎻮̍̎٘􎻮̍̐٘􎻮̍̒٘􎻮̍̽٘􎻮̍̾٘􎻮̍̿٘􎻮̍͆٘􎻮
+ │  │  │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒  │                 􎻮̍̅٘􎻮̍̍٘􎻮̍̎٘􎻮̍̐٘􎻮̍̒٘􎻮̍̽٘􎻮̍̾٘􎻮̍̿٘􎻮̍͆٘􎻮
+ │  │  │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒                                               │                 􎻮̍̅٘􎻮̍̍٘􎻮̍̎٘􎻮̍̐٘􎻮̍̒٘􎻮̍̽٘􎻮̍̾٘􎻮̍̿٘􎻮̍͆٘􎻮
+ │  │  │  │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒                                                           │                 521x850
+ │  │  │  │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒                              │                                                                                                                                                       
+ │  │  │  │  │  ╰─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒                                                        │──▒▒▒▒▒▒▒▒▒▒
+ │  │  │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒  │                                                                                                                                                      
+ │  │  │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒                                                              │──▒▒▒▒▒▒▒▒▒──▒▒▒▒▒▒▒▒──▒▒▒▒▒▒▒▒▒──▒▒▒▒▒▒▒▒▒▒▒▒▒
+ │  │  │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒   │  
+ │  │  │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒  │──▒▒▒▒▒▒▒▒▒▒▒▒▒▒──▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒──▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒──▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒──▒▒▒▒▒▒▒▒▒▒▒▒▒▒──▒▒▒▒▒▒▒▒▒▒──▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒──▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒  
+ │  │  │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒   │
+ │  │  │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒  │ 
+ │  │  │  │  ╰─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒  │ 
+ │  │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒                                                       │ 
+ │  │  │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒                                                              │ 
+ │  │  │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒  │ 
+ │  │  │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒─────────╯ 
+ │  │  │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒                                                        
+ │  │  │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒
+ │  │  │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒
+ │  │  │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒
+ │  │  │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒
+ │  │  │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒
+ │  │  │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒
+ │  │  │  │  ╰─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒
+ │  │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒                                                            
+ │  │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒                                                                 
+ │  │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒                                                               
+ │  │  │  ├─▒▒▒▒▒▒▒▒▒▒▒                                                                  
+ │  │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒                                                                
+ │  │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒                                                      
+ │  │  │  ╰─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒                                            
+ │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒                                                                  
+ │  │  ├─▒▒▒▒▒▒▒▒▒▒▒                                                                     
+ │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒                                                                   
+ │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒                                                             
+ │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒                                                            
+ │  │  ├─▒▒▒▒▒▒▒▒▒                                                                       
+ │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒                                                        
+ │  │  ├─▒▒▒▒▒▒▒▒▒                                                                        
+ │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒                                                              
+ │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒                                                            
+ │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒                                                                
+ │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒                                                        
+ │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒                                                                   
+ │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒                                                                  
+ │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒                                                                   
+ │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒                                       
+ │  │  ├─▒▒▒▒▒▒▒▒▒▒                                                                       
+ │  │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒                                                                
+ │  │  ╰─▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒                                                 
+ │  ├─▒▒▒▒▒▒▒▒▒▒▒▒▒                                                                       
+ │  ├─▒▒▒▒▒▒▒                                                                             
+ │  │  ╰─▒▒▒▒▒▒▒▒                                                                         
+ │  ├─▒▒▒▒▒▒▒▒▒▒▒▒                                                                        
+ ▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂                                                           
+
+ ↓↑ navigate · → expand · ← collapse · ^← collapse level · ^r refresh · ^. toggle hidden files · ^n new directory · ^q quit                                                                                   𜵎𜵎▖𜷇🯦𜷇▌𜵅𜷃𜵈𜷓𜴀𜵎𜵎▖𜵅𜶍▐𜶓
+═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+══ Input Field Selected, FG ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+ ╭──────────────────────────────────────────────────────────────────────────────────────╮
+ │  ^/   /Users/nick/Downloads/Books/02 Ready to Convert/A Clockwork Orange _ Restore   │  ╭── filename      A Clockwork Orange _ Restored Edition -- Anthony Burgess, 2013
+ ╰──────────────────────────────────────────────────────────────────────────────────────╯  │                                                                                                                                                      
+ │  ├─ 📁 Applications                                                                     ├── title         A Clockwork Orange                                                                                                                     
+ │  ├─ 📁 Books                                                                            ╭── author        Anthony Burgess                                                                                                                        
+ │  ├─ 📁 code                                                                             │── author sort   -                                                                                                                                      
+ │  ├─ 📁 Desktop                                                                          │── series        -                                                                                                                                      
+ │  ├─ 📁 Documents                                                                        │── series no.    -                                                                                                                                      
+ │  ├─ 📂 Downloads                                                                        │── publisher     Penguin Books Ltd                                                                                                                      
+ │  │  ├─ 📄 01-book-1.epub                                                                │── language      en                                                                                                                                     
+ │  │  ├─ 📄 2026-08-31---Jonathan-Jalbert---9300111043900015806926.pdf                    │── date          2013-12-05                                                                                                                             
+ │  │  ├─ 📄 5179932805744.mp4                                                             │                                                                                                                                                        
+ │  │  ├─ 📁 .claude                                                                       │── cover         􎻮̅̅٘􎻮̅̍٘􎻮̅̎٘􎻮̅̐٘􎻮̅̒٘􎻮̅̽٘􎻮̅̾٘􎻮̅̿٘􎻮̅͆٘􎻮                                                                                                               
+ │  │  ├─ 📄 .com.brave.Browser.QFarYa                                                     │                 􎻮̍̅٘􎻮̍̍٘􎻮̍̎٘􎻮̍̐٘􎻮̍̒٘􎻮̍̽٘􎻮̍̾٘􎻮̍̿٘􎻮̍͆٘􎻮                                                                                                               
+ │  │  ├─ 📄 .DS_Store                                                                     │                 􎻮̎̅٘􎻮̎̍٘􎻮̎̎٘􎻮̎̐٘􎻮̎̒٘􎻮̎̽٘􎻮̎̾٘􎻮̎̿٘􎻮̎͆٘􎻮                                                                                                               
+ │  │  ├─ 📄 .localized                                                                    │                 􎻮̐̅٘􎻮̐̍٘􎻮̐̎٘􎻮̐̐٘􎻮̐̒٘􎻮̐̽٘􎻮̐̾٘􎻮̐̿٘􎻮̐͆٘􎻮                                                                                                               
+ │  │  ├─ 📂 Books                                                                         │                 􎻮̒̅٘􎻮̒̍٘􎻮̒̎٘􎻮̒̐٘􎻮̒̒٘􎻮̒̽٘􎻮̒̾٘􎻮̒̿٘􎻮̒͆٘􎻮                                                                                                               
+ │  │  │  ├─ 📂 01 Downloaded                                                              │                 􎻮̽̅٘􎻮̽̍٘􎻮̽̎٘􎻮̽̐٘􎻮̽̒٘􎻮̽̽٘􎻮̽̾٘􎻮̽̿٘􎻮̽͆٘􎻮                                                                                                               
+ │  │  │  │  ├─ 📄 .DS_Store                                                               │                 􎻮̾̅٘􎻮̾̍٘􎻮̾̎٘􎻮̾̐٘􎻮̾̒٘􎻮̾̽٘􎻮̾̾٘􎻮̾̿٘􎻮̾͆٘􎻮                                                                                                               
+ │  │  │  │  ├─ 📄 A Fire Upon the Deep -- Vernor Vinge -- ePub r1_2, 1992 -- ePubLibre    │                 􎻮̿̅٘􎻮̿̍٘􎻮̿̎٘􎻮̿̐٘􎻮̿̒٘􎻮̿̽٘􎻮̿̾٘􎻮̿̿٘􎻮̿͆٘􎻮                                                                                                               
+ │  │  │  │  ├─ 📁 Edge Chronicles 2                                                       │                 􎻮͆̅٘􎻮͆̍٘􎻮͆̎٘􎻮͆̐٘􎻮͆̒٘􎻮͆̽٘􎻮͆̾٘􎻮͆̿٘􎻮͆͆٘􎻮                                                                                                               
+ │  │  │  │  ├─ 📄 Hyperion Cantos [02] - The Fall of Hyperion -- Simmons, Dan -- 1990 -   │                 􎻮͊̅٘􎻮͊̍٘􎻮͊̎٘􎻮͊̐٘􎻮͊̒٘􎻮͊̽٘􎻮͊̾٘􎻮͊̿٘􎻮͊͆٘􎻮                                                                                                               
+ │  │  │  │  ├─ 📄 Hyperion Cantos [04] - Rise of Endymion -- Simmons, Dan -- Hyperion C   │                 􎻮͋̅٘􎻮͋̍٘􎻮͋̎٘􎻮͋̐٘􎻮͋̒٘􎻮͋̽٘􎻮͋̾٘􎻮͋̿٘􎻮͋͆٘􎻮                                                                                                               
+ │  │  │  │  ├─ 📄 John le Carré Novels Volume 1.epub                                      │                 􎻮͌̅٘􎻮͌̍٘􎻮͌̎٘􎻮͌̐٘􎻮͌̒٘􎻮͌̽٘􎻮͌̾٘􎻮͌̿٘􎻮͌͆٘􎻮                                                                                                               
+ │  │  │  │  ├─ 📄 john lecarre The Karla Trilogy.epub                                     │                 􎻮͐̅٘􎻮͐̍٘􎻮͐̎٘􎻮͐̐٘􎻮͐̒٘􎻮͐̽٘􎻮͐̾٘􎻮͐̿٘􎻮͐͆٘􎻮                                                                                                               
+ │  │  │  │  ├─ 📄 Locke Lamora and the Bottled Serpent_ Part 1 [Grimdark -- Scott Lynch   │                 􎻮͑̅٘􎻮͑̍٘􎻮͑̎٘􎻮͑̐٘􎻮͑̒٘􎻮͑̽٘􎻮͑̾٘􎻮͑̿٘􎻮͑͆٘􎻮                                                                                                               
+ │  │  │  │  ├─ 📄 Locke Lamora and the Bottled Serpent_ Part 2 [Grimdark -- Scott Lynch   │                 􎻮͒̅٘􎻮͒̍٘􎻮͒̎٘􎻮͒̐٘􎻮͒̒٘􎻮͒̽٘􎻮͒̾٘􎻮͒̿٘􎻮͒͆٘􎻮                                                                                                               
+ │  │  │  │  ├─ 📂 Mark Danielewski (18190)                                                │                 􎻮͗̅٘􎻮͗̍٘􎻮͗̎٘􎻮͗̐٘􎻮͗̒٘􎻮͗̽٘􎻮͗̾٘􎻮͗̿٘􎻮͗͆٘􎻮                                                                                                               
+ │  │  │  │  │  ├─ 📄 cover.jpg                                                            │                 521 × 850                                                                                                                                           
+ │  │  │  │  │  ├─ 📄 Mark Danielewski - House of Leaves.cbz                               │                                                                                                                                                       
+ │  │  │  │  │  ╰─ 📄 metadata.opf                                                         │── ESC Exit
+ │  │  │  │  ├─ 📄 No one belongs here more than you _ stories -- July, Miranda -- First   │
+ │  │  │  │  ├─ 📁 Omnibuses                                                               │── ^o Open ── ^x Cut ── ^y Copy ── ^DEL Delete
+ │  │  │  │  ├─ 📄 Simmons, Dan - Hyperion 01 - Hyperion -- Simmons, Dan [Simmons, Dan]    │  
+ │  │  │  │  ├─ 📄 Simmons, Dan - Hyperion 02 - The Fall of Hyperion -- Simmons, Dan [Si   │── ^1 Folderize ── ^2 Split Omnibus ── ^3 Convert to MOBI ── ^4 Convert to AZW3 ── ^5 Write OPF ── ^6 Clean ── ^7 Upload Cover ── ^8 Extract Cover  
+ │  │  │  │  ├─ 📄 Simmons, Dan - Hyperion 03 - Endymion -- Simmons, Dan [Simmons, Dan]    │ 
+ │  │  │  │  ├─ 📄 Simmons, Dan - Hyperion 04 - The Rise of Endymion -- Simmons, Dan [Si   │ 
+ │  │  │  │  ╰─ 📄 The Zones of Thought Series_ (A Fire Upon the Deep, the -- Vernor Vin   │ 
+ │  │  │  ├─ 📂 02 Ready to Convert                                                        │ 
+ │  │  │  │  ├─ 📄 .DS_Store                                                               │ 
+ │  │  │  │  ├─ 📄 [Asian Saga_ Chronological Order 01] • Shogun -- Clavell, James -- 19   │ 
+ │  │  │  │  ├─ 📄 A Clockwork Orange _ Restored Edition -- Anthony Burgess, 2013 ─────────╯ 
+ │  │  │  │  ├─ 📁 John Le Carré                                                         
+ │  │  │  │  ├─ 📄 The Broken Earth (Book 1-3) -- N_ K_ Jemisin -- 2025 -- Orbit -- 610b 
+ │  │  │  │  ├─ 📄 The Brothers Karamazov -- Dostoyevsky, Fyodor -- 2009 -- Sony CONNECT 
+ │  │  │  │  ├─ 📄 The Count of Monte Cristo -- Dumas, Alexandre -- 1997 -- f6a9b9325895 
+ │  │  │  │  ├─ 📄 The Hunt for Red October -- Clancy, Tom -- Jack Ryan 4, 2010 -- c25fd 
+ │  │  │  │  ├─ 📄 The Prince of Tides _ A Novel -- Pat Conroy -- New York, 2010 -- Open 
+ │  │  │  │  ├─ 📄 The Tunnel -- William H_ Gass -- 1st Dalkey Archive ed, Normal, IL, 1 
+ │  │  │  │  ╰─ 📄 The tunnel -- William H_ Gass -- A Borzoi book, 2_ print, New York, 1 
+ │  │  │  ├─ 📁 03 Converted                                                             
+ │  │  │  ├─ 📁 .claude                                                                  
+ │  │  │  ├─ 📄 .DS_Store                                                                
+ │  │  │  ├─ 📁 Covers                                                                   
+ │  │  │  ├─ 📁 Examples                                                                 
+ │  │  │  ├─ 📄 wildbow - Seek.jpg                                                       
+ │  │  │  ╰─ 📄 Wildbow Book Covers.afdesign                                             
+ │  │  ├─ 📁 Childrens                                                                   
+ │  │  ├─ 📁 Comics                                                                      
+ │  │  ├─ 📄 deck.pdf                                                                    
+ │  │  ├─ 📄 eat-purely.svg                                                              
+ │  │  ├─ 📄 eat-purely.webp                                                             
+ │  │  ├─ 📁 Ebay                                                                        
+ │  │  ├─ 📄 HandBrake-1.11.2.dmg                                                         
+ │  │  ├─ 📁 Ideo                                                                         
+ │  │  ├─ 📄 IMG_4102-1.png                                                               
+ │  │  ├─ 📄 IMG_4102-4x6.png                                                             
+ │  │  ├─ 📄 IMG_4102.png                                                                 
+ │  │  ├─ 📄 IPHONE-6-BW-OC-2.svg                                                         
+ │  │  ├─ 📄 meals.txt                                                                    
+ │  │  ├─ 📁 Mediasmith                                                                   
+ │  │  ├─ 📁 MTG Proxy                                                                    
+ │  │  ├─ 📄 openclipart-vectors-iphone-160307.svg                                        
+ │  │  ├─ 📁 Progs                                                                        
+ │  │  ├─ 📁 Transmission                                                                 
+ │  │  ╰─ 📄 Vending Machine Letter.jpeg                                                  
+ │  ├─ 📁 FontBase                                                                        
+ │  ├─ 📂 go                                                                              
+ │  │  ╰─ 📁 pkg                                                                          
+ │  ├─ 📁 Library                                                                         
+ ▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂                                                           
+
+ ↓↑ navigate · → expand · ← collapse · ^← collapse level · ^r refresh · ^. toggle hidden files · ^n new directory · ^q quit                                                                                   𜵎𜵎▖𜷇🯦𜷇▌𜵅𜷃𜵈𜷓𜴀𜵎𜵎▖𜵅𜶍▐𜶓
+═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+══ Unsaved Changes ════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+ ╭──────────────────────────────────────────────────────────────────────────────────────╮
+ │  ^/   /Users/nick/Downloads/Books/02 Ready to Convert/A Clockwork Orange _ Restore   │  ╭── filename      A Clockwork Orange _ Restored Edition -- Anthony Burgess, 2013
+ ╰──────────────────────────────────────────────────────────────────────────────────────╯  │                                                                                                                                                      
+ │  ├─ 📁 Applications                                                                     ├── title         A Clockwork Orange                                                                                                                     
+ │  ├─ 📁 Books                                                                            ├── author        Anthony Burgess                                                                                                                        
+ │  ├─ 📁 code                                                                             ├── author sort   -                                                                                                                                      
+ │  ├─ 📁 Desktop                                                                          ├── series        -                                                                                                                                      
+ │  ├─ 📁 Documents                                                                        ├── series no.    -                                                                                                                                      
+ │  ├─ 📂 Downloads                                                                        ├── publisher     Penguin Books Ltd                                                                                                                      
+ │  │  ├─ 📄 01-book-1.epub                                                                ├── language      en                                                                                                                                     
+ │  │  ├─ 📄 2026-08-31---Jonathan-Jalbert---9300111043900015806926.pdf                    ├── date          2013-12-05                                                                                                                             
+ │  │  ├─ 📄 5179932805744.mp4                                                             │                                                                                                                                                        
+ │  │  ├─ 📁 .claude                                                                       ├── cover         􎻮̅̅٘􎻮̅̍٘􎻮̅̎٘􎻮̅̐٘􎻮̅̒٘􎻮̅̽٘􎻮̅̾٘􎻮̅̿٘􎻮̅͆٘􎻮                                                                                                               
+ │  │  ├─ 📄 .com.brave.Browser.QFarYa                                                     │                 􎻮̍̅٘􎻮̍̍٘􎻮̍̎٘􎻮̍̐٘􎻮̍̒٘􎻮̍̽٘􎻮̍̾٘􎻮̍̿٘􎻮̍͆٘􎻮                                                                                                               
+ │  │  ├─ 📄 .DS_Store                                                                     │                 􎻮̎̅٘􎻮̎̍٘􎻮̎̎٘􎻮̎̐٘􎻮̎̒٘􎻮̎̽٘􎻮̎̾٘􎻮̎̿٘􎻮̎͆٘􎻮                                                                                                               
+ │  │  ├─ 📄 .localized                                                                    │                 􎻮̐̅٘􎻮̐̍٘􎻮̐̎٘􎻮̐̐٘􎻮̐̒٘􎻮̐̽٘􎻮̐̾٘􎻮̐̿٘􎻮̐͆٘􎻮                                                                                                               
+ │  │  ├─ 📂 Books                                                                         │                 􎻮̒̅٘􎻮̒̍٘􎻮̒̎٘􎻮̒̐٘􎻮̒̒٘􎻮̒̽٘􎻮̒̾٘􎻮̒̿٘􎻮̒͆٘􎻮                                                                                                               
+ │  │  │  ├─ 📂 01 Downloaded                                                              │                 􎻮̽̅٘􎻮̽̍٘􎻮̽̎٘􎻮̽̐٘􎻮̽̒٘􎻮̽̽٘􎻮̽̾٘􎻮̽̿٘􎻮̽͆٘􎻮                                                                                                               
+ │  │  │  │  ├─ 📄 .DS_Store                                                               │                 􎻮̾̅٘􎻮̾̍٘􎻮̾̎٘􎻮̾̐٘􎻮̾̒٘􎻮̾̽٘􎻮̾̾٘􎻮̾̿٘􎻮̾͆٘􎻮                                                                                                               
+ │  │  │  │  ├─ 📄 A Fire Upon the Deep -- Vernor Vinge -- ePub r1_2, 1992 -- ePubLibre    │                 􎻮̿̅٘􎻮̿̍٘􎻮̿̎٘􎻮̿̐٘􎻮̿̒٘􎻮̿̽٘􎻮̿̾٘􎻮̿̿٘􎻮̿͆٘􎻮                                                                                                               
+ │  │  │  │  ├─ 📁 Edge Chronicles 2                                                       │                 􎻮͆̅٘􎻮͆̍٘􎻮͆̎٘􎻮͆̐٘􎻮͆̒٘􎻮͆̽٘􎻮͆̾٘􎻮͆̿٘􎻮͆͆٘􎻮                                                                                                               
+ │  │  │  │  ├─ 📄 Hyperion Cantos [02] - The Fall of Hyperion -- Simmons, Dan -- 1990 -   │                 􎻮͊̅٘􎻮͊̍٘􎻮͊̎٘􎻮͊̐٘􎻮͊̒٘􎻮͊̽٘􎻮͊̾٘􎻮͊̿٘􎻮͊͆٘􎻮                                                                                                               
+ │  │  │  │  ├─ 📄 Hyperion Cantos [04] - Rise of Endymion -- Simmons, Dan -- Hyperion C   │                 􎻮͋̅٘􎻮͋̍٘􎻮͋̎٘􎻮͋̐٘􎻮͋̒٘􎻮͋̽٘􎻮͋̾٘􎻮͋̿٘􎻮͋͆٘􎻮                                                                                                               
+ │  │  │  │  ├─ 📄 John le Carré Novels Volume 1.epub                                      │                 􎻮͌̅٘􎻮͌̍٘􎻮͌̎٘􎻮͌̐٘􎻮͌̒٘􎻮͌̽٘􎻮͌̾٘􎻮͌̿٘􎻮͌͆٘􎻮                                                                                                               
+ │  │  │  │  ├─ 📄 john lecarre The Karla Trilogy.epub                                     │                 􎻮͐̅٘􎻮͐̍٘􎻮͐̎٘􎻮͐̐٘􎻮͐̒٘􎻮͐̽٘􎻮͐̾٘􎻮͐̿٘􎻮͐͆٘􎻮                                                                                                               
+ │  │  │  │  ├─ 📄 Locke Lamora and the Bottled Serpent_ Part 1 [Grimdark -- Scott Lynch   │                 􎻮͑̅٘􎻮͑̍٘􎻮͑̎٘􎻮͑̐٘􎻮͑̒٘􎻮͑̽٘􎻮͑̾٘􎻮͑̿٘􎻮͑͆٘􎻮                                                                                                               
+ │  │  │  │  ├─ 📄 Locke Lamora and the Bottled Serpent_ Part 2 [Grimdark -- Scott Lynch   │                 􎻮͒̅٘􎻮͒̍٘􎻮͒̎٘􎻮͒̐٘􎻮͒̒٘􎻮͒̽٘􎻮͒̾٘􎻮͒̿٘􎻮͒͆٘􎻮                                                                                                               
+ │  │  │  │  ├─ 📂 Mark Danielewski (18190)                                                │                 􎻮͗̅٘􎻮͗̍٘􎻮͗̎٘􎻮͗̐٘􎻮͗̒٘􎻮͗̽٘􎻮͗̾٘􎻮͗̿٘􎻮͗͆٘􎻮                                                                                                               
+ │  │  │  │  │  ├─ 📄 cover.jpg                                                            │                 521 × 850                                                                                                                                           
+ │  │  │  │  │  ├─ 📄 Mark Danielewski - House of Leaves.cbz                               │                                                                                                                                                       
+ │  │  │  │  │  ╰─ 📄 metadata.opf                                                         ├── ^s Save ── ESC Discard & Exit
+ │  │  │  │  ├─ 📄 No one belongs here more than you _ stories -- July, Miranda -- First   │
+ │  │  │  │  ├─ 📁 Omnibuses                                                               ├── ^o Open ── ^x Cut ── ^y Copy ── ^DEL Delete
+ │  │  │  │  ├─ 📄 Simmons, Dan - Hyperion 01 - Hyperion -- Simmons, Dan [Simmons, Dan]    │  
+ │  │  │  │  ├─ 📄 Simmons, Dan - Hyperion 02 - The Fall of Hyperion -- Simmons, Dan [Si   ├── ^1 Folderize ── ^2 Split Omnibus ── ^3 Convert to MOBI ── ^4 Convert to AZW3 ── ^5 Write OPF ── ^6 Clean ── ^7 Upload Cover ── ^8 Extract Cover  
+ │  │  │  │  ├─ 📄 Simmons, Dan - Hyperion 03 - Endymion -- Simmons, Dan [Simmons, Dan]    │ 
+ │  │  │  │  ├─ 📄 Simmons, Dan - Hyperion 04 - The Rise of Endymion -- Simmons, Dan [Si   │ 
+ │  │  │  │  ╰─ 📄 The Zones of Thought Series_ (A Fire Upon the Deep, the -- Vernor Vin   │ 
+ │  │  │  ├─ 📂 02 Ready to Convert                                                        │ 
+ │  │  │  │  ├─ 📄 .DS_Store                                                               │ 
+ │  │  │  │  ├─ 📄 [Asian Saga_ Chronological Order 01] • Shogun -- Clavell, James -- 19   │ 
+ │  │  │  │  ├─ 📄 A Clockwork Orange _ Restored Edition -- Anthony Burgess, 2013 ─────────╯ 
+ │  │  │  │  ├─ 📁 John Le Carré                                                         
+ │  │  │  │  ├─ 📄 The Broken Earth (Book 1-3) -- N_ K_ Jemisin -- 2025 -- Orbit -- 610b 
+ │  │  │  │  ├─ 📄 The Brothers Karamazov -- Dostoyevsky, Fyodor -- 2009 -- Sony CONNECT 
+ │  │  │  │  ├─ 📄 The Count of Monte Cristo -- Dumas, Alexandre -- 1997 -- f6a9b9325895 
+ │  │  │  │  ├─ 📄 The Hunt for Red October -- Clancy, Tom -- Jack Ryan 4, 2010 -- c25fd 
+ │  │  │  │  ├─ 📄 The Prince of Tides _ A Novel -- Pat Conroy -- New York, 2010 -- Open 
+ │  │  │  │  ├─ 📄 The Tunnel -- William H_ Gass -- 1st Dalkey Archive ed, Normal, IL, 1 
+ │  │  │  │  ╰─ 📄 The tunnel -- William H_ Gass -- A Borzoi book, 2_ print, New York, 1 
+ │  │  │  ├─ 📁 03 Converted                                                             
+ │  │  │  ├─ 📁 .claude                                                                  
+ │  │  │  ├─ 📄 .DS_Store                                                                
+ │  │  │  ├─ 📁 Covers                                                                   
+ │  │  │  ├─ 📁 Examples                                                                 
+ │  │  │  ├─ 📄 wildbow - Seek.jpg                                                       
+ │  │  │  ╰─ 📄 Wildbow Book Covers.afdesign                                             
+ │  │  ├─ 📁 Childrens                                                                   
+ │  │  ├─ 📁 Comics                                                                      
+ │  │  ├─ 📄 deck.pdf                                                                    
+ │  │  ├─ 📄 eat-purely.svg                                                              
+ │  │  ├─ 📄 eat-purely.webp                                                             
+ │  │  ├─ 📁 Ebay                                                                        
+ │  │  ├─ 📄 HandBrake-1.11.2.dmg                                                         
+ │  │  ├─ 📁 Ideo                                                                         
+ │  │  ├─ 📄 IMG_4102-1.png                                                               
+ │  │  ├─ 📄 IMG_4102-4x6.png                                                             
+ │  │  ├─ 📄 IMG_4102.png                                                                 
+ │  │  ├─ 📄 IPHONE-6-BW-OC-2.svg                                                         
+ │  │  ├─ 📄 meals.txt                                                                    
+ │  │  ├─ 📁 Mediasmith                                                                   
+ │  │  ├─ 📁 MTG Proxy                                                                    
+ │  │  ├─ 📄 openclipart-vectors-iphone-160307.svg                                        
+ │  │  ├─ 📁 Progs                                                                        
+ │  │  ├─ 📁 Transmission                                                                 
+ │  │  ╰─ 📄 Vending Machine Letter.jpeg                                                  
+ │  ├─ 📁 FontBase                                                                        
+ │  ├─ 📂 go                                                                              
+ │  │  ╰─ 📁 pkg                                                                          
+ │  ├─ 📁 Library                                                                         
+ ▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂                                                           
+
+ ↓↑ navigate · → expand · ← collapse · ^← collapse level · ^r refresh · ^. toggle hidden files · ^n new directory · ^q quit                                                                                   𜵎𜵎▖𜷇🯦𜷇▌𜵅𜷃𜵈𜷓𜴀𜵎𜵎▖𜵅𜶍▐𜶓
+═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+
+Mockup notes:
+• Layer 1: Background Color
+  • Mockups 1-3 combine to form one mockup
+  • This mockup depicts bg color of cells
+  • █ = #ffa62b PRIMARY bg color (TUI) = focusable element, currently focused
+  • ▒ = #474747 GREY_30 bg color (TUI) = focusable element, currently unfocused
+  • The unicode box-drawing characters connecting the node in the filetree with the file's details in the right pane follow the same logic as the box-drawing characters in the file tree:
+    • GREY_30 when a tree node is focused
+    • PRIMARY when a file input or file button is focused
+    • Draw line of focus to that file (see "Author Input Selected" mockup and its notes for more information)
+• Layer 2: Foreground Content
+  • Mockups 1-3 combine to form one mockup
+  • This mockup depicts fg content with no color information
+  • If user presses right arrow or ENT on a file node, filename field becomes selected
+  • Down & up arrow keys traverse input fieldss as they currently do, selecting adjacent fields
+  • However, down & up arrow keys traverse button BARS instead of buttons
+    • Example:
+      • ^x Cut is focused
+      • User presses down arrow
+      • ^1 Folderize becomes focused
+      • User presses down arrow
+      • Nothing happens
+      • User presses right arrow
+      • ^2 Split Omnibus becomes focused
+  • Behavior of right arrow and ENT on a folder node is unchanged:
+    • Right arrow expands node
+    • ENT moves focus to filename input
+• Layer 3: Foreground Color
+  • Mockups 1-3 combine to form one mockup
+  • This mockup depicts fg color
+  • ░ = #ffa62b PRIMARY fg color (TUI) = action available regardless of focus
+  • So, this is change that this UI revision is built around: the ability for the user to perform actions on a given file without needing to "enter" details view.
+• Alternate Content Example
+  • Example depicting path character intersecting with file details at a higher Y position than other examples
+  • Between the two examples, you should conclude:
+    • Path characters extend outward from file in tree until they reach the gutter between file tree and file details
+    • Path characters are the drawn to connect to all focusable fields
+• Button Bar Overflow
+  • When there are too many buttons to fit in one line of button bar, overflow buttons into a new button bar, as seen in this example
+• Input Field Selected, BG
+  • Ideally, I would like the ├ characters to have the PRIMARY color for the vertical line and GREY_30 for the color of the horizontal line, but since that isn't possible I replaced certain characters in this mockup. If you have a better idea, let me know.
+  • Otherwise, this mockup shows explicitly a state which was otherwise only hinted at by earlier mockups.
+• Input Field Selected, FG
+  • When a file field is focused, a "contextual" button bar appears with the following action:
+    • ESC Exit
+• Unsaved Changes
+  • When a node has unsaved changes, the contextual button bar changes:
+    • ^s Save
+    • ESC Discard & Exit
+
+Consequences:
+• Path Input
+  • Add the `^/` keybinding before the input in the PRIMARY color
+  • Replace with `ESC` keybinding when this element has focus
+  • So, this means there needs to be an extra space after the `^/` keybinding, so that it's really three characters (`^/ `), so that `ESC` will fit
+• File Tree
+  • No change to colorization of box drawing characters depicting folder nesting
+  • All unfocused nodes gain the background color GREY_30
+• Button Bars
+  • Separate button bar into 3 button bars (examples only, not exhaustive lists):
+    • "Contextual" button bar:
+      • Save
+      • Exit
+      • Discard & Exit
+    • "File" button bar:
+      • Open
+      • Cut
+      • Copy
+      • Delete
+    • "Actions" button bar:
+      • Folderize
+      • Split Omnibus
+      • Convert to Mobi
+      • Convert to AZW3
+      • Write OPF
+      • Clean
+      • Upload Cover
+      • Extract Cover
+  • In the filetype button bar, remove keybindings within button names. Example:
+    ^3 fetch s^ubtitles <- before
+    ^3 fetch subtitles <- after
+    Explanation: there are way too many keybindings to memorize at this point, and it's easier to just note the position of the button ("3rd in a list," for example) than it is to identify which letter of a command is the keybinding (for example, `^u` is "fetch subtitles", which is a weird letter to represent this command)
+  • Capitalize button names
+    • See mockups for examples
+    • Explanation: since keybindings are no longer inline with button text, button text can contain capital letters
+• Scrollbars
+  • From an HTML/CSS point of view, I am imagining that the viewport is now constructed like this:
+    • "Details view":
+      • Has its own scroll container
+      • Position is fixed to top of viewport and unaffected by directory tree scrolling
+    • "Directory tree":
+      • Scroll container now spans the full viewport
+      • Scrollbar appears at right edge of the viewport
+      • Scrolls only the tree content, because file details are fixed position and removed from the flow
+  • Here is the same idea expressed as a diagram
+    ┌────────────────────────────────────────────────┐
+    │ ┌─────────────────┐      ┌─────────────────┐   │
+    │ │ Path Input      │      │ File inputs    ▌│   │
+    │ └─────────────────┘      │ Button bars     │   │
+    │  directory tree          │ position:fixed  │ ▌ │
+    │  ╰─ node                 └─────────────────┘   │
+    │  ▂▂▂▂▂▂▂▂▂▂                                    │
+    └────────────────────────────────────────────────┘
+    ▂ = horizontal scrollbar
+    ▌ = vertical scrollbar
+• Mobile View
+  • Can the current UX still apply to mobile, unchanged?
+  • Can (should?) the UI change to follow this mockup, even if the current UX is kept?
+  • I'm undecided about this
+    • Would like to hear your recommendation
+    • Would like to move forward with the rest of the design and decide this later if an obvious decision isn't uncovered
+• Details View
+  • Add labels for filename, cover, and album art. All fields (even those not shown in these mockups) should have a label, and their values should be left-aligned together as depicted in the mockups
+  • Just like buttons and tree nodes, labels should have one cell of padding on the right edge. I want to preserve two blank cells in between label and input, so in the foreground examples in this file there are now three spaces between label and input to account for the new background color
+• terms-of-art.md
+  • Changes to this document need to be made
+  • It would be helpful if, instead of making changes yourself, you point out the lines and line numbers which are no longer valid and need to be updated.
+  • I will make updates to this document once work on these changes begins, in case changes need to be made in advance of beginning work.
+• CLAUDE.md
+  • This file also needs to change
+  • Please draw some cool diagrams to teach my new mental model
+
+Additional changes:
+• Path Input
+  • Move the braille spinner from the path input to currently-selected node, replacing the icon. Example:
+    📂 Downloads <- not loading
+    ⡿  Downloads <- loading
+
