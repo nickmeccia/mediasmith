@@ -1167,3 +1167,316 @@ buttons. Two bugs, both fixed in illustrator.py:
 - [ ] Re-run rescue to pdf/svg on Traces.ai and check the whole canvas
       (≈16,180 pt square) is there. Acrobat caps pages at 14,400 pt, so
       this one may open clipped or refused there; Preview renders it.
+
+## Session 20 (2026-10-26, Opus) — always-available actions, slice 0
+
+The mockup (`notes/mockups/always-available-actions-3.txt`) is being
+built in six slices; this is slice 0, the one the other five stand on.
+Your complaint #1 was "there is a <1s delay when entering details view."
+It was not the view change: `⏎` forced a SECOND, synchronous read of the
+file the highlight debounce had already read 150ms after you landed on
+the row — and `adapters.read_details` ran on the event loop, which rule 4
+forbids for exactly the reason the NAS taught us in August.
+
+What changed:
+
+- [ ] **`⏎` onto the row the pane already shows now reads nothing** and
+      descends in the same breath. Please feel for this on the NAS
+      first: it is the whole point of the slice.
+- [ ] **The read is a thread worker** (`adapters.resolve` — kind,
+      album-folder probe, and details in one pass). A cold row shows
+      `<name> — reading…` while it is in flight, instead of showing the
+      previous file's values. Tell me if that marker reads wrong; it is
+      the same word the Path Input uses.
+- [ ] **Answers are cached** (64 entries, LRU, process lifetime) so
+      browsing back and forth down a folder is free after the first
+      pass. The cache is keyed by PATH, never by mtime: validating an
+      mtime is a stat, and a stat on a spun-down share is the freeze.
+      It is invalidated by the writer instead — every write in
+      `adapters` forgets its own path — and `^r refresh` drops the lot.
+      If you ever change a file OUTSIDE mediasmith and the pane looks
+      stale, `^r` is the answer; say so if that bites.
+- [ ] **A forced re-read keeps the panel up** (after a rotate, a cover
+      write, a folderize), so those flows do not flash through the
+      reading marker.
+- [ ] **New signal: `DetailsView.settled`** — the read is in AND every
+      button-bearing probe has answered, so the bar has stopped changing
+      shape. This is what your answer #1 ("add the chords after all the
+      buttons are loaded") will hang on in slice 1, and what the chord
+      buffer (answer #4) drains against in slice 2.
+- [ ] **Six probes became one.** `folderize`/`multiartist`/`omnibus`/
+      `sort`/`sort_book`/`standardize` had six identical worker+callback
+      pairs; they are now one table (`DetailsView.BUTTON_PROBES`) and one
+      pair. Value-only probes (video header, folder totals, .ai canvas)
+      stay separate on purpose — they move no buttons, so no chord moves
+      when they land.
+- [ ] **One test-suite change you should know about**: `settle(pilot)`
+      now waits on `DetailsView.busy` instead of sleeping 0.4s. The read
+      being async made a fixed sleep a race, and it caught one
+      immediately (the renumbering test, under suite load).
+
+## Session 20, slice 1 — the three bars and the labels
+
+The pane's one bar became three (`actions.CONTEXTUAL` / `FILE` /
+`ACTIONS`), composed once each from the same `PANE_ACTIONS` list — every
+Action now names the bar it lives on, so adding one is still a single
+line in that list (cookbook step 1 unchanged).
+
+- [ ] **What is on which bar.** Contextual: Save, and a plan's
+      Apply/Cancel. File: Open, Cut, Copy, Delete — the tree's own
+      commands wearing buttons, keeping their letters (^o ^x ^y ^DEL) so
+      one key means one thing everywhere. Actions: everything the KIND
+      offers. **Paste has no button** on purpose (it belongs to the
+      destination, not to this file) — ^v stays a tree command. Say if
+      you want it there anyway.
+- [ ] **Cut/copy/delete now work from the PANE too**, including while a
+      filename field has focus. They used to be tree-only.
+- [ ] **Labels lost their spliced letters and gained capitals**:
+      `fetch s^ubtitles` → `^3 Fetch Subtitles`. Acronyms are upper
+      (MOBI/AZW3/OPF/JPG/GIF/PDF/SVG); "to" stays lower. Rename any of
+      them — one string in `PANE_ACTIONS`.
+- [ ] **The Actions bar is POSITIONAL ONLY: its specs carry no letter at
+      all.** A letter that still worked but was no longer printed is
+      exactly what the strip contract forbids, so the letters are gone
+      rather than hidden. That means `^t` no longer converts to MOBI,
+      `^a` no longer traces, `^l` no longer folderizes — those are ^1…^9
+      by position now. Reversible per action (give its spec a `key` back)
+      if any one of them was muscle memory.
+- [ ] **Only the Actions bar is numbered** (`DetailsView.NUMBERED_BARS`).
+      The album-art methods (Import/Fetch), a wizard's own Save, and the
+      Contextual/File bars keep letters: each is short, fixed, and
+      unambiguous. So a numbered bar and a lettered bar can both be on
+      screen without either lying.
+- [ ] **^N locally, ⌥N under tmux** (your answer #2): decided once per
+      process from `$TMUX` (`actions.CHORD_PREFIX`). BOTH spellings are
+      always accepted — only the printing changes, because the label is
+      the contract. Worth a look in both terminals.
+- [ ] The bars share one container (`#bars`), so the blank line above
+      them belongs to the stack and an empty Contextual bar leaves no
+      gap. Trace mode hides the lot with one flip.
+- [ ] **Still to come, not forgotten**: the `ESC Exit` /
+      `^s Save ── ESC Discard & Exit` entries on the Contextual bar.
+      Those are focus- and dirty-state dependent, and they are the same
+      row the micro-modals take over, so they land together in slice 4.
+- [ ] **A test was passing vacuously** and this found it:
+      `test_image_convert_never_overwrites` created `photo.jpg`, which
+      sorts before `photo.png`, so it landed on the .jpg — whose bar has
+      no "convert to jpg" — and pressed a chord that fired nothing. It
+      now steps onto the .png and actually exercises the refusal.
+
+## Session 20, slice 2 — the actions are always available
+
+This is the slice your complaint was about: no more ⏎ … chord … esc.
+A printed chord now fires from the tree as well as from the pane.
+
+- [ ] **Try it on the NAS.** Arrow onto a book and press ^3. The tree
+      keeps focus, the action runs on the row the cursor is on, and
+      nothing was entered or left.
+- [ ] **The target is the TREE's cursor, captured at the keypress** — not
+      the pane's 150ms-debounced copy. That was session 9's ^DEL bug;
+      always-available actions would have handed the same bug to all ~30
+      actions, most of which write. A chord pressed within 150ms of an
+      arrow key acts on the row you were looking at, every time.
+- [ ] **A chord pressed before the bar is built is BUFFERED** (your
+      answers #1 + #4 together): it waits for the pane to settle on the
+      row it was pressed on, then resolves against THAT bar. So a probe
+      landing late cannot move the number under your finger, and the
+      chord is never dropped either. Queue depth is 4 — mash a key and
+      the extras are discarded rather than queueing a minute of writes.
+- [ ] **A chord the row doesn't offer says so** ("Dune.epub has no action
+      on that key") instead of doing nothing or firing a neighbour.
+- [ ] **^f is no longer special.** Folderize was the first action
+      reachable from both views, on a hand-wired ^f; every action is now,
+      so folderize rides its position like the rest and the ^f case is
+      gone from `App.on_key` and from the strip.
+- [ ] **The Path Input keeps its keys.** While it has focus, chords do
+      not fire — it is a sub-view that owns the user, like the wizards.
+      Flag it if you want actions live while typing a path.
+- [ ] **The tree strip now carries only TREE commands**: navigate,
+      expand/collapse, collapse level, ⏎ edit, ^r, ^., ^n, ^q. Cut, copy,
+      delete, open, path and folderize left it, because the bars and the
+      Path Input print their own chords and are on screen. The contract
+      is unchanged in substance — "what is printed works" — but it now
+      lives in two places: the strip for the tree, the bar for the file.
+      This is the doctrine line in CLAUDE.md that needs rewriting.
+- [ ] **Two actions still take focus on purpose**: a plan preview lands
+      on its Apply button, and a wrap (video folderize / new folder)
+      descends into the new thing's rename field. Say if either should
+      stay in the tree instead.
+
+## Session 20, slice 3a — the path model's keys
+
+The interaction half of "move focus along a path". The chrome half
+(focus backgrounds, the borders coming off, the ESC chip, labels on every
+field) is next and is deliberately separate: it is the part you will want
+to iterate on.
+
+- [ ] **→ descends on a file.** On a folder it still opens the folder —
+      that is the step along the path when there are children to show. A
+      file has none, so its step is into the details. This brings back a
+      "→ edit" that todo-5 retired as a duplicate of ⏎; under the path
+      model → is the one direction key and ⏎ is the shortcut that skips
+      the folder case. Say if you would rather ⏎ stayed the only way in.
+- [ ] **↑↓ walk a ROW at a time, and a bar is one row** (your Layer-2
+      worked example). From ^x Cut, ↓ lands on the Actions bar's first
+      button; ↓ again does nothing; → steps within the bar. So getting
+      past nine converts no longer costs nine keystrokes.
+- [ ] Each row is entered at its FIRST control, so ↑ out of a bar and
+      back down returns you to the start of that bar, not to the column
+      you left. Tell me if you want the column remembered.
+
+## Session 20 — test-suite notes (not UX, but worth knowing)
+
+- [ ] **Waiting on conditions, not durations.** Four tests in this
+      session failed on nothing but elapsed time, so `settle(pilot)` now
+      waits for TWO conditions — the pane is not `busy`, AND the pane is
+      about what the tree's cursor is on (`DetailsView.showing`, the same
+      predicate the chord dispatcher asks about). The second one matters:
+      `busy` reads False in the window before the pane has heard about a
+      new selection at all, and a random-order run caught a helper
+      sampling a pane that was a row behind, then looking for a button
+      that row never offers. A new `until(pilot, predicate)` helper
+      covers the rest (the re-root, the reading marker, the new
+      directory). Verified green in both fixed and random order.
+- [ ] **A test helper must never give up quietly.** `settle(pilot)` used
+      to return after 5s whatever the state was, which on a loaded
+      machine surfaced as "folderize is not on show" three screens away
+      from the actual cause (a saturated thread pool had not started a
+      button probe yet). It now waits 20s for `not busy` and RAISES with
+      the state if it does not get there, while agreeing with the tree's
+      cursor stays best-effort — a test is allowed to point the pane at
+      something the cursor is not on. The loud version found a second
+      thing in its first run.
+- [ ] **Navigation helpers wait for ROWS, not keypresses.**
+      `_goto_row(app, pilot, name)` waits until the tree actually has
+      that row and then moves the cursor to it; `_goto_alien` now walks
+      one level at a time, waiting for each to populate before expanding
+      it. Pressing "down, right" assumed the parent's children were
+      already loaded, and under a loaded run they were not — so the walk
+      expanded whatever it happened to land on. That was the last of five
+      timing failures this session, all of the same shape.
+- [ ] **Tests press what the label prints** (`_chord_for(app, name)`),
+      never a hardcoded chord. That is what makes a renumbering cost one
+      line instead of twenty, and it immediately caught a test that had
+      been passing on a chord that fired nothing.
+- [ ] **Never `importlib.reload` a module in a test.** One of mine
+      reloaded `mediasmith.actions` to check the tmux prefix; that gave
+      the suite two distinct `ActionBar` classes and 57 unrelated
+      `isinstance` checks started failing. The prefix is a pure function
+      now (`actions.chord_prefix(env)`), tested by passing an env dict.
+
+## Session 20, slice 3b — the chrome
+
+The visual half of "focus is one element". This is the pass you will want
+to iterate on, so everything here is one token or one line away from
+different.
+
+- [ ] **The pane borders are gone.** A border said "this view has
+      focus", which is the question the path model stopped asking. The
+      Path Input keeps its box because it IS a box — a field you type
+      into — and the box lights when the input has focus.
+- [ ] **Six new tokens in theme.py** (`element-bg`, `-fg`, `-key`, and
+      their `-focus` twins) replace the idle/focus PAIRS for buttons,
+      field labels and tree rows. The pairs answered "which view owns
+      focus"; nothing asks that now. The scrollbar and view-text pairs
+      stayed, because a scroll container's own focus is still a thing.
+- [ ] **Nothing dims for being un-focused.** A button, a hint, a label:
+      all stay bright while the cursor is in the tree, because their
+      chords work from there. Only the ONE focused element changes, to
+      PRIMARY.
+- [ ] **A field's label is its chip** (`details.FieldLabel`), grey or
+      PRIMARY, hugging the word plus one cell — so the VALUES still line
+      up down the pane. That is Layer 1 vs Layer 2 of your mockup read
+      literally: the block is behind the LABEL, the value is plain text.
+      LABEL_GUTTER went 2 → 3 for the chip's own padding, exactly as your
+      note said ("three spaces between label and input").
+- [ ] **Every tree row wears the chip too** (`tree--node-chip`), grey
+      behind the icon and the name. The CURSOR keeps PRIMARY whether or
+      not the tree has focus — your mockup greys it and lets the
+      connector carry the selection, but the connector is slice 5, so
+      until then the accent stays rather than leaving a slice where
+      nothing says which file the pane is editing.
+- [ ] **The filename has a label**, and its column is the panel's
+      (`PANEL_LABEL` / the form's own width), so its value lines up with
+      every other value.
+- [ ] **The `^/` chip prints inside the path box** and becomes `ESC`
+      while the input has focus — three cells either way, so the path
+      never shifts. The "reading…" marker moved to the box's border with
+      it.
+- [ ] **Still to come in this area**: labels beside the cover/poster/art
+      IMAGES (that one needs care — the image sizing inside a labeled row
+      is the fragile `width: 1fr` rule), and the braille spinner moving
+      onto the loading node in place of its icon.
+
+## Session 20, slice 4 — the micro-modals became bar states
+
+Your answer #5, built as a general mechanism: `DetailsView.ask(choices,
+decided, prompt)`.
+
+- [ ] **There are no modals left in the app.** Both `ModalScreen`
+      classes are deleted, along with their CSS. The cookbook rule that
+      said "modals are for a destructive fork, and there are exactly
+      two" now says there are none.
+- [ ] **A question swaps the Contextual bar's buttons for the answers**,
+      focuses the first (which wears PRIMARY, per the element model),
+      and locks ↑↓/←→ and every chord to that bar until one is pressed.
+      `^1` from the Actions bar does nothing while a question is up.
+      Unsaved edits now read exactly like your mockup:
+      `^s Save ── ^d Discard ── ESC Keep Editing`.
+- [ ] **Answering puts focus back where the question interrupted you**,
+      so "keep editing" returns to the very field you were typing in.
+      Save and discard move focus themselves, as before.
+- [ ] **The answers are chords, not bare letters.** The old modal took a
+      bare `d`; the bar prints `^d Discard`, and the printed chord is
+      what works. Flag it if you want bare letters while a question owns
+      the keys — it is safe now that nothing else can transmit.
+- [ ] **The case-rename question** reads the same way:
+      `^k Rename, Keep Contents ── ^d Rename, Delete Contents ──
+      ESC Cancel`, with the explanation ("alien.1979/ already exists
+      where Alien.1979/ should go…") on a 12-second toast instead of in
+      a dialog box. Check that it reads clearly on the NAS, since that
+      is the one that destroys contents.
+- [ ] **First answer wins**, the guard the modals needed (a second
+      dismiss was app death — fuzz seed 10, 2026-07-16). The
+      double-dismiss regression test now exercises the bar instead.
+
+## Session 20, slice 5 — the connector, half built (and why only half)
+
+- [ ] **The SPINE is in** (`details.Spine`): one widget docked down the
+      pane's left edge that reads where the rows ARE and draws `╭` at the
+      first, `├──` beside every row holding a control, `│` between and
+      below them, and `│──` on a wrapped bar's second line. Not a prefix
+      on every row — one widget, so adding a row needs no spine work.
+- [ ] **Rendering is a hot path, and the spine learned it the hard way.**
+      The first version walked the DOM once per LINE to find the rows —
+      a ~100-widget query, forty times per repaint, on a pane that
+      repaints constantly. It doubled the suite from 28 to 55 minutes
+      and starved the app enough to fail eleven timing-sensitive tests.
+      `Spine.restub()` now computes the map once, when the pane says the
+      rows moved. Worth knowing because the two spine tests passed
+      throughout: two tests do not generate enough repaints to notice.
+      The suite's RUNTIME was the signal, not its failures.
+- [ ] **It answers your two-tone `├` question** the way I proposed: the
+      spine owns its own COLUMN, so the junction cell belongs to the line
+      and the stub beside it is a separate cell. One cell, one color — no
+      hand-patched characters. Cost: four cells of width, which came out
+      of the pane's left padding, so nothing moved.
+- [ ] **The TREE-SIDE run is blocked, and not on taste.** The run has to
+      cross from the tree row's label to the spine, and the tree's
+      vertical scrollbar sits between them. Its track cells are SPACES
+      with a background (`ThinScrollBarRender`), so they blank out
+      whatever passes under them — the run cannot get through. This is
+      the dependency I flagged in the critique and now it is measured:
+      the connector needs your "Scrollbars" consequence first (the tree's
+      scroll container spanning the full viewport, the details pane fixed
+      on top of it), because that is what moves the scrollbar to the
+      viewport's edge and out of the connector's way.
+- [ ] **That architecture rewrites the narrow-mode rules**, which are
+      built on the two-column `Horizontal` (`.-narrow.-details-open
+      TreeView { width: 0 }` and friends). It is the one thing your
+      mockup says you are undecided about. My recommendation stands:
+      keep the two-step narrow flow, drop the connector at narrow width,
+      and let the path model degrade — it does not depend on both panes
+      being visible. But doing the layout change means doing that part of
+      roadmap slice 5 at the same time, so it wants your go-ahead rather
+      than my guess.

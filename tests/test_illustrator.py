@@ -277,7 +277,7 @@ async def test_the_buttons_appear_only_when_work_is_hidden(tmp_path):
         async with app.run_test(size=(120, 40)) as pilot:
             await pilot.pause()
             await _select_the_ai(pilot, app)
-            bar = app.query_one("#pane-bar", ActionBar)
+            bar = app.query_one("#actions-bar", ActionBar)
             return {b.id for b in bar.query("Button") if b.display}
 
     hidden = tmp_path / "hidden"
@@ -303,6 +303,10 @@ async def test_the_chord_writes_the_rescue_beside_the_source(tmp_path):
         await _select_the_ai(pilot, app)
         await pilot.press("enter")              # descend into the pane
         await pilot.pause(0.3)
-        await pilot.press("ctrl+p")
+        from mediasmith.actions import ActionBar
+        bar = app.query_one("#actions-bar", ActionBar)
+        place = next(b.ordinal for b in bar.buttons()
+                     if b.spec.name == "rescue_pdf")
+        await pilot.press(f"ctrl+{place}")      # the printed position
         await pilot.pause(0.8)                  # the producer worker
     assert (tmp_path / "logo-full-canvas.pdf").exists()

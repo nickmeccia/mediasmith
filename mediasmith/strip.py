@@ -53,35 +53,31 @@ _TREE_TAIL = [
     Entry("^n", "new directory"),
 ]
 
+# What the strip carries, now that the pane's three bars are always on
+# show (always-available-actions-3, 2026-10-26): the TREE's own commands
+# — how to move, and how to change the tree's shape. Everything that acts
+# on the FILE moved to the bars, which print their own chords and are
+# visible from here: ^o open, ^x cut, ^y copy, ^DEL delete, and every
+# kind action as ^1…^9. So the contract is still "what is printed works",
+# it is just printed in two places: the strip for the tree, the bar for
+# the file. ^/ left too — the Path Input prints its own chord.
 STATE_TREE = [
     *_NAVIGATE,
     # type-jump keeps working but leaves the strip (too hard to say
     # concisely); "→ edit" is gone from the app (⏎ is the one edit key)
     Entry("ENT", "edit"),
     *_TREE_TAIL,
-    Entry("^x", "cut"),
-    # ^c is reserved (interrupt/app copy): ^y substituted — cop^y
-    # (logged in notes/qa/todo-2.md for Nick's rename pass)
-    Entry("^y", "copy"),
-    Entry("^DEL", "delete"),
-    Entry("^/", "path"),
     Entry("^q", "quit"),
 ]
 
-FOLDERIZE = Entry("^f", "folderize")
-"""Nick, 2026-08-22: folderize is reachable from BOTH views. In the tree
-it fires whichever folderize the selection is showing (video, single
-epub, audio folder) — so it prints only when one is on show, because the
-strip is the contract, not a hint."""
-
 
 def tree_state(folderize: bool = False) -> list[Entry]:
-    """The tree state, with ^f folderize when the selection has earned it.
-    Inserted after ⏎ edit: both act on the node the cursor is on."""
-    if not folderize:
-        return STATE_TREE
-    at = STATE_TREE.index(Entry("ENT", "edit")) + 1
-    return [*STATE_TREE[:at], FOLDERIZE, *STATE_TREE[at:]]
+    """The tree state. ``folderize`` is vestigial: folderize used to be the
+    one action reachable from both views and printed here when the
+    selection offered one (2026-08-22). EVERY action is reachable from
+    both views now, and each prints its own chord on its own button, so
+    the strip no longer speaks for any of them."""
+    return STATE_TREE
 
 
 STATE_PATH = [

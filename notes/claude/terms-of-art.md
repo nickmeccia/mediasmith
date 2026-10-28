@@ -128,3 +128,20 @@ noun
 - **Command** -- An instruction transmitted from the user to the application.
 
 - **Keybinding** -- A key or chord of keys which triggers a command.
+
+
+---------------------
+
+TODO:
+
+- 19, 21, 23 — Focus / Gain / Release: focus becomes one element, not a zone, and actions are no longer restricted to the focused zone.
+- 25 — Selected: needs the new wrinkle that a tree node stays Selected while focus sits elsewhere along the path, shown only by the connector.
+- 40, 48 — Path Input: gains the ^/→ESC chip, loses the spinner, and "the user can only manipulate the Path Input" needs a ruling on whether file actions fire while it holds focus.
+- 60 — Edit: "shift focus to Details View" → move focus to the filename field; Details View stops being a focus target as a whole.
+- 68, 70, 72 — Cut / Copy / Paste / Delete: now File-bar buttons as well as tree commands, and Paste has no button in the mockup.
+- 78 — Details View: "culminating in a list of buttons" → three named bars, and it is no longer a view you enter.
+- 110, 112 — the lockdown states must say that lockdown also suppresses the always-available actions, or ^1 fires while the trace div owns the panel. Separately, 112's text is a copy of 110's (pre-existing).
+- 116, 118, 120 — Navigate becomes bar-granular vertically; Open is no longer "second after Save" (Save moves to Contextual); Button-Specific Commands are positional now.
+- 126 — Command Strip: it carries tree navigation only, so the "strip is the contract" doctrine needs restating.
+
+- New terms needed — Path (the connector), Button Bar plus the three kinds, Positional Keybinding, Focusable Element.

@@ -19,6 +19,7 @@ never adds or removes buttons, it only shows/hides them
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 
 from textual.content import Content
@@ -29,14 +30,17 @@ from textual.message import Message
 from textual.widget import Widget
 from textual.widgets import Button
 
-# Markup styles for the ``^x`` keybinding inside a button label — all
-# theme tokens (theme.py). Which one applies is state: the button's own
-# focus (arrow-key selected) wins, then the owning pane's idle/focus flip.
-# Markup can't ride CSS pseudo-classes, so the label is recolored from
-# Python (watch_has_focus / set_pane_focus).
-KEY_STYLE = "$button-keybinding-fg-focus"
-IDLE_KEY_STYLE = "$button-keybinding-fg-idle"
-SELECTED_KEY_STYLE = "$button-selected-keybinding-fg-focus"
+# Markup styles for the chord inside a button label — theme tokens
+# (theme.py). Which one applies is the BUTTON's own focus and nothing
+# else (2026-10-26): a button does not dim because the cursor is in the
+# tree, because its chord works from there. Markup can't ride CSS
+# pseudo-classes, so the label is recolored from Python
+# (watch_has_focus).
+KEY_STYLE = "$element-key"
+SELECTED_KEY_STYLE = "$element-key-focus"
+IDLE_KEY_STYLE = KEY_STYLE
+"""Retired name: the idle look was "some other view has focus", which the
+path model does not have. Kept so an old import does not break."""
 
 # ctrl+<char> chords the terminal or the app already owns; binding an
 # action to one of these would shadow typing or core chrome.
@@ -49,18 +53,39 @@ SELECTED_KEY_STYLE = "$button-selected-keybinding-fg-focus"
 RESERVED_KEYS = frozenset("chijmqz")
 
 
+CONTEXTUAL, FILE, ACTIONS = "contextual", "file", "actions"
+"""The three bars (Nick, 2026-10-26 — always-available-actions-3).
+
+- CONTEXTUAL: what the pane's STATE offers — save, a plan's apply/cancel,
+  and (slice 4) a micro-modal's choices. It owns focus while it has a
+  question to ask.
+- FILE: what every file offers whatever it holds — open, cut, copy,
+  delete. These are the tree's commands wearing buttons, so they keep
+  their LETTER chords (^o ^x ^y ^DEL): one key, one meaning, everywhere.
+- ACTIONS: what this KIND offers. Positional chords only (^1…^9): the
+  letters ran out and nobody could remember them (Nick's reason), so the
+  number is the address.
+"""
+
+
 @dataclass(frozen=True)
 class Action:
     """One contextual action: a button plus (optionally) a key chord."""
 
     name: str                   # dispatch name, unique within its bar
-    word: str                   # the label text, e.g. "save"
+    word: str                   # the label text, e.g. "Save"
     key: str | None = None      # single char, bound as ctrl+<key>
     button_id: str | None = None
+    bar: str = ACTIONS          # which of the three bars it lives on
     key_label: str | None = None
-    """What the button prints when there is no single-char ``key`` — for a
-    chord the ctrl+<char> shape can't express (trash → ``^del``). Display
-    only; such chords are dispatched by the app, not ``action_for_key``."""
+    """The printed chord, VERBATIM, when ``key`` cannot express it:
+    ``^DEL`` for delete, ``ESC`` for a cancel. Display only — such chords
+    are dispatched by the app, not by ``action_for_key``."""
+
+    @property
+    def printed_chord(self) -> str | None:
+        """What this action's button prints when it wears no number."""
+        return f"^{self.key}" if self.key else self.key_label
 
     def __post_init__(self) -> None:
         if self.key is not None:
@@ -77,30 +102,46 @@ def _escape(text: str) -> str:
     return text.replace("[", r"\[")
 
 
-def action_markup(word: str, key: str | None,
+# What a POSITIONAL chord PRINTS, decided once per process. ^1…^9 cannot
+# cross tmux — measured 2026-08-25, and the reason is below in
+# ALT_GLYPH_ORDINALS — so under tmux the label says ⌥ and means it
+# (Nick's call, 2026-10-26: "^N locally and ⌥N under tmux"). Both forms
+# are always ACCEPTED (ordinal_for_key); only the printing changes,
+# because the label is the contract and it must not lie.
+def chord_prefix(env: "dict[str, str] | None" = None) -> str:
+    """``^`` normally, ``⌥`` under tmux. A function so it can be tested
+    without reloading this module: a reload would hand the suite a second
+    ActionBar class, and every isinstance check would start failing.
+    """
+    env = os.environ if env is None else env
+    return "⌥" if env.get("TMUX") else "^"
+
+
+CHORD_PREFIX = chord_prefix()
+
+
+def action_markup(word: str, chord: str | None,
                   key_style: str = KEY_STYLE,
                   ordinal: int | None = None) -> str:
-    """The label markup: ``^`` + the key char in the accent color,
-    spliced into the word when the char is part of it. ``key_style``
-    swaps the chord color (focus recolors it — see FOCUS_KEY_STYLE).
+    """The label markup: the chord in the accent color, then the word.
 
-    ``ordinal`` prints the button's POSITIONAL chord in front of the
-    word — "^1 ^save" (Nick's A/B, 2026-08-25). Both chords fire the
-    same action; the number is the experiment, the letter is today's.
+    One shape for every button — ``^s Save``, ``^DEL Delete``,
+    ``^1 Folderize`` — since the chord stopped being spliced into the
+    word (Nick, 2026-10-26: "there are way too many keybindings to
+    memorize at this point, and it's easier to just note the position of
+    the button"). The words line up, and a word like "fetch subtitles"
+    reads as itself instead of as "fetch s^ubtitles".
+
+    An ``ordinal`` is the button's POSITIONAL chord and it WINS: a bar
+    that numbers its buttons prints no letters (see the three bars).
+    ``key_style`` swaps the chord color (focus recolors it).
     """
-    if key is None:
-        label = _escape(word)
-    else:
-        index = word.lower().find(key.lower()) if len(key) == 1 else -1
-        if index >= 0:
-            label = (f"{_escape(word[:index])}"
-                     f"[{key_style}]^{word[index]}[/]"
-                     f"{_escape(word[index + 1:])}")
-        else:
-            label = f"[{key_style}]^{key}[/] {_escape(word)}"
-    if ordinal is None:
+    label = _escape(word)
+    if ordinal is not None:
+        return f"[{key_style}]{CHORD_PREFIX}{ordinal}[/] {label}"
+    if chord is None:
         return label
-    return f"[{key_style}]^{ordinal}[/] {label}"
+    return f"[{key_style}]{chord}[/] {label}"
 
 
 ORDINAL_LIMIT = 9
@@ -204,11 +245,11 @@ LAYOUT_MAP.setdefault(FlowLayout.name, FlowLayout)
 class ActionButton(Button):
     """A Button carrying its Action spec; label per the button pattern.
 
-    Background/foreground ride the pane's idle/focus flip in CSS
-    (app.py); the chord color inside the label is markup, so the same
-    flip is mirrored here via ``set_pane_focus`` (called by the owning
-    view when focus crosses its edge). Arrow-key selection lands as
-    :focus and carries the selected pair; text-style stays CSS-side.
+    Background/foreground come from CSS ($element-bg, and
+    $element-bg-focus when this button is the one thing with focus). The
+    chord inside the label is markup rather than CSS, so its color is
+    applied from Python on the same edge (``watch_has_focus``);
+    text-style stays CSS-side.
     """
 
     DEFAULT_CSS = """
@@ -227,18 +268,16 @@ class ActionButton(Button):
     def __init__(self, spec: Action) -> None:
         self.spec = spec
         self._word = spec.word
-        super().__init__(self._content(IDLE_KEY_STYLE),
+        super().__init__(self._content(KEY_STYLE),
                          id=spec.button_id or f"act-{spec.name}",
                          compact=True)
 
     def _key_style(self) -> str:
-        if self.has_focus:
-            return SELECTED_KEY_STYLE
-        return KEY_STYLE if self._pane_focus else IDLE_KEY_STYLE
+        return SELECTED_KEY_STYLE if self.has_focus else KEY_STYLE
 
     def _content(self, key_style: str) -> Content:
         return Content.from_markup(
-            action_markup(self._word, self.spec.key or self.spec.key_label,
+            action_markup(self._word, self.spec.printed_chord,
                           key_style, self._ordinal))
 
     def _apply_label(self, key_style: str) -> None:
@@ -267,10 +306,9 @@ class ActionButton(Button):
             self._apply_label(self._key_style())
 
     def set_pane_focus(self, value: bool) -> None:
-        """The owning view's focus flipped: dim or light the chord."""
-        if value != self._pane_focus:
-            self._pane_focus = value
-            self._apply_label(self._key_style())
+        """No-op since 2026-10-26: a button's look no longer depends on
+        which VIEW has focus. Kept so the owning view can keep calling it
+        while the rest of the chrome pass lands."""
 
     def watch_has_focus(self, value: bool) -> None:
         # super() FIRST: Widget.watch_has_focus is what applies the

@@ -3,52 +3,62 @@
 import pytest
 from textual.app import App
 
-from mediasmith.actions import (Action, ActionBar, ActionButton,
+from mediasmith.actions import (ACTIONS, CHORD_PREFIX, CONTEXTUAL, FILE,
+                                Action, ActionBar, ActionButton,
                                 IDLE_KEY_STYLE, KEY_STYLE,
                                 SELECTED_KEY_STYLE, action_markup,
-                                ordinal_for_key)
+                                chord_prefix, ordinal_for_key)
 
 
 # -- label markup ---------------------------------------------------------------
 
 
-def test_key_first_char_splices_caret():
-    assert action_markup("save", "s") == f"[{KEY_STYLE}]^s[/]ave"
+def test_chord_prints_in_front_of_the_word():
+    """One shape for every button, chord first (2026-10-26): the chord is
+    no longer spliced into the word."""
+    assert action_markup("Save", "^s") == f"[{KEY_STYLE}]^s[/] Save"
 
 
 def test_key_style_override_recolors_the_chord():
-    assert action_markup("save", "s", "#ffe6c2") == "[#ffe6c2]^s[/]ave"
+    assert action_markup("Save", "^s", "#ffe6c2") == "[#ffe6c2]^s[/] Save"
 
 
-def test_key_mid_word_splices_before_its_char():
-    assert action_markup("fetch", "t") == f"fe[{KEY_STYLE}]^t[/]ch"
+def test_a_verbatim_chord_prints_as_given():
+    """^DEL and ESC are chords no ctrl+<char> can express."""
+    assert action_markup("Delete", "^DEL") == f"[{KEY_STYLE}]^DEL[/] Delete"
+    assert action_markup("Cancel", "ESC") == f"[{KEY_STYLE}]ESC[/] Cancel"
 
 
-def test_key_absent_from_word_prefixes():
-    assert (action_markup("convert", "x")
-            == f"[{KEY_STYLE}]^x[/] convert")
-
-
-def test_key_match_is_case_insensitive():
-    assert action_markup("Save", "s") == f"[{KEY_STYLE}]^S[/]ave"
-
-
-def test_no_key_no_markup():
-    assert action_markup("save", None) == "save"
+def test_no_chord_no_markup():
+    assert action_markup("Save", None) == "Save"
 
 
 def test_word_brackets_escaped():
     assert action_markup("a[b]", None) == r"a\[b]"
 
 
-def test_ordinal_prints_in_front_of_the_word():
-    assert (action_markup("save", "s", KEY_STYLE, 1)
-            == f"[{KEY_STYLE}]^1[/] [{KEY_STYLE}]^s[/]ave")
+def test_an_ordinal_replaces_the_letter():
+    """A numbered bar prints no letters: the number is the address."""
+    assert (action_markup("Save", "^s", KEY_STYLE, 1)
+            == f"[{KEY_STYLE}]{CHORD_PREFIX}1[/] Save")
 
 
 def test_ordinal_without_a_letter_chord():
-    assert (action_markup("save", None, KEY_STYLE, 3)
-            == f"[{KEY_STYLE}]^3[/] save")
+    assert (action_markup("Save", None, KEY_STYLE, 3)
+            == f"[{KEY_STYLE}]{CHORD_PREFIX}3[/] Save")
+
+
+def test_the_printed_ordinal_follows_the_terminal():
+    """^N cannot cross tmux, so under tmux the label says ⌥ and means it
+    (Nick, 2026-10-26). Both forms are always accepted."""
+    assert chord_prefix({"TMUX": "/tmp/tmux-501/default,1,0"}) == "\u2325"
+    assert chord_prefix({}) == "^"
+
+
+def test_printed_chord_comes_from_the_spec():
+    assert Action("save", "Save", "s").printed_chord == "^s"
+    assert Action("delete", "Delete", key_label="^DEL").printed_chord == "^DEL"
+    assert Action("plan_cancel", "Cancel").printed_chord is None
 
 
 def test_ordinal_for_key_reads_ctrl_digits():
@@ -184,27 +194,27 @@ async def test_number_from_offsets_a_second_bar():
 
 
 async def test_focus_recolors_the_chord():
-    # three-way chord color (theme.py): the focused (arrow-selected)
-    # button carries the selected token; otherwise the owning pane's
-    # idle/focus state picks the pair (set_pane_focus mirrors it).
-    # set_reactive-not-assignment matters here: Content.__eq__ compares
-    # plain text only, so a same-word recolor would otherwise be skipped.
+    """Two-way since 2026-10-26: the chord's color follows THIS button's
+    focus and nothing else. It used to have a third state for "some other
+    view has focus", which dimmed a button whose chord still worked.
+
+    set_reactive-not-assignment matters here: Content.__eq__ compares
+    plain text only, so a same-word recolor would otherwise be skipped.
+    """
     app = BarApp()
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
         button = app.query(ActionButton).nodes[1]   # [0] is auto-focused
-        assert IDLE_KEY_STYLE in str(button.label.markup)   # dim at rest
+        assert KEY_STYLE in str(button.label.markup)
         app.set_focus(button)
         await pilot.pause()
         assert SELECTED_KEY_STYLE in str(button.label.markup)
-        assert IDLE_KEY_STYLE not in str(button.label.markup)
         app.set_focus(None)
         await pilot.pause()
-        assert IDLE_KEY_STYLE in str(button.label.markup)   # blur: dim again
-        button.set_pane_focus(True)                         # pane lit
         assert KEY_STYLE in str(button.label.markup)
-        button.set_pane_focus(False)                        # pane idle
-        assert IDLE_KEY_STYLE in str(button.label.markup)
+        # the retired mirror is a no-op, not a third look
+        button.set_pane_focus(True)
+        assert KEY_STYLE in str(button.label.markup)
 
 
 async def test_focus_applies_its_css_at_once():

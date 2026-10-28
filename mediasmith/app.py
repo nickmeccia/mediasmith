@@ -15,7 +15,7 @@ from textual.containers import Horizontal
 from textual.scrollbar import ScrollBar, ScrollBarRender
 from textual.widgets import Input
 
-from . import strip
+from . import actions, strip
 from .browser import LibraryTree, PathInput, TreeView
 from .details import DetailsView
 from .strip import CommandStrip
@@ -103,31 +103,32 @@ class MediasmithApp(App):
     CSS = """
     #body { layout: horizontal; height: 1fr; }
     /* -- STATE: when each palette look applies (see theme.py — the
-       PALETTE). A view is "focused" when it owns focus; details counts a
-       focused child field (:focus-within). Rest = the dim idle look. */
-    /* The Tree View is ONE bordered pane; Path Input is a sub-view boxed
-       inside it (notes/mockups/path-input.txt). Focus on either child
-       lights the pane. */
+       PALETTE). Since 2026-10-26 a focusable ELEMENT carries its own
+       look ($element-*): grey, or PRIMARY when it is the one thing with
+       focus. What still flips with a VIEW's focus is only what belongs
+       to the view itself — its text color and its scrollbar. */
+    /* NO PANE BORDERS (always-available-actions-3, 2026-10-26). A border
+       said "this view has focus", which is the question the path model
+       stopped asking: focus is one ELEMENT, and the element says so with
+       its own background. The Path Input keeps a box because it is a box
+       — a text field you type into, not a pane. */
     /* the 1-cell inset lives on the PANE, not on its children: a child
        margin costs every sibling that width (vertical layout resolves
        1fr against the widest margin), which parked the tree's scrollbar
        3 cells off the border instead of 1 */
-    TreeView { width: 38%; min-width: 30; border: round $border-fg-idle;
-               padding: 0 1; }
-    TreeView:focus-within { border: round $border-fg-focus; }
-    /* ...except while the PATH is being typed: the input is its own box,
-       and two nested lit borders read as two focused things (Nick,
-       todo-5). PathInput toggles the class on focus/blur. */
-    TreeView.-path-editing:focus-within { border: round $border-fg-idle; }
-    PathInput { height: 3; background: $surface;
-              border: round $border-fg-idle; color: $text-fg-idle; }
-    PathInput:focus { border: round $border-fg-focus;
-                      color: $text-fg-focus; }
+    TreeView { width: 38%; min-width: 30; padding: 0 1; }
+    /* the Path Input and its chip share ONE box: the chip prints the key
+       that gets you in or out, inside the border, on the path's own line */
+    PathRow { height: 3; background: $surface; padding: 0 1;
+              border: round $element-bg; }
+    PathRow:focus-within { border: round $element-bg-focus; }
+    PathChip { width: 5; height: 1; }
+    PathInput { height: 1; width: 1fr; background: $surface;
+                border: none; padding: 0; color: $element-fg; }
     /* the "reading…" wait marker (browser.READING) rides the border, so a
        slow NAS read shows without displacing anything the user is typing */
-    PathInput { border-subtitle-align: right;
-                border-subtitle-color: $label-fg-idle; }
-    PathInput:focus { border-subtitle-color: $label-fg-focus; }
+    PathRow { border-subtitle-align: right;
+              border-subtitle-color: $label-fg-focus; }
     /* one cell wide to match the thin thumb glyphs */
     LibraryTree, DetailsView { scrollbar-size-vertical: 1; }
     /* text + scrollbar ride the same idle/focus flip */
@@ -159,28 +160,29 @@ class MediasmithApp(App):
     LibraryTree { background: transparent; }
     LibraryTree:focus { background-tint: transparent; }
     LibraryTree { height: 1fr; }
-    /* the selected node (tree cursor) swaps with the pane's focus */
-    LibraryTree > .tree--cursor { background: $node-selected-bg-idle; }
-    LibraryTree:focus > .tree--cursor {
-        background: $node-selected-bg-focus; }
+    /* every row is a focusable element: it wears the grey chip, and the
+       CURSOR wears PRIMARY — whether or not the tree has focus, because
+       nothing dims for being un-focused now. (The mockup greys the
+       cursor too and lets the connector carry the selection; the
+       connector is the next slice, so until then the accent stays
+       rather than leaving no selection cue at all.) */
+    LibraryTree > .tree--node-chip { background: $element-bg; }
+    LibraryTree > .tree--cursor { background: $element-bg-focus;
+                                  color: $element-fg-focus; }
     /* While the path bar edits, no node is "selected": hide the cursor. */
     LibraryTree.-editing > .tree--cursor { background: transparent;
                                            text-style: none; }
-    DetailsView { width: 1fr; border: round $border-fg-idle; padding: 0 1; }
-    DetailsView:focus, DetailsView:focus-within {
-        border: round $border-fg-focus; }
-    /* buttons ride the pane's idle/focus flip; the arrow-key-selected
-       button carries the selected pair */
-    ActionButton { background: $button-bg-idle; color: $button-fg-idle; }
-    DetailsView:focus-within ActionButton { background: $button-bg-focus;
-                                            color: $button-fg-focus; }
-    /* the selected pair needs the pane in its selector too: the rule
-       above (two type names) outranks a bare ActionButton:focus, so the
-       selected button was rendering in the plain focused-pane pair */
-    ActionButton:focus,
-    DetailsView:focus-within ActionButton:focus {
-        background: $button-selected-bg-focus;
-        color: $button-selected-fg-focus; }
+    DetailsView { width: 1fr; padding: 0 0 0 0; }
+    /* the connector's own column, down the pane's left edge. Docked, so
+       the line stays put while the content scrolls past it; the stub
+       cells are what used to be the pane's left padding. */
+    Spine { dock: left; width: 4; height: 100%; color: $element-bg; }
+    /* every button is a focusable ELEMENT: grey always, PRIMARY when it
+       is the one thing with focus. No view-focus flip — a button does not
+       dim because the cursor is in the tree; it is still available. */
+    ActionButton { background: $element-bg; color: $element-fg; }
+    ActionButton:focus { background: $element-bg-focus;
+                         color: $element-fg-focus; }
     .panel { height: auto; margin-top: 1; }
     .dtitle { text-style: bold; padding: 1 0 0 0; }
     #row-fname { height: 1; margin-top: 1; }
@@ -189,25 +191,22 @@ class MediasmithApp(App):
     .fmark { width: 2; color: $success; }
     EditForm { height: auto; }
     .frow { height: 1; }
-    /* field labels ride the pane's idle/focus flip */
-    .fkey { color: $label-fg-idle; }
-    DetailsView:focus-within .fkey { color: $label-fg-focus; }
+    /* a field's LABEL is its chip (FieldLabel paints it; the block hugs
+       the word plus one cell so the VALUES still line up) */
+    .fkey { color: $element-fg; }
     .fval { background: transparent; width: 1fr; }
-    .fval-static { color: $text-fg-idle; }
-    DetailsView:focus-within .fval-static { color: $text-fg-focus; }
+    .fval-static { color: $element-fg; }
     .cover { width: auto; height: 16; margin: 1 0 0 0; }
     /* pixel dimensions under a cover (album art, book cover, poster) */
-    .cover-dims { height: 1; color: $label-fg-idle; }
-    DetailsView:focus-within .cover-dims { color: $label-fg-focus; }
+    .cover-dims { height: 1; color: $label-fg-focus; }
     /* the audio art is a form field: image top-aligned with its label,
        left-aligned with the input column */
     #row-art { height: auto; }
-    #art-none { color: $label-fg-idle; }
-    DetailsView:focus-within #art-none { color: $label-fg-focus; }
+    #art-none { color: $label-fg-focus; }
     /* 1fr, not auto: a width-auto image inside a width-auto container
        resolves to 0 (no reference width for the aspect computation) */
     ArtField { width: 1fr; height: auto; }
-    ArtField:focus { outline: round $border-fg-focus; }
+    ArtField:focus { outline: round $element-bg-focus; }
     #cover-audio { margin: 0; }
     #row-art-buttons { height: auto; margin-top: 1; }
     #row-art-path { height: 1; margin-top: 1; }
@@ -215,28 +214,28 @@ class MediasmithApp(App):
     /* book cover: a path input toggled under the cover (art-path twin) */
     #book-cover-div { height: auto; margin-top: 1; }
     #book-cover-path { background: transparent; }
-    #book-cover-hint { height: 1; color: $label-fg-idle; }
-    DetailsView:focus-within #book-cover-hint { color: $label-fg-focus; }
-    #pane-bar { margin-top: 1; }
+    #book-cover-hint { height: 1; color: $label-fg-focus; }
+    /* the three bars: Contextual, File, Actions (always-available-actions-3).
+       One blank line above the STACK, none between the rows — they read as
+       one block of what is on offer. */
+    #bars { height: auto; margin-top: 1; }
+    #bars ActionBar { height: auto; }
     #shift-div { height: auto; margin-top: 1; }
     #shift-row { height: 1; }
     #shift-control { width: auto; }
     ShiftControl:focus { text-style: reverse; }
-    #shift-hint { height: 1; color: $label-fg-idle; }
-    DetailsView:focus-within #shift-hint { color: $label-fg-focus; }
+    #shift-hint { height: 1; color: $label-fg-focus; }
     /* the resize wizard div — same block shape as #shift-div */
     #resize-div { height: auto; margin-top: 1; }
     #resize-row { height: 1; }
     .resize-num { width: 7; background: transparent; }
-    #resize-x { width: 3; color: $label-fg-idle; text-align: center; }
-    DetailsView:focus-within #resize-x { color: $label-fg-focus; }
+    #resize-x { width: 3; color: $label-fg-focus; text-align: center; }
     #resize-link { margin-left: 2; }
     #resize-bar { margin-top: 1; }
     /* the gif wizard div — same block shape as resize */
     #gif-div { height: auto; margin-top: 1; }
     #gif-row { height: 1; }
-    .wsep { width: auto; color: $label-fg-idle; padding: 0 1; }
-    DetailsView:focus-within .wsep { color: $label-fg-focus; }
+    .wsep { width: auto; color: $label-fg-focus; padding: 0 1; }
     #gif-bar { margin-top: 1; }
     /* Image Trace: the stepper rows, then the picture filling the rest
        (its cell size is set in code — DetailsView._trace_previewed) */
@@ -244,15 +243,13 @@ class MediasmithApp(App):
     .trace-row { height: 1; }
     TraceControl { width: auto; }
     TraceControl:focus { text-style: reverse; }
-    #trace-hint { height: auto; color: $label-fg-idle; }
-    DetailsView:focus-within #trace-hint { color: $label-fg-focus; }
+    #trace-hint { height: auto; color: $label-fg-focus; }
     #trace-bar { margin-top: 1; }
     #plan-preview { height: auto; margin-top: 1; }
     #plan-tree { height: auto; }
     /* the editable split-omnibus form (shares .frow/.fkey/.fval) */
     #panel-omnibus { height: auto; margin-top: 1; }
-    .omni-source { color: $label-fg-idle; height: auto; }
-    DetailsView:focus-within .omni-source { color: $label-fg-focus; }
+    .omni-source { color: $label-fg-focus; height: auto; }
     .omni-book { height: auto; margin-top: 1; }
     .omni-head { text-style: bold; }
     /* -- narrow (phone) breakpoint: one column at a time. Which column
@@ -271,12 +268,8 @@ class MediasmithApp(App):
        would otherwise hold 2 cells open even at width 0 */
     .-narrow.-details-open TreeView { width: 0; border: none;
                                       padding: 0; }
-    ConfirmSave, ConfirmCaseRename { align: center middle; }
-    #confirm-box { width: auto; height: auto; padding: 1 2;
-                   background: $surface; border: round $border-fg-focus; }
-    #confirm-msg { margin-bottom: 1; }
-    #confirm-buttons { width: auto; height: auto; }
-    #confirm-buttons Button { margin-right: 2; }
+    /* the two confirm MODALS are gone (2026-10-26): a question is a state
+       of the Contextual bar now, so it needs no chrome of its own */
     """
 
     def __init__(self, start_dir: Path, images: str = "auto"):
@@ -291,6 +284,9 @@ class MediasmithApp(App):
         self._details_viewing = False
         """Narrow "view": the details column is swapped in while the tree
         keeps focus — read-only kinds, which never take focus themselves."""
+        self._chord_queue: list[tuple[str, Path | list[Path]]] = []
+        """Chords pressed while the pane was still building its bar, with
+        the row each was pressed ON (see the dispatch section below)."""
         self.lifted: list[Path] | None = None
         """The clipboard (^x cut / ^y copy): app-level so it survives
         selection changes and path-bar jumps — the long-distance flow is
@@ -330,8 +326,7 @@ class MediasmithApp(App):
         elif self.lifted is not None:       # clipboard active (tree focused)
             state = strip.STATE_CLIPBOARD
         else:
-            # ^f folderize prints only when the selection has one to give
-            state = strip.tree_state(details.folderize_action() is not None)
+            state = strip.tree_state()
         self.query_one(CommandStrip).set_entries(state)
         # narrow columns follow focus; "view" holds -details-open while the
         # tree keeps focus (wide layouts carry the classes but ignore them)
@@ -412,49 +407,122 @@ class MediasmithApp(App):
         self.end_lift()
         self.query_one(DetailsView)._sync_pane_bar()
 
+    # -- chord dispatch: the actions are ALWAYS available ----------------------
+    # Nick, 2026-10-26 (always-available-actions-3): the old rule was that a
+    # button's chord fired only while Details view held focus, which cost two
+    # keystrokes and a read per action and did not match what he was doing —
+    # "I visualize them almost as keys modifying the action I intend". Now a
+    # printed chord fires from the tree as well.
+    #
+    # Two things make that safe, and they are his answers #1 and #4:
+    #
+    #   · the TARGET is the tree's cursor, captured when the key is pressed —
+    #     never the pane's 150ms-debounced copy of it. That bug cost a ^DEL
+    #     the wrong row in session 9; always-available actions would have
+    #     handed the same bug to every one of them, most of which WRITE.
+    #   · a chord that arrives while the pane is still building its bar is
+    #     BUFFERED, not guessed at. It fires once the pane has settled on the
+    #     row it was pressed on — so ^3 means what the label said at the
+    #     moment of the keypress, and a probe landing late cannot move it.
+
+    CHORD_QUEUE_LIMIT = 4
+    """How many buffered chords are kept. A mashed key should not queue up a
+    minute of writes; past this the extras are dropped."""
+
     def on_key(self, event: events.Key) -> None:
-        # View-scoped dispatch (todo-4): a chord printed on a visible
-        # action button fires ONLY while Details view holds focus — the
-        # strip and the buttons are the contract for what a key does.
         if len(self.screen_stack) > 1:          # a modal owns the keys
             return
         details = self.query_one(DetailsView)
         focused = self.focused
-        # Delete: a TREE command (^DEL on the strip), app-dispatched
-        # because no single-char chord can name it. Both the forward-
-        # delete and the Mac backspace-labeled "delete" send it,
-        # depending on terminal; accept both.
-        if event.key in ("ctrl+delete", "ctrl+backspace"):
-            if (isinstance(focused, LibraryTree)
-                    and not details.plan_preview_open()):
-                event.stop()
-                # the TREE's highlight is the target, not the pane's
-                # debounced copy of it (a shift-range selection has no
-                # single target, so it keeps its hands-off rule)
-                cursor = (None if len(focused._selection_paths()) > 1
-                          else focused.cursor_path())
-                details.action_delete(cursor)
-            return
-        # Folderize is the one action reachable from BOTH views (Nick,
-        # 2026-08-22): ^f in the tree fires whichever folderize the
-        # selection is showing — video, single epub, or audio folder. It
-        # is on the tree's strip only while one is on show, so this stays
-        # inside the contract rather than beside it.
-        if event.key == "ctrl+f" and isinstance(focused, LibraryTree):
-            action = (None if details.plan_preview_open()
-                      else details.folderize_action())
-            if action is not None:
-                event.stop()
-                details.trigger(action)
+        if isinstance(focused, PathInput):
+            # a focused sub-view owns its keys (the pane's wizards do the
+            # same through _focus_scope): the path input is for typing
             return
         in_details = focused is not None and (
             focused is details or details in focused.ancestors)
-        if not in_details:
+        in_tree = isinstance(focused, LibraryTree)
+        if not (in_details or in_tree):
             return
-        action = details.action_for_key(event.key)
+        # Delete: app-dispatched because no single-char chord can name it.
+        # Both the forward-delete and the Mac backspace-labeled "delete"
+        # send it, depending on terminal; accept both.
+        if event.key in ("ctrl+delete", "ctrl+backspace"):
+            if not details.plan_preview_open():
+                event.stop()
+                self._chord(event.key, details, in_tree)
+            return
+        if not (actions.ordinal_for_key(event.key) is not None
+                or event.key in details.all_chords()):
+            return          # not a chord any button prints: leave it alone
+        event.stop()
+        self._chord(event.key, details, in_tree)
+
+    def _chord_target(self, in_tree: bool) -> Path | list[Path] | None:
+        """What a chord acts on, decided at the keypress."""
+        details = self.query_one(DetailsView)
+        if not in_tree:
+            return details.paths or details.path
+        tree = self.query_one(LibraryTree)
+        selection = tree._selection_paths()
+        return selection if len(selection) > 1 else tree.cursor_path()
+
+    def _chord(self, key: str, details: DetailsView, in_tree: bool) -> None:
+        """Fire now if the pane is settled on the captured row; otherwise
+        buffer and bring that row in (FIFO by target, Nick's answer #4)."""
+        target = self._chord_target(in_tree)
+        if target is None:
+            return
+        if details.busy or not details.showing(target):
+            if len(self._chord_queue) < self.CHORD_QUEUE_LIMIT:
+                self._chord_queue.append((key, target))
+            self._pull_in(target)
+            return
+        self._fire_chord(key, target)
+
+    def _pull_in(self, target: Path | list[Path]) -> None:
+        """Ask the pane for the row a buffered chord was pressed on."""
+        details = self.query_one(DetailsView)
+        if details.busy or details.showing(target):
+            return                              # already coming, or here
+        if isinstance(target, list):
+            details.preview_bulk(target, immediate=True)
+        else:
+            details.preview(target, immediate=True)
+
+    def _fire_chord(self, key: str, target: Path | list[Path]) -> None:
+        details = self.query_one(DetailsView)
+        if key in ("ctrl+delete", "ctrl+backspace"):
+            # a shift-range selection has no single target, so delete keeps
+            # its hands-off rule
+            details.action_delete(None if isinstance(target, list) else target)
+            return
+        action = details.action_for_key(key)
         if action is not None:
-            event.stop()
             details.trigger(action)
+            return
+        # a chord nothing on show answers: say so once, rather than leave a
+        # keypress looking dead (the ^s rule, 2026-08-25)
+        name = target[-1].name if isinstance(target, list) else target.name
+        self.notify(f"{name} has no action on that key",
+                    title="no action", severity="warning")
+
+    def on_details_view_settled(self, ev: DetailsView.Settled) -> None:
+        self._drain_chords()
+
+    def _drain_chords(self) -> None:
+        """Resolve buffered chords in order, each against the bar of the row
+        it was pressed on. A chord whose row offers nothing says so once."""
+        details = self.query_one(DetailsView)
+        while self._chord_queue and not details.busy:
+            key, target = self._chord_queue[0]
+            if not details.showing(target):
+                if isinstance(target, list) or target.exists():
+                    self._pull_in(target)
+                    return                      # resolve on its Settled
+                self._chord_queue.pop(0)        # the row is gone
+                continue
+            self._chord_queue.pop(0)
+            self._fire_chord(key, target)
 
     def on_library_tree_selected(self, ev: LibraryTree.Selected) -> None:
         self.query_one(PathInput).value = str(ev.path)
@@ -520,9 +588,9 @@ class MediasmithApp(App):
         if target is not None:
             tree._move_cursor(target.line)
         details = self.query_one(DetailsView)
-        details.preview(ev.path, immediate=True)
+        details.preview(ev.path, immediate=True, force=True)
         self.reveal_details()                   # narrow: display, then focus
-        details.focus()
+        details.focus_when_loaded()             # the read is in a worker now
 
     async def on_details_view_wrapped(
             self, ev: DetailsView.Wrapped) -> None:
@@ -543,9 +611,9 @@ class MediasmithApp(App):
         if target is not None:
             tree._move_cursor(target.line)
         details = self.query_one(DetailsView)
-        details.preview(ev.path, immediate=True)
+        details.preview(ev.path, immediate=True, force=True)
         self.reveal_details()                   # narrow: display, then focus
-        details.focus()
+        details.focus_when_loaded()             # the read is in a worker now
 
     async def on_details_view_deleted(self, ev: DetailsView.Deleted) -> None:
         tree = self.query_one(LibraryTree)

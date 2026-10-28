@@ -8,6 +8,8 @@ and the write half takes plain field dicts back.
 from __future__ import annotations
 
 import io
+import threading
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -85,10 +87,101 @@ Details = (AudioDetails | VideoDetails | BookDetails | ImageDetails
            | FolderDetails | VectorDetails | OtherDetails)
 
 
-def read_details(path: Path) -> Details:
-    """Read display metadata for ``path``. May raise OSError and friends."""
-    kind = kinds.kind_of(path)
-    return _READERS[kind](path)
+def read_details(path: Path, kind: str | None = None) -> Details:
+    """Read display metadata for ``path``. May raise OSError and friends.
+
+    Pass ``kind`` when the caller has already classified the path
+    (``resolve`` has) and the classifying stat goes with it.
+    """
+    return _READERS[kind or kinds.kind_of(path)](path)
+
+
+# -- resolve: one answer per selection, cached --------------------------------
+
+
+@dataclass(frozen=True)
+class Resolved:
+    """Everything the pane needs to show one selection, settled in a
+    single pass: the kind, the album-like children a folder edits as, and
+    the details themselves. One worker call, one cache entry — so a
+    revisit, and a descent onto the file already on screen, cost nothing.
+    """
+
+    path: Path
+    kind: str
+    bulk: list[Path] | None = None
+    """An album-like folder's writable children — the bulk form's input.
+    When this is set, ``details`` is None: the bulk read is its own pass."""
+    details: Details | None = None
+
+
+# Keyed by path ALONE, never by an mtime signature: validating one is a
+# stat, and a stat on a spun-down SMB disk is exactly the freeze rule 4
+# forbids on the event loop (2026-08-22). The cache is ours to invalidate
+# instead — every write that lands calls `forget`, and ^r refresh, which
+# already drops the listing cache, drops this one with it.
+#
+# Bounded, because an entry carries cover and poster BYTES: 3,000 albums
+# of half-megabyte art would be gigabytes. 64 is deep enough for the
+# browsing this exists to make free — up and down one folder, and back to
+# the file you just left.
+# A lock, because the two sides live on different threads: `resolve` fills
+# the cache from a worker while `peek` and `forget` read and clear it on the
+# event loop. Without it, forget's sweep can iterate a dict the worker is
+# writing — "mutated during iteration", mid-browse, which in a TUI reads as
+# a silent death.
+_CACHE_LIMIT = 64
+_LOCK = threading.Lock()
+_cache: "OrderedDict[Path, Resolved]" = OrderedDict()
+
+
+def resolve(path: Path, is_dir: bool | None = None) -> Resolved:
+    """``peek``'s cold path: read the selection and cache the answer.
+
+    THREAD ONLY — it reads the filesystem. Pass ``is_dir`` when the
+    caller already knows (the tree does, from its DirEntry), and the
+    classifying stat goes away too.
+    """
+    hit = peek(path)
+    if hit is not None:
+        return hit
+    # the read itself runs OUTSIDE the lock: it is the slow part, and two
+    # selections reading different files must not queue behind each other
+    kind = kinds.kind_of(path, is_dir=is_dir)
+    if kind == kinds.FOLDER:
+        resolved = Resolved(path, kind, bulk=bulk_paths_for_folder(path))
+        if resolved.bulk is None:
+            resolved = Resolved(path, kind, details=read_details(path, kind))
+    else:
+        resolved = Resolved(path, kind, details=read_details(path, kind))
+    with _LOCK:
+        _cache[path] = resolved
+        while len(_cache) > _CACHE_LIMIT:
+            _cache.popitem(last=False)
+    return resolved
+
+
+def peek(path: Path) -> Resolved | None:
+    """The cached answer, or None. The ONLY read that is safe on the
+    event loop, because it never touches the filesystem."""
+    with _LOCK:
+        hit = _cache.get(path)
+        if hit is not None:
+            _cache.move_to_end(path)
+        return hit
+
+
+def forget(path: Path | None = None) -> None:
+    """Drop cached answers: ``path`` and anything cached beneath it, or
+    everything when called bare. Every write that lands calls this — the
+    cache has no other way to learn that a file changed."""
+    with _LOCK:
+        if path is None:
+            _cache.clear()
+            return
+        for cached in [p for p in _cache
+                       if p == path or path in p.parents]:
+            del _cache[cached]
 
 
 def _read_audio(path: Path) -> AudioDetails:
@@ -335,6 +428,7 @@ def can_write(path: Path) -> bool:
 
 def write_details(path: Path, fields: dict[str, str]) -> None:
     """Write metadata ``fields`` back to ``path``. May raise."""
+    forget(path)
     kind = kinds.kind_of(path)
     if kind == kinds.AUDIO:
         _write_audio(path, fields)
@@ -361,6 +455,7 @@ def _write_audio(path: Path, fields: dict[str, str]) -> None:
 
 def write_cover(path: Path, data: bytes) -> None:
     """Embed ``data`` as the (only) cover art. May raise."""
+    forget(path)
     ext = path.suffix.lower()
     mime = ("image/png" if data[:8] == b"\x89PNG\r\n\x1a\n"
             else "image/jpeg")
@@ -419,6 +514,8 @@ def rename(path: Path, new_name: str) -> Path:
         casing.rename(path, target)
     else:
         path.rename(target)
+    forget(path)            # the old name's answer, and anything under it
+    forget(target)          # …and whatever the new name used to be
     return target
 
 
@@ -440,6 +537,7 @@ def create_folder(parent: Path, base: str = "untitled folder") -> Path:
         target = parent / f"{base} {n}"
         n += 1
     target.mkdir()
+    forget(parent)          # the parent's album-folder probe just changed
     return target
 
 
@@ -448,6 +546,8 @@ def trash(path: Path) -> None:
     design that keeps delete out of the confirm-modal trap. May raise."""
     from send2trash import send2trash
     send2trash(str(path))
+    forget(path)
+    forget(path.parent)     # one child fewer: the bulk probe may flip
 
 
 def save_details(path: Path, new_name: str, fields: dict[str, str],

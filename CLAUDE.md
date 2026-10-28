@@ -40,71 +40,116 @@ implementation to consult, not code to import.
 - Actions are contextual per kind: video → download subtitles/posters,
   audio → editable tag form, book → Calibre-backed metadata, folder →
   whole-folder actions.
-- **Chords are view-scoped**: a button's `^x` fires only while Details
-  view holds focus; tree commands (`^x cut`, `^y copy`, `^v paste`,
-  `^n new directory`, `^DEL delete`, `^/ path`) exist only while the
-  tree holds focus. The Command Strip is the contract — a keybinding not
-  shown for the current state does not work in that state (`strip.py`
-  holds the state tables).
+- **Every printed chord works from either view** (2026-10-26): a button's
+  chord fires whether the tree or the pane holds focus, because the
+  button is on screen either way. What is printed is still the whole
+  contract — it just lives in two places now: `strip.py` holds the
+  TREE's commands (navigate, expand/collapse, ⏎ edit, `^r`, `^.`,
+  `^n`, `^q`), and the three bars hold the file's (`^o` `^x` `^y` `^DEL`
+  by letter, every kind action by position). The one exception is a
+  sub-form that owns focus — a wizard, an import input, the path input —
+  which confines the keys to itself until you save or esc.
 
-## Interaction model: the pane hierarchy
+## Interaction model: focus moves along a path
 
-Nick's core mental model — every navigation or focus decision must stay
-consistent with it. The views form a chain of command; **each view
-controls the view beneath it**, and the details view controls the file
-itself. Focus only ever moves one link at a time: descending is always
-deliberate, ascending is always esc-shaped.
+Nick's core mental model, revised 2026-10-26 (`notes/mockups/always-
+available-actions-3.txt`). It used to be a chain of command — each view
+controlling the view beneath it, focus crossing a view boundary to reach
+anything. Using it taught him the cost: every action needed a ⏎ to enter
+details and an esc to leave, two keystrokes that "don't connect to my
+mental model of what I'm doing — I visualize them almost as keys
+modifying the action I intend."
+
+So the views stopped being rooms you enter. **Focus is ONE element at a
+time, it moves between ADJACENT elements with the arrow keys, and the
+actions are available from wherever you are.** The chain survives as the
+shape of the path, not as a wall between views.
 
 ```
-        ┌──────────────┐
-        │  path input  │   a SUB-VIEW of the tree view; controls which
-        └──────┬───────┘   directory/filter the tree shows (live typing)
-   descend: ⏎ / esc (commit / cancel — the input never keeps focus)
-   ascend:  ^/ — from the TREE ONLY (a tree-state strip command)
-        ┌──────▼───────┐
-        │  tree view   │   what it controls: which file (or selection)
-        └──────┬───────┘   the details view shows — HOME BASE: never
-   descend: ⏎ — every kind   gives up focus implicitly, ↑ at top stays put
-     is enterable (rename form at minimum); ⏎ is the ONLY descent —
-     ⇥ was a hidden alias for it and is now the fold key (todo-5);
-     · → expands folders ONLY (the "→ edit" duplicate is retired);
-     · ⇥ folds the folder under the cursor: → and ← in one key;
-     · tree commands: ^x cut, ^y copy, ^v paste, ^n new directory,
-       ^DEL delete, ^← (⇧← alias) collapse level — clipboard state
-       forbids ⏎ edit and a second cut
-   ascend:  esc · ← when ← has no other job (text cursor at start,
-            leftmost method button, pane itself focused)
-        ┌──────▼───────┐
-        │ details view │   what it controls: the file's name, tags,
-        └──────┬───────┘   and art — all edits PENDING until saved
-   descend: into a SUB-FORM (wizard/import input/plan form) — which then
-     OWNS focus (todo-4 "Focus" lockdown, DetailsView._focus_scope):
-     only its commands transmit; save or esc to leave. Otherwise the
-     descent is the write:
-     · ^s (or the save button) commits; esc with pending edits asks
-       (ConfirmSave modal: save / discard / keep editing)
-     · ✓ after a field = the write manifest: exactly what ^s will touch
-        ┌──────▼───────┐
-        │   the file   │
-        └──────────────┘
+   ╭─ the path ────────────────────────────────────────────────────────╮
+   │                                                                   │
+   │   ┌─────────────┐                                                 │
+   │   │ path input  │  ^/ from the tree · esc or ⏎ leaves             │
+   │   └──────┬──────┘  (it owns its keys while it has focus:          │
+   │          │          typing a path fires no actions)               │
+   │       ^/ │ esc                                                    │
+   │   ┌──────▼──────┐                           ┌──────────────────┐  │
+   │   │  tree view  │ ──── → or ⏎ descends ───► │  filename field  │  │
+   │   │   (cursor)  │ ◄───── esc or ← ───────── └────────┬─────────┘  │
+   │   └─────────────┘                                 ↑↓ │            │
+   │     HOME BASE                              ┌────────▼─────────┐   │
+   │     ↑↓ rows · → open/descend                │   the fields    │   │
+   │     ← collapse/ascend · ⇥ fold              └────────┬────────┘   │
+   │                                                   ↑↓ │            │
+   │                                            ┌─────────▼────────┐   │
+   │                                            │   a BAR = one    │   │
+   │                                            │   row: ←→ within │   │
+   │                                            └──────────────────┘   │
+   ╰───────────────────────────────────────────────────────────────────╯
+
+   and from ANY of those, every printed chord fires its action:
+
+        the strip ────────► the TREE's commands  (↓↑ · → · ← · ^←
+                                                  · ⏎ · ^r ^. ^n ^q)
+        ^s Save ──────────► the Contextual bar — what the STATE offers
+        ^o ^x ^y ^DEL ───► the File bar — what every file offers
+        ^1 … ^9 ─────────► the Actions bar — what this KIND offers
+                            (⌥1…⌥9 under tmux: ^N cannot cross it)
+```
+
+What is printed works, and what works is printed — the contract is
+unchanged, but it now lives in TWO places, because the file commands wear
+buttons that are on screen from the tree: **the strip speaks for the
+tree, each bar speaks for the file.**
+
+Two properties make "always available" safe, and they are not optional:
+
+```
+   ^3 pressed here ──┐
+                     │  the TARGET is the tree's cursor, captured at the
+   ↓ (cursor moves)  │  KEYPRESS — never the pane's 150ms-debounced copy
+                     │  of it. (That cost a ^DEL the wrong row in session
+                     ▼  9; always-available actions would hand the same
+   …fires on the row    bug to all ~30 actions, most of which WRITE.)
+   it was pressed on
+
+   ^3 pressed while the bar is still being built:
+        ┌──────────┐   buffered    ┌──────────┐   resolved against the
+        │ keypress │ ───────────►  │  queue   │ ─ bar of the row it was
+        └──────────┘  (depth 4)    └────┬─────┘   pressed on, once the
+                                        │         pane says it settled
+                 DetailsView.Settled ───┘         (read in AND every
+                                                   button probe answered)
 ```
 
 Consequences that follow from the model (don't break them):
 
-- Within details: filename field first, ↑↓/⇥ move between fields, inputs
-  are immediately editable on focus (cursor at end, nothing selected).
-- Action methods (album art today, more later): compact buttons under
-  the target, left→right, each printing its shortcut ("im^port"); ↓
-  from the field above reaches them, ←→ moves within the row, ⏎ or the
-  shortcut activates. Their results feed the same pending/✓/save flow.
-- Focus lockdown: a focused sub-form (wizard, import input, plan form)
-  confines ↑↓ and chords to its own controls
-  (`DetailsView._focus_scope` / `_nav_items`) — leave by saving or esc.
-- Bulk editing rides the same chain: the browser's *selection* (shift
+- **Every descent is one step.** → or ⏎ on a file goes to the filename
+  field; → on a folder opens the folder (its children ARE the next step).
+  esc or ← comes back up. Nothing crosses two links at once.
+- ↑↓ move a ROW at a time, and a BAR IS ONE ROW, entered at its first
+  button (`DetailsView._nav_rows`). ←→ move inside a row. Getting past
+  nine converts costs one keystroke, not nine.
+- Within details: filename field first, inputs immediately editable on
+  focus (cursor at end, nothing selected).
+- Action methods (album art today): compact buttons under the target,
+  left→right; ↓ from the field above reaches them as one row. Their
+  results feed the same pending/✓/save flow.
+- Focus lockdown survives and is the ONE exception to "always
+  available": a focused sub-form (wizard, import input, plan form)
+  confines ↑↓ and chords to its own controls (`_focus_scope` /
+  `_nav_items`) — leave by saving or esc. The path input is the same
+  rule one level up.
+- Two actions take focus on purpose: a plan preview lands on its Apply
+  button, and a wrap (video folderize, new folder) descends into the new
+  thing's rename field.
+- Bulk editing rides the same path: the browser's *selection* (shift
   range, or an album-like leaf folder ≡ its writable children) is what
-  descends into details; the bulk form writes only ✓-marked fields, to
-  every file. Divergent values show a `(mixed)` placeholder; a mixed
-  field emptied back out returns to "leave every file alone."
+  descends into details, and a chord captured on the FOLDER resolves
+  against the bulk form it opens (`DetailsView.showing`). The bulk form
+  writes only ✓-marked fields, to every file. Divergent values show a
+  `(mixed)` placeholder; a mixed field emptied back out returns to
+  "leave every file alone."
 
 ## Architecture rules
 
@@ -147,6 +192,16 @@ Consequences that follow from the model (don't break them):
      which is exactly how Nick lost a session (2026-08-22). `fs` exposes
      an async front door for this: `alist_dir`, `acached_children`,
      `ais_dir`, `anode_type`. The plain functions are thread-only.
+   - the DETAILS read obeys the same rule since 2026-10-26.
+     `adapters.resolve` (kind + album-folder probe + `read_details`, one
+     pass) runs in a worker and its answer is cached — bounded, keyed by
+     PATH, never by an mtime signature, because validating one is a stat.
+     The cache is invalidated by the WRITER instead (every write in
+     `adapters` forgets its own path) and by `^r`, which drops both
+     caches. `adapters.peek` is the only read safe on the event loop: it
+     never touches the filesystem. A descent onto the row already shown
+     therefore costs nothing — that duplicate synchronous read was the
+     "<1s delay entering details view" Nick complained of.
 
 5. **Every color lives in `mediasmith/theme.py`** (Nick's palette,
    todo-4). CSS holds only STATE — which token applies when (idle/focus
@@ -155,7 +210,7 @@ Consequences that follow from the model (don't break them):
    button labels are markup, not CSS — `DetailsView._sync_button_chrome`
    mirrors the pane's focus flip onto them.
 
-## The action pattern cookbook (2026-07-11, revised 2026-08-12)
+## The action pattern cookbook (2026-07-11, revised 2026-10-26)
 
 Contextual actions are standardized; **do not invent a new shape for a
 new feature — copy one of these.** Worked examples live in commits
@@ -163,23 +218,32 @@ new feature — copy one of these.** Worked examples live in commits
 
 Adding any action, end to end:
 
-1. `Action("name", "word", "k")` appended to `PANE_ACTIONS`
-   (details.py) — words/keys/order follow todo-4's Button Refactor.
-   The label prints `^k` in the keybinding token color, spliced into
-   the word when the char is in it (`actions.action_markup`).
-   Keys are placeholders — Nick renames them; note new ones in
-   `notes/qa/todo-2.md` (the active QA ledger). Never use
-   `actions.RESERVED_KEYS`. Input-eaten chords (a/e/u/w/x…) are OK on
-   buttons now: `FieldInput.on_key` forwards a chord to a visible
-   button before Input can eat it.
-2. A visibility rule in `_sync_pane_bar` — the bar is composed ONCE
-   with the full palette; context only shows/hides. Expensive
-   detection (folderize probe) runs in a worker and fills in late.
-3. An `action_<name>` handler. Chords are VIEW-SCOPED (todo-4): they
-   fire only while Details view holds focus (`App.on_key` →
-   `DetailsView.action_for_key`, filtered by `_focus_scope`). Every
-   kind is enterable (⏎ → rename form), so every button is reachable.
-   Still guard the handler by kind/state, not by focus.
+1. `Action("name", "Word")` appended to `PANE_ACTIONS` (details.py).
+   A kind action needs NO key: the Actions bar is positional, so it
+   answers to `^1…^9` by where it prints (`^N` locally, `⌥N` under
+   tmux — `actions.chord_prefix`). Words are capitalized and the chord
+   is NOT spliced into them any more: one shape for every button,
+   `^3 Fetch Subtitles` (`actions.action_markup`). Name the bar with
+   `bar=CONTEXTUAL` or `bar=FILE` only for something that belongs to
+   the pane's STATE or to every file; those two bars keep letters,
+   and a letter must never work without being printed. Note anything
+   Nick should rename in `notes/qa/todo-2.md` (the active QA ledger).
+   Never use `actions.RESERVED_KEYS`. Input-eaten chords are fine on
+   buttons: `FieldInput.on_key` forwards a chord to a visible button
+   before Input can eat it.
+2. A visibility rule in `_sync_pane_bar` — every bar is composed ONCE
+   with the full palette; context only shows/hides, and one `names`
+   set fans out to all three. Expensive detection runs in a worker and
+   fills in late; if it puts a BUTTON on the bar, register it in
+   `DetailsView.BUTTON_PROBES` so `settled` waits for it — a probe
+   that lands late renumbers every button to its right, and a
+   positional chord must never move under a finger already on its way
+   down (Nick, 2026-10-26).
+3. An `action_<name>` handler. Chords fire from EITHER view
+   (`App.on_key` → `_chord` → `DetailsView.action_for_key`, filtered
+   by `_focus_scope`), so the handler's target comes from the app's
+   capture, not from focus: it acts on the row the cursor was on when
+   the key went down. Guard by kind/state, never by focus.
 4. Slow work in `@work(thread=True)` + `call_from_thread`; check the
    selection hasn't moved before applying results.
 5. Filesystem products: refuse-overwrite everywhere (no silent
@@ -193,11 +257,15 @@ Adding any action, end to end:
    `self.notify`.
 6. Options-before-action ("wizard"): an inline div toggled under the
    fields (art-path row is the exemplar; image-resize and subtitle-
-   shift follow it). **Never a modal** for options. Modals are for a
-   DESTRUCTIVE FORK mid-write, where no answer can be inferred, and
-   there are exactly two: ConfirmSave, and ConfirmCaseRename (Nick,
-   2026-08-25 — a folder that already exists under a different casing:
-   rename keeping contents / rename trashing them / cancel).
+   shift follow it). **There are NO MODALS** (Nick, 2026-10-26). The app
+   had exactly two, both destructive forks mid-write whose answer could
+   not be inferred — save/discard/keep-editing, and a folder that
+   already exists under a different casing — and both are now QUESTIONS
+   on the Contextual bar: `DetailsView.ask(choices, decided, prompt)`
+   swaps the bar's buttons for the answers, focuses the first, locks
+   ↑↓/←→/chords to that bar until one is pressed, and puts focus back
+   where it was. Any explanation rides a toast; the buttons are the
+   question. A new fork of that shape uses `ask`, never a screen.
 6b. Anything the user's keypress WRITES says so when it lands — a
    silent success reads as a dead key (`^s` acknowledges through the
    same toast the converts use, 2026-08-25).
@@ -243,7 +311,7 @@ Test-driven, calibrated by layer — this replaces Nick-as-only-QA:
    cache/debounce work and the metadata-read adapter layer.
 2. **Editing** — ✅ audio tags + epub metadata + rename + album art
    (path entry and iTunes-API fetch, in `artfetch.py`); ✓-mark write
-   manifest; ConfirmSave modal.
+   manifest; the save question (a ConfirmSave modal until 2026-10-26).
 3. **Engine actions** — in progress via notes/claude/todo-*.md (the
    active queue) + notes/claude/handoff.md (briefs). Shipped
    2026-07-11: the action-button pattern, book convert/extract-cover/
@@ -358,8 +426,36 @@ Test-driven, calibrated by layer — this replaces Nick-as-only-QA:
    group is a CLIP the gradient paints through, not a fill on top of
    it. Miss the second and a gradient logo comes back as a black
    silhouette. New kind: VECTOR (.ai/.eps/.svg/.pdf), the seventh
-   panel; the canvas probe is a worker because `read_details` is on the
-   event loop and the private data is ½ MB to inflate.
+   panel; the canvas probe is a worker because `read_details` was on the
+   event loop and the private data is ½ MB to inflate. Session 20
+   (2026-10-26, Opus — logged in notes/qa/todo-2.md): ALWAYS-AVAILABLE
+   ACTIONS, the revision above, built in six slices off
+   `notes/mockups/always-available-actions-3.txt`. Slices 0–3a are in:
+   (0) the read moved off the event loop into `adapters.resolve` +
+   a bounded cache invalidated by the writer, which is where the "<1s
+   entering details" actually was — a duplicate synchronous read of the
+   file already on screen — plus `DetailsView.settled`, the signal the
+   rest hangs on; (1) the one pane bar became three (Contextual/File/
+   Actions), labels lost their spliced letters and gained capitals, and
+   the Actions bar went positional-only; (2) chords fire from the tree,
+   targeted at the cursor captured AT THE KEYPRESS and buffered until
+   the bar settles, with `^f`-folderize's special case retired and the
+   strip re-split; (3a) `→` descends on a file and `↑↓` walk a ROW at a
+   time, a bar being one row; (3b) the chrome — no pane borders, six
+   `element-*` tokens replacing the idle/focus PAIRS, a field's label as
+   its grey/PRIMARY chip (`FieldLabel`), the same chip on every tree row
+   (`tree--node-chip`), a labelled filename sharing the panel's column,
+   and the `^/`→`ESC` chip inside the path box; (4) the micro-modals —
+   both ModalScreens DELETED, a destructive fork is now a QUESTION on
+   the Contextual bar (`DetailsView.ask`, cookbook rule 6).
+   What remains is slice 5 — the connector and the fixed-pane scroll
+   architecture — plus two deferred bits of chrome: labels beside the
+   cover/poster/art IMAGES (the image sizing inside a labelled row rides
+   a fragile `width: 1fr`), and the braille spinner moving onto the
+   loading tree node. One open question for Nick: the mockup greys EVERY
+   tree row because the connector carries the selection, so the cursor
+   keeps its accent until slice 5 lands rather than leaving a slice with
+   no selection cue at all.
    ⬅ you are here
 4. **Batch operations.** Partially done ahead of schedule: shift-range
    and album-folder bulk editing shipped (2026-07-10); space-marking +

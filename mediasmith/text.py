@@ -7,6 +7,12 @@ import re
 
 _FS_ILLEGAL = re.compile(r'[/\\:*?"<>|\x00-\x1f]')
 
+READING = "reading\u2026"
+"""The wait marker, shown wherever a filesystem answer is in flight: the
+Path Input's border while a listing loads, the details title while a read
+does. The NAS can take seconds to spin up; Finder makes that wait
+visible, so do we."""
+
 
 def infer_author_sort(author: str) -> str:
     """'First Last' → 'Last, First'; pass-through if already sorted or a

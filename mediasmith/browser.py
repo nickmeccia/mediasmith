@@ -15,22 +15,22 @@ from rich.text import Text
 from textual import events, work
 from textual._segment_tools import line_pad
 from textual.binding import Binding
-from textual.containers import Vertical
+from textual.containers import Horizontal, Vertical
 from textual.geometry import Region, Size
 from textual.message import Message
 from textual.strip import Strip
 from textual.suggester import Suggester
-from textual.widgets import DirectoryTree, Input
+from textual.content import Content
+from textual.widgets import DirectoryTree, Input, Label
 from textual.worker import get_current_worker
 
-from . import fs
+from . import actions, adapters, fs, text
 from .details import DEBOUNCE_SECONDS, WORD_BINDINGS, DetailsView
 
 TYPE_SEARCH_SECONDS = 1.0   # Finder-style: pause this long and the buffer resets
 
-READING = "reading\u2026"
-"""Path Input border subtitle while a listing is in flight. The NAS can
-take seconds to spin up; Finder makes that wait visible, so do we."""
+# re-exported: browser.READING is the name the app and its tests use
+READING = text.READING
 
 LOAD_TIMEOUT = 30.0
 """Ceiling on the restore's wait for Textual's load queue (``_apply_restore``).
@@ -93,6 +93,29 @@ class PathSuggester(Suggester):
         return value + first.name[prefix_len:] + ("/" if first.is_dir() else "")
 
 
+class PathChip(Label):
+    """The Path Input's own keybinding, printed inside its box.
+
+    `^/` while the tree has focus — the key that gets you here — and
+    `ESC` while the input has it, the key that gets you out (Nick,
+    2026-10-26). Three cells either way, so the value never shifts.
+    """
+
+    def __init__(self, **kw) -> None:
+        super().__init__(**kw)
+        self.set_focused(False)
+
+    def set_focused(self, value: bool) -> None:
+        self.update(Content.from_markup(
+            f"[$element-key]{'ESC' if value else '^/ '}[/]"))
+
+
+class PathRow(Horizontal):
+    """The Path Input and its chip, in one box. The BORDER lives here, so
+    the chip sits inside it on the same line as the path — and so the
+    "reading…" marker rides this border rather than the input's."""
+
+
 class PathInput(Input):
     """Full path of the selection; when focused, a live filter for the tree."""
 
@@ -124,8 +147,12 @@ class PathInput(Input):
         super().__init__(*args, **kwargs)
         self.suggester = PathSuggester(self)
 
+    def _row(self) -> "PathRow":
+        return self.app.query_one(PathRow)
+
     def on_focus(self) -> None:
         self._committing = False
+        self.app.query_one(PathChip).set_focused(True)
         # Editing the path means no tree node is selected: the tree becomes
         # a live preview and the details pane empties until focus returns.
         # (-editing hides the cursor and mutes highlight messages — the Tree
@@ -157,13 +184,13 @@ class PathInput(Input):
     def _reading(self):
         """Mark the pane as waiting on the filesystem, for as long as it is."""
         self._reads += 1
-        self.border_subtitle = READING
+        self._row().border_subtitle = READING
         try:
             yield
         finally:
             self._reads -= 1
             if not self._reads:
-                self.border_subtitle = ""
+                self._row().border_subtitle = ""
 
     async def _matches(self, value: str | None = None) -> list[fs.CachedPath]:
         """Entries of the typed directory that the last segment prefixes.
@@ -227,6 +254,7 @@ class PathInput(Input):
         tree = self.app.query_one(LibraryTree)
         tree.remove_class("-editing")
         self.app.query_one(TreeView).remove_class("-path-editing")
+        self.app.query_one(PathChip).set_focused(False)
         if tree.view_filter is not None:
             matches = await self._matches()
             top = matches[0] if matches else None
@@ -264,6 +292,13 @@ class PathInput(Input):
 
 class LibraryTree(DirectoryTree):
     """DirectoryTree with cached (NAS-friendly) listings and fold keys."""
+
+    COMPONENT_CLASSES = DirectoryTree.COMPONENT_CLASSES | {
+        "tree--node-chip",
+    }
+    """The grey block every row wears to say "this is a focusable thing"
+    (always-available-actions-3). Colored in app.py's CSS, like every
+    other component class."""
 
     BINDINGS = [
         Binding("right", "expand", "expand", show=False),
@@ -592,13 +627,26 @@ class LibraryTree(DirectoryTree):
         return [p for p in paths if not p.name.startswith(".")]
 
     def action_expand(self) -> None:
+        """→ : open a folder, or DESCEND on a file.
+
+        The path model (always-available-actions-3, 2026-10-26): focus
+        moves along a path, and → is the step along it. On a folder that
+        step is still "show me what is inside" — it has children to
+        become. A file has none, so its step is into its details, which
+        is the same descent ⏎ makes.
+
+        This brings back a "→ edit" that todo-5 retired as a duplicate of
+        ⏎. It is not a duplicate any more: under the path model → is the
+        one direction key, and ⏎ is the shortcut that skips the folder
+        case.
+        """
         node = self.cursor_node
         if node is None:
             return
         if node.allow_expand:
             node.expand()
-        # → on a file: nothing. Nick retired the "→ edit" duplicate —
-        # ⏎ is the one edit key (todo-4 strip refactor).
+        else:
+            self.action_edit()
 
     async def action_collapse(self) -> None:
         node = self.cursor_node
@@ -665,19 +713,21 @@ class LibraryTree(DirectoryTree):
         details = self.app.query_one(DetailsView)
         node = self.cursor_node
         selection = self._selection_paths()
-        # skip the debounce: a keypress within 150ms of landing on the
-        # row must not descend into a stale (or empty) details view
+        if node is None or node.data is None:
+            return
+        # Skip the debounce: a keypress within 150ms of landing on the row
+        # must not descend into a stale (or empty) details view.
         if len(selection) > 1:
             details.preview_bulk(selection, immediate=True)
-        elif node is not None and node.data is not None:
+        else:
             details.preview(Path(node.data.path), immediate=True)
-        if details.can_edit():
-            self.app.reveal_details()       # narrow: display before focusing
-            details.focus()
-        elif details.loading_bulk:          # descend once the merge lands
-            self.app.reveal_details()
-            details.focus_when_loaded()
-        elif node is not None and node.data is not None:
+        # Then ARM the descent rather than wait for it: a pane already
+        # showing this row takes focus in the same breath (which is the
+        # whole <1s — 2026-10-26), and a cold one takes it when its read
+        # lands. Either way the NAS never blocks the keypress.
+        self.app.reveal_details()           # narrow: display before focusing
+        details.focus_when_loaded()
+        if not (details.can_edit() or details.reading):
             # read-only kinds never take focus; on narrow the same key
             # "views" them — details swaps in, the tree keeps the keys
             self.app.view_details()
@@ -696,9 +746,14 @@ class LibraryTree(DirectoryTree):
         pass
 
     async def action_refresh(self) -> None:
-        """Force a re-read: drop the listing cache (SMB can serve stale
-        mtimes), reload, and keep expansion, cursor, and details."""
+        """Force a re-read: drop the caches (SMB can serve stale mtimes,
+        and the details cache is only ever invalidated by our own writes),
+        reload, and keep expansion, cursor, and details."""
         fs.clear_cache()
+        adapters.forget()
+        # the pane short-circuits a re-select of what it already shows, so
+        # dropping the caches is not enough — tell it to re-read as well
+        self.app.query_one(DetailsView).invalidate()
         node = self.cursor_node
         cursor = (Path(node.data.path)
                   if node is not None and node.data is not None
@@ -978,6 +1033,13 @@ class LibraryTree(DirectoryTree):
                 hover = hover or node._hover
 
             label_style = self.get_component_rich_style("tree--label", partial=True)
+            # every row is a focusable thing, so every row wears the chip
+            # (always-available-actions-3 Layer 1): GREY_30 behind the
+            # icon and the name, and the CURSOR's own style on top of it
+            # below. The pad after the name keeps the row background, so
+            # the block hugs the label exactly as a button's does.
+            label_style += self.get_component_rich_style("tree--node-chip",
+                                                         partial=True)
             if self.hover_line == y:
                 label_style += self.get_component_rich_style(
                     "tree--highlight", partial=True
@@ -1028,6 +1090,13 @@ class LibraryTree(DirectoryTree):
         """Typed text jumps the cursor to the closest visible name."""
         if not event.is_printable or event.character is None:
             self._reset_search()   # navigation cancels the type-ahead
+            return
+        if actions.ordinal_for_key(event.key) is not None:
+            # ⌥+digit arrives as a printable macOS Option GLYPH (¡™£¢∞§¶•ª),
+            # so the type-ahead would eat the one positional spelling that
+            # crosses tmux before App.on_key ever saw it (2026-10-26). A
+            # positional chord is a command, not a letter to search for.
+            self._reset_search()
             return
         if event.character == " " and not self._search_buffer:
             return   # a bare space stays a key; mid-search it is text
@@ -1112,5 +1181,7 @@ class TreeView(Vertical):
         self._start_dir = start_dir
 
     def compose(self):
-        yield PathInput(value=str(self._start_dir))
+        with PathRow(id="path-row"):
+            yield PathChip(id="path-chip")
+            yield PathInput(value=str(self._start_dir))
         yield LibraryTree(self._start_dir)

@@ -33,28 +33,26 @@ KEYS = ([b"\x1b[B"] * 5 + [b"\x1b[A"] * 3
         + [b"\x1b[C", b"\x1b[D", b" ", b"\t", b"\r", b"c",
            b"\x1b[1;2B", b"\x1b[1;2A",   # shift+↓/↑: selection stress
            b"\x1b", b"\x1b", b"\x1f",    # esc (narrow view close), ctrl+/
-           b"\x13", b"\x0f", b"\x06",    # ^s ^o ^f: save, open, fetch subs
-           b"\x0b", b"\x15", b"\x16", b"\x17",   # ^k ^u ^v ^w: upload
-                                         # cover, paste, write opf
-           b"\x18",                      # ^x: cut / strip multi-artist
+           # The LETTER chords that are still PRINTED — the Contextual,
+           # File and method bars (always-available-actions-3, 2026-10-26).
+           # Every kind action answers to its POSITION now, below.
+           b"\x13",                      # ^s: save (and a wizard's save)
+           b"\x0f",                      # ^o: open
+           b"\x18", b"\x19", b"\x16",    # ^x ^y ^v: cut, copy, paste
+           b"\x01",                      # ^a: plan apply
+           b"\x10", b"\x06",             # ^p ^f: import / fetch album art
            b"\x0e",                      # ^n: new directory
-           b"\x16",                      # ^v: paste / trace view source
+           b"\x12",                      # ^r: refresh
            b"\x1b[1;5D",                 # ctrl+←: collapse level
-           b"\x04",                      # ^d: folderize a video
-           b"\x05",                      # ^e: split omnibus / resize div
-           b"\x01",                      # ^a: plan apply / image trace
-           b"\x10", b"\x02", b"\x19",    # ^p ^b ^y: converts (books are
-                                         # OFFLINE-guarded; images run).
-                                         # ^p is also "rescue to pdf" and
-                                         # ^v "rescue to svg" on a vector
-           b"\x14", b"\x07",             # ^t ^g: extract cover, make gif
-           b"\x1b[49;5u", b"\x1b[50;5u", b"\x1b[51;5u",   # ^1 ^2 ^3:
-           b"\x1b[52;5u", b"\x1b[53;5u",  # ^4 ^5 — the positional chords
-                                          # (kitty CSI-u, which is how a
-                                          # ctrl+digit reaches Textual)
-           b"\x1b1", b"\x1b2", b"\x1b5",  # ⌥1 ⌥2 ⌥5: the same chords in
-                                          # their tmux spelling (ESC+digit
-                                          # → the Option glyph)
+           # the positional chords, which is how every KIND action fires:
+           # ^1…^9 in kitty CSI-u (how a ctrl+digit reaches Textual)…
+           b"\x1b[49;5u", b"\x1b[50;5u", b"\x1b[51;5u",
+           b"\x1b[52;5u", b"\x1b[53;5u", b"\x1b[54;5u",
+           b"\x1b[55;5u", b"\x1b[56;5u", b"\x1b[57;5u",
+           # …and the same chords in their tmux spelling (ESC+digit → the
+           # Option glyph), which is what the labels print under tmux
+           b"\x1b1", b"\x1b2", b"\x1b3", b"\x1b4", b"\x1b5",
+           b"\x1b6", b"\x1b7", b"\x1b8", b"\x1b9",
            b"\x1b[3;5~",                 # ctrl+del: trash (OFFLINE-guarded)
            b"\x1b[1;2C", b"\x1b[1;2D",   # shift+→/←: shift-div nudges /
                                          # shift+←: collapse the tree level

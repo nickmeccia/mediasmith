@@ -1,10 +1,11 @@
 import os
+from pathlib import Path
 
 import pytest
 
 from mediasmith import adapters, casing, kinds
 
-from .mediafactory import make_epub
+from .mediafactory import make_epub, make_mp3
 
 
 def test_audio_details(media_tree):
@@ -388,3 +389,91 @@ def test_create_folder_finds_a_free_name(tmp_path):
     assert second == tmp_path / "untitled folder 2" and second.is_dir()
     third = adapters.create_folder(tmp_path)
     assert third == tmp_path / "untitled folder 3" and third.is_dir()
+
+
+# -- the resolve cache --------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _cold_cache():
+    """Every test starts with an empty details cache (it is module state)."""
+    adapters.forget()
+    yield
+    adapters.forget()
+
+
+def test_resolve_caches_so_a_revisit_costs_nothing(tmp_path, monkeypatch):
+    book = make_epub(tmp_path / "Dune.epub")
+    reads = []
+    real = adapters.read_details
+    monkeypatch.setattr(adapters, "read_details",
+                        lambda p, kind=None: (reads.append(p), real(p))[1])
+    first = adapters.resolve(book)
+    assert first.kind == kinds.BOOK and first.details is not None
+    second = adapters.resolve(book)
+    assert second is first          # the same answer, not an equal one
+    assert reads == [book]          # read once
+
+
+def test_peek_answers_only_from_cache(tmp_path):
+    book = make_epub(tmp_path / "Dune.epub")
+    assert adapters.peek(book) is None      # never reads
+    adapters.resolve(book)
+    assert adapters.peek(book) is not None
+
+
+def test_resolve_takes_the_is_dir_hint(tmp_path, monkeypatch):
+    """The tree knows folder-ness from its DirEntry; passing it through
+    means resolve never pays the classifying stat."""
+    monkeypatch.setattr(Path, "is_dir",
+                        lambda self: pytest.fail("stat on a known kind"))
+    resolved = adapters.resolve(tmp_path, is_dir=True)
+    assert resolved.kind == kinds.FOLDER
+
+
+def test_resolve_hands_an_album_folder_its_children(tmp_path):
+    album = tmp_path / "Album"
+    album.mkdir()
+    for name in ("01.mp3", "02.mp3"):
+        make_mp3(album / name)
+    resolved = adapters.resolve(album, is_dir=True)
+    assert resolved.kind == kinds.FOLDER
+    assert resolved.bulk == [album / "01.mp3", album / "02.mp3"]
+    assert resolved.details is None     # the bulk read is its own pass
+
+
+def test_forget_drops_a_path_and_its_children(tmp_path):
+    album = tmp_path / "Album"
+    album.mkdir()
+    song = make_mp3(album / "01.mp3")
+    adapters.resolve(song)
+    adapters.resolve(album, is_dir=True)
+    adapters.forget(album)
+    assert adapters.peek(album) is None
+    assert adapters.peek(song) is None, "a child's answer is stale too"
+
+
+def test_writes_forget_their_own_path(tmp_path):
+    """The cache is invalidated by the WRITER, so no UI path can forget to."""
+    song = make_mp3(tmp_path / "01.mp3", tags={"title": "Before"})
+    assert adapters.resolve(song).details.fields["title"] == "Before"
+    adapters.write_details(song, {"title": "After"})
+    assert adapters.peek(song) is None
+    assert adapters.resolve(song).details.fields["title"] == "After"
+
+
+def test_rename_forgets_both_names(tmp_path):
+    song = make_mp3(tmp_path / "01.mp3")
+    adapters.resolve(song)
+    target = adapters.rename(song, "02.mp3")
+    assert adapters.peek(song) is None
+    assert adapters.peek(target) is None
+
+
+def test_cache_is_bounded(tmp_path):
+    """Entries carry cover bytes; an unbounded cache would be gigabytes."""
+    for n in range(adapters._CACHE_LIMIT + 5):
+        adapters.resolve(make_mp3(tmp_path / f"{n:03}.mp3"))
+    assert len(adapters._cache) == adapters._CACHE_LIMIT
+    assert adapters.peek(tmp_path / "000.mp3") is None   # oldest evicted
+    assert adapters.peek(tmp_path / f"{adapters._CACHE_LIMIT + 4:03}.mp3")

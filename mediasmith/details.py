@@ -20,6 +20,7 @@ import io
 import os
 import subprocess
 import sys
+from functools import partial
 from pathlib import Path
 
 from textual import work
@@ -27,7 +28,10 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches
 from textual.message import Message
-from textual.screen import ModalScreen
+from rich.segment import Segment
+from textual.content import Content
+from textual.strip import Strip
+from textual.widget import Widget
 from textual.widgets import Button, Checkbox, Input, Label, Static
 
 from . import (adapters, artfetch, booksort, calibre, casing, epub,
@@ -36,8 +40,10 @@ from . import (adapters, artfetch, booksort, calibre, casing, epub,
                omnibus, posters, progress, srt, standardize, subsync, trace,
                videofolder)
 from . import actions
-from .actions import Action, ActionBar, ActionButton
+from .actions import (ACTIONS, CONTEXTUAL, FILE, Action, ActionBar,
+                      ActionButton)
 from .images import image_widget
+from .text import READING
 
 PANELS = [kinds.AUDIO, kinds.VIDEO, kinds.BOOK, kinds.IMAGE,
           kinds.VECTOR, kinds.FOLDER, kinds.OTHER]
@@ -69,79 +75,83 @@ def _convert_job(source: Path) -> str:
 
 
 PANE_ACTIONS = [
-    # the one bar at the pane's foot, composed once with the full palette;
-    # selection changes only show/hide buttons (_sync_pane_bar). Words,
-    # keys, and order per todo-4 "Button Refactor"; where Nick's chord was
-    # reserved (see actions.RESERVED_KEYS) the nearest safe letter stands
-    # in — every substitution is logged in notes/qa/todo-2.md. Chords are
-    # view-scoped now: they fire only while Details view holds focus
-    # (App.on_key), with FieldInput forwarding the Input-eaten ones.
-    Action("save", "save", "s", button_id="save-btn"),
-    # every file kind can be handed to the OS (Nick, 2026-08-22): "open"
-    # is ALWAYS the second button, so it lives second in this list — the
-    # bar composes in list order and context only shows/hides. It
-    # replaces video's old "watch"; ^o cost "write opf" its chord (→ ^w)
-    Action("open", "open", "o"),
-    # -- book (epub) — spec order: split omnibus rides right after save
-    Action("split_omnibus", "split omnibus", "b"),
-    # ^m is reserved (enter alias): ^t stands in — "conver^t to mobi"
-    Action("convert_mobi", "convert to mobi", "t"),
-    Action("convert_azw3", "convert to azw3", "a"),
-    # ^o is "open" everywhere now: ^w stands in — "^write opf"
-    Action("create_opf", "write opf", "w"),
-    # ^c is reserved (interrupt): ^n stands in — "clea^n". The tree's ^n
-    # (new directory) lives in a different state, so no collision.
-    Action("standardize", "clean", "n"),
-    Action("book_cover", "upload cover", "u"),
-    Action("extract_cover", "extract cover", "e"),
-    # a single epub's sort is "folderize" now (spec); the FOLDER context
-    # keeps the old word via its own button below — same handlers
-    Action("sort_book", "folderize", "f"),
-    # -- mobi/azw3
-    Action("convert_epub", "convert to epub", "e"),
-    # -- image — rotate/resize precede the converts (spec order)
-    Action("rotate", "rotate", "r"),
-    # ^z is reserved (suspend): ^e stands in — "r^esize" (the old chord)
-    Action("resize", "resize", "e"),
-    # Illustrator's Image Trace (Nick, 2026-09-16): "tr^ace" — ^t is
-    # convert to tiff on the same bar
-    Action("trace", "trace", "a"),
-    # ^j is reserved (newline alias): ^g stands in — "convert to jp^g"
-    Action("convert_jpg", "convert to jpg", "g"),
-    Action("convert_png", "convert to png", "p"),
-    Action("convert_tiff", "convert to tiff", "t"),
-    Action("convert_webp", "convert to webp", "w"),
-    # -- vector: recover the artwork an .ai parks outside its artboard
-    # (illustrator.py). Two buttons, one per product, the convert_* way.
-    # ^s is save and ^o is open on the same bar, so the chords sit on the
-    # format: "rescue to ^pdf" / "rescue to s^vg"
-    Action("rescue_pdf", "rescue to pdf", "p"),
-    Action("rescue_svg", "rescue to svg", "v"),
-    # -- video: the subtitle suite, then posters/gif (spec order, minus
-    # "watch" — it is the universal "open" button above now)
-    # ^f is "folderize" on a video too (Nick, 2026-08-22 — and the tree's
-    # own folderize chord), so the subtitle fetch takes ^u: "fetch s^ubtitles"
-    Action("get_subs", "fetch subtitles", "u"),
-    # ^c reserved: ^l stands in — "c^lean subs"
-    Action("clean_subs", "clean subs", "l"),
-    # ^h is reserved (backspace alias): ^t stands in — "shif^t subs"
-    Action("shift_subs", "shift subs", "t"),
-    Action("download_posters", "download posters", "p"),
-    Action("gif", "make gif", "g"),
-    # the ebook gesture on a video (2026-08-22). ^f, matching the tree's
-    # folderize command and every other kind's folderize button — the
-    # subtitle fetch moved to ^u to free it (Nick, 2026-08-22)
-    Action("folderize_video", "folderize", "f"),
-    # -- folder probes (todo-4 lists no renames for these): sort keeps
-    # its folder word so a folder never shows two "folderize" buttons
-    Action("sort", "sort", "o"),
-    Action("folderize", "folderize", "l"),
-    Action("strip_multi_artist", "strip multi-artist", "x"),
+    # The pane's three bars, composed ONCE with the full palette; selection
+    # changes only show and hide buttons (_sync_pane_bar) — the
+    # compose-once rule. Each Action names the bar it lives on
+    # (actions.CONTEXTUAL / FILE / ACTIONS, and see that module for what
+    # each bar means); the bars compose in list order.
+    #
+    # LABELS (Nick, 2026-10-26 — always-available-actions-3): the chord is
+    # no longer spliced into the word, so the words are capitalized and
+    # read as themselves. The Actions bar prints POSITIONAL chords only
+    # (^1…^9, or ⌥1…⌥9 under tmux) and its specs carry no letter at all:
+    # a key that works without being printed is exactly what the strip
+    # contract forbids. The Contextual and File bars keep their letters —
+    # those are few, fixed, and the same everywhere.
+    #
+    # -- contextual: what the pane's STATE offers
+    Action("save", "Save", "s", button_id="save-btn", bar=CONTEXTUAL),
     # while any plan preview is up, these two own the bar
-    Action("plan_apply", "apply", "a"),
-    Action("plan_cancel", "cancel"),            # esc cancels too
-    # new-directory/delete BUTTONS are gone (tree commands now: ^n, ^DEL);
-    # their action_* handlers below remain — the tree bindings call them.
+    Action("plan_apply", "Apply", "a", bar=CONTEXTUAL),
+    Action("plan_cancel", "Cancel", key_label="ESC", bar=CONTEXTUAL),
+    # …and while a QUESTION is up, its answers own it instead (Nick's
+    # answer #5, 2026-10-26: the micro-modals became bar states). Each
+    # set is shown alone, so the reused letters never collide.
+    Action("confirm_save", "Save", "s", bar=CONTEXTUAL),
+    Action("confirm_discard", "Discard", "d", bar=CONTEXTUAL),
+    Action("confirm_keep", "Keep Editing", key_label="ESC", bar=CONTEXTUAL),
+    Action("case_keep", "Rename, Keep Contents", "k", bar=CONTEXTUAL),
+    Action("case_purge", "Rename, Delete Contents", "d", bar=CONTEXTUAL),
+    Action("case_cancel", "Cancel", key_label="ESC", bar=CONTEXTUAL),
+    # -- file: what EVERY file offers. The tree's own commands, wearing
+    # buttons (Nick's "File" bar) — so they keep one meaning everywhere,
+    # and ^DEL keeps the shape no single char can express. Paste has no
+    # button on purpose: it belongs to the destination, not to this file.
+    Action("open", "Open", "o", bar=FILE),
+    Action("cut", "Cut", "x", bar=FILE),
+    # ^c is reserved (interrupt): ^y stands in — logged in notes/qa/todo-2.md
+    Action("copy", "Copy", "y", bar=FILE),
+    Action("delete", "Delete", key_label="^DEL", bar=FILE),
+    # -- actions: what this KIND offers, in spec order per kind
+    # book (epub): split omnibus rides first
+    Action("split_omnibus", "Split Omnibus"),
+    Action("convert_mobi", "Convert to MOBI"),
+    Action("convert_azw3", "Convert to AZW3"),
+    Action("create_opf", "Write OPF"),
+    Action("standardize", "Clean"),
+    Action("book_cover", "Upload Cover"),
+    Action("extract_cover", "Extract Cover"),
+    # a single epub's sort is "Folderize" (spec); the FOLDER context keeps
+    # the old word via its own button below — same handlers
+    Action("sort_book", "Folderize"),
+    # mobi/azw3
+    Action("convert_epub", "Convert to EPUB"),
+    # image — rotate/resize precede the converts (spec order)
+    Action("rotate", "Rotate"),
+    Action("resize", "Resize"),
+    Action("trace", "Trace"),
+    Action("convert_jpg", "Convert to JPG"),
+    Action("convert_png", "Convert to PNG"),
+    Action("convert_tiff", "Convert to TIFF"),
+    Action("convert_webp", "Convert to WEBP"),
+    # vector: recover the artwork an .ai parks outside its artboard
+    # (illustrator.py). Two buttons, one per product, the convert_* way.
+    Action("rescue_pdf", "Rescue to PDF"),
+    Action("rescue_svg", "Rescue to SVG"),
+    # video: the subtitle suite, then posters/gif (spec order, minus
+    # "watch" — it is the universal "Open" button on the File bar now)
+    Action("get_subs", "Fetch Subtitles"),
+    Action("clean_subs", "Clean Subs"),
+    Action("shift_subs", "Shift Subs"),
+    Action("download_posters", "Download Posters"),
+    Action("gif", "Make GIF"),
+    # the ebook gesture on a video (2026-08-22)
+    Action("folderize_video", "Folderize"),
+    # folder probes: sort keeps its folder word so a folder never shows
+    # two "Folderize" buttons
+    Action("sort", "Sort"),
+    Action("folderize", "Folderize"),
+    Action("strip_multi_artist", "Strip Multi-Artist"),
 ]
 
 EDITABLE_KINDS: frozenset[str] = frozenset(PANELS)
@@ -154,7 +164,161 @@ bulk form of their contents before the folder panel is consulted."""
 
 DEBOUNCE_SECONDS = 0.15
 
-LABEL_GUTTER = 2   # spaces between a field label and its input
+PANEL_LABEL = {
+    # kind → the widest label in its panel. The FILENAME row shares this
+    # width, because its value has to line up with every other value
+    # (Nick, 2026-10-26: "their values should be left-aligned together").
+    # Audio and book are driven by their EditForm instead, whose widest
+    # label depends on which tags the file actually carries.
+    kinds.VIDEO: "embedded title",
+    kinds.IMAGE: "dimensions",
+    kinds.VECTOR: "artboard",
+    kinds.FOLDER: "contains",
+    kinds.OTHER: "type",
+}
+
+LABEL_GUTTER = 3
+"""Cells between a field label's text and its input.
+
+Three, not two, since the label became a CHIP (Nick, 2026-10-26): one of
+them is the chip's own right padding, leaving the two blank cells the
+form always had. "Just like buttons and tree nodes, labels should have
+one cell of padding on the right edge."
+"""
+
+
+class Spine(Widget):
+    """THE PATH, drawn (always-available-actions-3, Layer 1/2).
+
+    One widget down the details pane's left edge rather than a prefix on
+    every row: it reads where the rows ARE and draws the line beside
+    them — ``╭`` at the first, ``├──`` beside each row that holds a
+    control, ``│`` between and below them, and ``╯`` where the line
+    turns left toward the tree row the pane is about. A wrapped bar's
+    second line gets ``│──``: it is the same row continuing, not a new
+    junction.
+
+    Nick asked (2026-10-26) for a better answer than his mockup's
+    hand-patched ``├``, whose vertical and horizontal halves wanted
+    different colors in one cell. This is it: the spine owns its own
+    COLUMN, so the junction cell belongs to the spine and the stub that
+    leaves it is a separate cell. One cell, one color.
+    """
+
+    WIDTH = 4
+    """``├──`` plus the blank that separates it from the label."""
+
+    def __init__(self, **kw) -> None:
+        super().__init__(**kw)
+        self._exit: int | None = None
+        """Pane-local y where the line turns toward the tree, if that row
+        is on screen."""
+        self._heads: set[int] = set()    # rows that hold a control
+        self._tails: set[int] = set()    # a wrapped row's later lines
+        self._first: int | None = None
+
+    def set_exit(self, y: int | None) -> None:
+        if y != self._exit:
+            self._exit = y
+            self.refresh()
+
+    def restub(self) -> None:
+        """Recompute where the stubs go. The PANE calls this when its rows
+        move; ``render_line`` then costs nothing.
+
+        It used to walk the DOM per LINE, which is a query over every row
+        in every panel (~100 widgets) forty times per repaint — on a pane
+        that repaints constantly, it doubled the test suite's runtime
+        (2026-10-27). Rendering is a hot path: look once.
+        """
+        pane = self.parent
+        if pane is None:
+            self._heads, self._tails, self._first = set(), set(), None
+            self.refresh()
+            return
+        top = self.region.y
+        heads: set[int] = set()
+        tails: set[int] = set()
+        for row in pane.query(".frow, ActionBar"):
+            if not row.display or not row.region.height:
+                continue
+            at = row.region.y - top
+            if at < 0:
+                continue
+            heads.add(at)
+            tails.update(range(at + 1, at + row.region.height))
+        self._heads, self._tails = heads, tails
+        self._first = min(heads) if heads else None
+        self.refresh()
+
+    def render_line(self, y: int) -> Strip:
+        style = self.rich_style
+        first = self._first
+        if first is None:
+            return Strip.blank(self.WIDTH, style)
+        exit_at = self._exit
+        if y == exit_at:
+            text = "╯   " if y > first else "╮   "
+        elif y in self._heads:
+            text = "╭── " if y == first else "├── "
+        elif y in self._tails:
+            text = "│── "
+        elif y > first and (exit_at is None or y < exit_at):
+            text = "│   "
+        else:
+            return Strip.blank(self.WIDTH, style)
+        return Strip([Segment(text, style)], self.WIDTH)
+
+
+class FieldLabel(Label):
+    """A field's name, painted as the row's CHIP.
+
+    The mockup marks a focusable row by putting a block behind its LABEL
+    — grey for "focusable", PRIMARY for "this is the one with focus" —
+    and leaves the VALUE as plain text. The block hugs the word plus one
+    cell of padding; the rest of the label column stays unpainted, so
+    the values still line up down the pane (always-available-actions-3,
+    Layer 1 vs Layer 2).
+
+    The paint is markup rather than CSS because it covers only part of
+    the widget, so the focus edge is applied from Python —
+    ``DetailsView._sync_element_chrome``, the same watcher that colors
+    the chords inside button labels.
+    """
+
+    def __init__(self, text: str = "", width: int = 0, **kw) -> None:
+        super().__init__(**kw)
+        self._text = text
+        self._width = width
+        self._active = False
+        self._paint()
+
+    def set_text(self, text: str, width: int | None = None) -> None:
+        if width is not None:
+            self._width = width
+        self._text = text
+        self._paint()
+
+    def set_active(self, value: bool) -> None:
+        """Whether this row's control is the thing with focus."""
+        if value != self._active:
+            self._active = value
+            self._paint()
+
+    def _paint(self) -> None:
+        if not self._text:
+            self.update("")
+            return
+        fg = "$element-fg-focus" if self._active else "$element-fg"
+        bg = "$element-bg-focus" if self._active else "$element-bg"
+        pad = " " * max(0, self._width - len(self._text) - 1)
+        self.update(Content.from_markup(
+            f"[{fg} on {bg}]{self._text} [/]{pad}"))
+
+
+def _panel_width(kind: str) -> int:
+    """The label column width for a kind's panel (PANEL_LABEL + gutter)."""
+    return len(PANEL_LABEL.get(kind, "filename")) + LABEL_GUTTER
 
 
 def human_size(n: float) -> str:
@@ -517,7 +681,7 @@ class EditForm(Vertical):
     def compose(self):
         for _ in range(self._pool):
             with Horizontal(classes="frow"):
-                yield Label("", classes="fkey")
+                yield FieldLabel(classes="fkey")
                 yield FieldInput(placeholder="-", compact=True, classes="fval")
                 yield Static("", classes="fmark")
 
@@ -545,7 +709,8 @@ class EditForm(Vertical):
         for i, row in enumerate(self._rows()):
             if i < len(self._names):
                 name = self._names[i]
-                row.query_one(Label).update(f"{labels.get(name, name):<{width}}")
+                row.query_one(FieldLabel).set_text(
+                    labels.get(name, name), width)
                 field = row.query_one(Input)
                 field.value = fields[name]
                 field.placeholder = "(mixed)" if name in mixed else "-"
@@ -627,17 +792,17 @@ class OmnibusForm(Vertical):
         yield Static("", id="omni-source", classes="omni-source")
         for label, wid in self.GLOBAL:
             with Horizontal(classes="frow"):
-                yield Label(f"{label:<{width}}", classes="fkey")
+                yield FieldLabel(label, width, classes="fkey")
                 yield OmniInput(id=wid, compact=True, classes="fval")
         for i in range(self.POOL):
             with Vertical(classes="omni-book", id=f"omni-book-{i}"):
                 yield Label("", id=f"omni-head-{i}", classes="omni-head")
                 with Horizontal(classes="frow"):
-                    yield Label(f"{'title':<{width}}", classes="fkey")
+                    yield FieldLabel("title", width, classes="fkey")
                     yield OmniInput(id=f"omni-title-{i}", compact=True,
                                     classes="fval")
                 with Horizontal(classes="frow"):
-                    yield Label(f"{'series no.':<{width}}", classes="fkey")
+                    yield FieldLabel("series no.", width, classes="fkey")
                     yield OmniInput(id=f"omni-no-{i}", compact=True,
                                     type="integer", classes="fval")
 
@@ -683,100 +848,13 @@ class OmnibusForm(Vertical):
                 books)
 
 
-class ConfirmSave(ModalScreen[str]):
-    """esc with pending edits: save them, discard them, or keep editing."""
-
-    BINDINGS = [
-        Binding("s", "choose('save')", "save"),
-        Binding("d", "choose('discard')", "discard"),
-        Binding("escape", "choose('cancel')", "keep editing"),
-    ]
-
-    def __init__(self, name: str) -> None:
-        super().__init__()
-        self._filename = name
-        self._decided = False
-
-    def _decide(self, choice: str) -> None:
-        # two keys inside one frame (esc esc, enter+esc…) would dismiss
-        # twice — the second pop has no screen left and ScreenStackError
-        # is app death (fuzz seed 10, 2026-07-16). First answer wins.
-        if self._decided:
-            return
-        self._decided = True
-        self.dismiss(choice)
-
-    def compose(self):
-        with Vertical(id="confirm-box"):
-            yield Label(f"Save changes to {self._filename}?", id="confirm-msg")
-            with Horizontal(id="confirm-buttons"):
-                yield Button("Save", id="save", variant="primary")
-                yield Button("Discard", id="discard")
-                yield Button("Keep editing", id="cancel")
-
-    def on_mount(self) -> None:
-        self.query_one("#save", Button).focus()
-
-    def on_button_pressed(self, ev: Button.Pressed) -> None:
-        self._decide(ev.button.id or "cancel")
-
-    def action_choose(self, choice: str) -> None:
-        self._decide(choice)
-
-
-class ConfirmCaseRename(ModalScreen[str]):
-    """A wanted folder already exists under a different spelling and this
-    filesystem holds only one of them (Nick's spec, 2026-08-25): rename it
-    — keeping or trashing what's inside — or cancel the action.
-
-    The second modal in the app, and the only other one: like ConfirmSave
-    it asks about work that is about to be written, and the answer cannot
-    be inferred (see the cookbook's "never a modal" rule — options BEFORE
-    an action stay inline divs; a destructive fork does not).
-    """
-
-    BINDINGS = [
-        Binding("k", "choose('keep')", "keep contents"),
-        Binding("d", "choose('purge')", "delete contents"),
-        Binding("escape", "choose('cancel')", "cancel"),
-    ]
-
-    def __init__(self, pairs: list[tuple[Path, Path]]) -> None:
-        super().__init__()
-        self._pairs = pairs
-        self._decided = False
-
-    def _decide(self, choice: str) -> None:
-        if self._decided:       # first answer wins (ConfirmSave's rule:
-            return              # a second dismiss is app death)
-        self._decided = True
-        self.dismiss(choice)
-
-    def _message(self) -> str:
-        existing, wanted = self._pairs[0]
-        more = (f" (and {len(self._pairs) - 1} more)"
-                if len(self._pairs) > 1 else "")
-        return (f"{existing.name}/ already exists where {wanted.name}/ "
-                f"should go{more}.\nThis filesystem can't hold both "
-                f"spellings — rename it?")
-
-    def compose(self):
-        with Vertical(id="confirm-box"):
-            yield Label(self._message(), id="confirm-msg")
-            with Horizontal(id="confirm-buttons"):
-                yield Button("Rename, keep contents", id="keep",
-                             variant="primary")
-                yield Button("Rename, delete contents", id="purge")
-                yield Button("Cancel", id="cancel")
-
-    def on_mount(self) -> None:
-        self.query_one("#keep", Button).focus()
-
-    def on_button_pressed(self, ev: Button.Pressed) -> None:
-        self._decide(ev.button.id or "cancel")
-
-    def action_choose(self, choice: str) -> None:
-        self._decide(choice)
+# The app has NO MODAL SCREENS (Nick's answer #5, 2026-10-26). It had
+# exactly two — ConfirmSave and ConfirmCaseRename, both destructive forks
+# mid-write whose answer could not be inferred — and both are now states
+# of the Contextual bar instead: the answers appear as buttons where the
+# work is, the first one takes focus, and nothing else is reachable until
+# one is pressed (DetailsView.ask). The cookbook rule that options go
+# inline rather than in a modal now has no exception.
 
 
 class DetailsView(VerticalScroll, can_focus=True):
@@ -850,9 +928,41 @@ class DetailsView(VerticalScroll, can_focus=True):
             super().__init__()
             self.path = path
 
+    class Settled(Message):
+        """The pane finished showing ``path``: the read landed AND every
+        late-filling probe answered, so the button bar has stopped
+        changing shape. The positional chords resolve against a settled
+        bar and never against a half-built one (Nick, 2026-10-26) — the
+        printed number must not move under a finger already on its way
+        down."""
+
+        def __init__(self, path: Path | list[Path]) -> None:
+            super().__init__()
+            self.path = path
+
     def can_edit(self) -> bool:
         """Focus may enter this pane only when the shown kind is editable."""
         return self.kind in EDITABLE_KINDS and self._readable
+
+    @property
+    def settled(self) -> bool:
+        """True when what the bar shows is what the selection has earned:
+        the read is in and no probe is still out. ``Settled`` fires on the
+        edge into this state; a buffered chord waits for it."""
+        return self._readable and not self.busy
+
+    @property
+    def reading(self) -> bool:
+        """A read is in flight: a selection on its way in, or a forced
+        re-read of the one already on screen."""
+        return self._pending is not None or self.loading_bulk
+
+    @property
+    def busy(self) -> bool:
+        """The bar may still change shape — a read is in flight, or a
+        button probe hasn't answered. The chord buffer drains when this
+        goes false; ``settled`` adds that the read SUCCEEDED."""
+        return self.reading or bool(self._probes_out)
 
     def _open_target(self) -> Path | None:
         """The single file "open" hands to the OS, or None. Any one file
@@ -874,6 +984,15 @@ class DetailsView(VerticalScroll, can_focus=True):
         self._baseline: tuple[str, dict[str, str]] | None = None
         self._pending: Path | None = None
         self._debounce = None
+        self._probes_out: set[str] = set()   # button probes still out
+        self._all_chords: frozenset[str] | None = None   # lazy: needs compose
+        self._question: tuple[list[str], object] | None = None
+        """An open question: its answer actions, and what to call with the
+        answer (see `ask`). While set, the Contextual bar owns focus."""
+        self._asked_from = None
+        """What had focus when the question went up, so answering it can
+        put the user back where they were."""
+        self._keep: frozenset[str] = frozenset()    # divs a re-read keeps open
         self._jobs: progress.JobToasts | None = None    # lazy: needs .app
         self._standardize_single = False    # a one-book run closes its toast
         self._pending_art: bytes | None = None   # unsaved replacement art
@@ -918,13 +1037,21 @@ class DetailsView(VerticalScroll, can_focus=True):
 
     def _row(self, key: str, id: str, width: int,
              row_id: str | None = None) -> Horizontal:
-        return Horizontal(Label(f"{key:<{width}}", classes="fkey"),
+        """One label+value row. ``frow`` is what the Spine looks for when
+        it decides which lines carry a stub."""
+        return Horizontal(FieldLabel(key, width, classes="fkey"),
                           Static("", id=id, classes="fval-static"),
                           classes="frow", id=row_id)
 
     def compose(self):
+        # the path, drawn down the pane's left edge (Spine): docked, so it
+        # does not scroll, and it reads the rows' SCREEN positions — which
+        # keeps it aligned whether the pane scrolls or the tree does
+        yield Spine(id="spine")
         yield Label("", id="dtitle", classes="dtitle")
-        with Horizontal(id="row-fname"):
+        with Horizontal(id="row-fname", classes="frow"):
+            yield FieldLabel("filename", len("filename") + LABEL_GUTTER,
+                             id="fname-label", classes="fkey")
             yield FieldInput(id="fname", compact=True)
             yield Static("", id="fname-mark", classes="fmark")
 
@@ -933,7 +1060,7 @@ class DetailsView(VerticalScroll, can_focus=True):
             # album art is the last field: label column matches the form,
             # image top-aligned with the label, left-aligned with inputs
             with Horizontal(id="row-art"):
-                yield Label("", id="art-label", classes="fkey")
+                yield FieldLabel(id="art-label", classes="fkey")
                 yield Static("-", id="art-none", classes="fval-static")
                 with ArtField(id="art-field"):
                     yield image_widget(self.images, id="cover-audio")
@@ -954,7 +1081,7 @@ class DetailsView(VerticalScroll, can_focus=True):
                 yield ArtPathInput(id="art-path", compact=True)
 
         with Vertical(id="panel-video", classes="panel"):
-            width = len("embedded title") + LABEL_GUTTER
+            width = _panel_width(kinds.VIDEO)
             yield self._row("embedded title", "video-title", width)
             yield self._row("container", "video-container", width)
             yield self._row("codec", "video-codec", width)
@@ -963,13 +1090,13 @@ class DetailsView(VerticalScroll, can_focus=True):
             yield self._row("posters", "video-posters", width)
             with Vertical(id="shift-div"):
                 with Horizontal(id="shift-row"):
-                    yield Label(f"{'shift':<{width}}", classes="fkey")
+                    yield FieldLabel("shift", width, classes="fkey")
                     yield ShiftControl(" 0:00.0", id="shift-control")
                     yield Static("", id="shift-mark", classes="fmark")
                 yield Static(SHIFT_HINT, id="shift-hint")
             with Vertical(id="gif-div"):    # the third wizard div
                 with Horizontal(id="gif-row"):
-                    yield Label(f"{'gif':<{width}}", classes="fkey")
+                    yield FieldLabel("gif", width, classes="fkey")
                     yield FieldInput(id="gif-fps", compact=True,
                                      type="integer", classes="resize-num")
                     yield Label("fps", classes="wsep")
@@ -997,14 +1124,14 @@ class DetailsView(VerticalScroll, can_focus=True):
                 yield Static("⏎ apply · esc cancel", id="book-cover-hint")
 
         with Vertical(id="panel-image", classes="panel"):
-            width = len("dimensions") + LABEL_GUTTER
+            width = _panel_width(kinds.IMAGE)
             yield self._row("size", "image-size", width,
                             row_id="row-image-size")
             yield self._row("dimensions", "image-dims", width,
                             row_id="row-image-dims")
             with Vertical(id="resize-div"):     # the wizard div, shift-style
                 with Horizontal(id="resize-row"):
-                    yield Label(f"{'resize':<{width}}", classes="fkey")
+                    yield FieldLabel("resize", width, classes="fkey")
                     yield FieldInput(id="resize-w", compact=True,
                                      type="integer", classes="resize-num")
                     yield Label("×", id="resize-x")
@@ -1021,7 +1148,7 @@ class DetailsView(VerticalScroll, can_focus=True):
                 width = len("ignore white") + LABEL_GUTTER
                 for name, label in trace.CONTROLS:
                     with Horizontal(classes="trace-row"):
-                        yield Label(f"{label:<{width}}", classes="fkey")
+                        yield FieldLabel(label, width, classes="fkey")
                         yield TraceControl(name, id=f"trace-{name}")
                 yield Static(TRACE_HINT, id="trace-hint")
                 yield ActionBar(
@@ -1033,7 +1160,7 @@ class DetailsView(VerticalScroll, can_focus=True):
             yield image_widget(self.images, id="cover-image")
 
         with Vertical(id="panel-vector", classes="panel"):
-            width = len("artboard") + LABEL_GUTTER
+            width = _panel_width(kinds.VECTOR)
             yield self._row("size", "vector-size", width)
             # the canvas rows fill in late: reading them inflates the .ai's
             # private data, which is worker work (_probe_canvas)
@@ -1042,7 +1169,7 @@ class DetailsView(VerticalScroll, can_focus=True):
             yield self._row("hidden", "vector-hidden", width)
 
         with Vertical(id="panel-folder", classes="panel"):
-            width = len("contains") + LABEL_GUTTER
+            width = _panel_width(kinds.FOLDER)
             yield self._row("contains", "folder-counts", width)
             # recursive totals — a walk, so they fill in late (Nick, todo-5)
             yield self._row("files", "folder-files", width)
@@ -1051,7 +1178,7 @@ class DetailsView(VerticalScroll, can_focus=True):
                 yield Static("", id="plan-tree")
 
         with Vertical(id="panel-other", classes="panel"):
-            width = 4 + LABEL_GUTTER
+            width = _panel_width(kinds.OTHER)
             yield self._row("size", "other-size", width)
             yield self._row("type", "other-type", width)
 
@@ -1061,7 +1188,19 @@ class DetailsView(VerticalScroll, can_focus=True):
         with Vertical(id="panel-omnibus"):
             yield OmnibusForm(id="omnibus-form")
 
-        yield ActionBar(*PANE_ACTIONS, id="pane-bar")
+        # the three bars, in the order the mockup stacks them: what the
+        # STATE offers, then what every file offers, then what this kind
+        # offers. Each composed once with the actions that name it. They
+        # share one container so the blank line above the stack belongs to
+        # the stack — an empty Contextual bar must not leave a gap, and
+        # trace mode hides the lot with one display flip.
+        with Vertical(id="bars"):
+            for bar_name, bar_id in ((CONTEXTUAL, "contextual-bar"),
+                                     (FILE, "file-bar"),
+                                     (ACTIONS, "actions-bar")):
+                yield ActionBar(
+                    *[a for a in PANE_ACTIONS if a.bar == bar_name],
+                    id=bar_id)
         # parked below save while its final home is decided (audio only);
         # width matches the widest standard audio label (album artist, 12)
         yield self._row("info", "audio-info", 12 + LABEL_GUTTER,
@@ -1070,7 +1209,7 @@ class DetailsView(VerticalScroll, can_focus=True):
     def on_mount(self) -> None:
         # chord colors inside button labels are markup, not CSS: mirror
         # the pane's focus-within flip onto them by hand (theme.py)
-        self.watch(self.screen, "focused", self._sync_button_chrome)
+        self.watch(self.screen, "focused", self._sync_element_chrome)
         for panel in PANELS:
             self.query_one(f"#panel-{panel}").display = False
         self.query_one("#row-fname").display = False
@@ -1085,13 +1224,30 @@ class DetailsView(VerticalScroll, can_focus=True):
         self.query_one("#trace-div").display = False
         self._sync_pane_bar()
 
-    def _sync_button_chrome(self, focused) -> None:
-        """Focus crossed the pane's edge (or moved inside it): recolor
-        every button's printed chord to the matching idle/focus token."""
-        inside = focused is not None and (focused is self
-                                          or self in focused.ancestors)
-        for button in self.query(ActionButton):
-            button.set_pane_focus(inside)
+    _spine_dirty = False
+
+    def _redraw_spine(self) -> None:
+        if not self._spine_dirty:
+            return
+        self._spine_dirty = False
+        try:
+            self.query_one("#spine", Spine).restub()
+        except NoMatches:
+            pass            # teardown, or before compose
+
+    def _sync_element_chrome(self, focused) -> None:
+        """Focus moved: light the ONE element that has it.
+
+        Backgrounds are CSS ($element-bg / $element-bg-focus), but two
+        things are painted with markup because they cover part of a
+        widget — the chord inside a button label, and a field's label
+        chip — so those are applied here, on the focus edge.
+        """
+        for label in self.query(FieldLabel):
+            row = label.parent
+            label.set_active(
+                focused is not None and row is not None
+                and (focused is row or row in focused.ancestors))
         # a wizard div opening or closing is a focus move, and it changes
         # which bars are on show — so the positional chords settle here
         # too (set_ordinal is a no-op when the number hasn't moved)
@@ -1150,6 +1306,9 @@ class DetailsView(VerticalScroll, can_focus=True):
         self.paths = None
         self.kind = None
         self._readable = False
+        self._probes_out = set()
+        self._keep = frozenset()
+        self._focus_after_load = False
         self._baseline = None
         self._trace_hide(restore=False)
         self.query_one("#dtitle", Label).update("")
@@ -1160,16 +1319,38 @@ class DetailsView(VerticalScroll, can_focus=True):
             self.query_one(f"#panel-{panel}").display = False
         self._sync_pane_bar()
 
-    def preview(self, path: Path, immediate: bool = False) -> None:
-        """Debounced: browsing quickly must not read every file passed over."""
-        self._queue_preview(path, immediate)
+    def preview(self, path: Path, immediate: bool = False,
+                force: bool = False) -> None:
+        """Debounced: browsing quickly must not read every file passed over.
 
-    def preview_bulk(self, paths: list[Path], immediate: bool = False) -> None:
+        ``force`` re-reads a selection the pane is already showing — what
+        a write that just landed needs, and the only thing that does.
+        Without it, re-previewing the shown path is a NO-OP: the <1s Nick
+        felt on ⏎ was this pane reading, synchronously, a file the
+        debounce had already read 150ms after he landed on the row.
+        """
+        self._queue_preview(path, immediate, force)
+
+    def preview_bulk(self, paths: list[Path], immediate: bool = False,
+                     force: bool = False) -> None:
         """Multi-file selection preview: same debounce, merged details."""
-        self._queue_preview(list(paths), immediate)
+        self._queue_preview(list(paths), immediate, force)
 
     def _queue_preview(self, target: Path | list[Path],
-                       immediate: bool) -> None:
+                       immediate: bool, force: bool = False) -> None:
+        if force:
+            adapters.forget(target[0].parent if isinstance(target, list)
+                            else target)
+        elif self._already_applied(target):
+            # already on screen and settled: nothing to read, nothing to
+            # rebuild. Pending edits and open wizard divs survive a
+            # re-select for free, which the old re-read had to work for.
+            self._pending = None
+            if self._debounce is not None:
+                self._debounce.stop()
+                self._debounce = None
+            self._claim_focus()
+            return
         self._pending = target
         if self._debounce is not None:
             self._debounce.stop()
@@ -1179,8 +1360,29 @@ class DetailsView(VerticalScroll, can_focus=True):
         else:
             self._debounce = self.set_timer(DEBOUNCE_SECONDS, self._apply_pending)
 
+    def _already_applied(self, target: Path | list[Path]) -> bool:
+        """True when a preview of ``target`` would rebuild what is already
+        on screen — the short-circuit that makes a re-select free."""
+        if not self._readable:
+            return False
+        if isinstance(target, list):
+            return self.paths == target
+        return self.paths is None and self.path == target
+
+    def showing(self, target: Path | list[Path]) -> bool:
+        """Whether the pane is about this selection — read or still
+        reading. An album-like folder is about the FOLDER the tree's
+        cursor is on and about the children its form edits, so a chord
+        captured on the folder resolves against the form it opened
+        (otherwise ^y on an album would wait forever for a bulk pane to
+        call itself a folder — 2026-10-26)."""
+        if isinstance(target, list):
+            return self.paths == target
+        return self.path == target
+
     def _reset_state(self, keep_trace: bool = False) -> None:
         self._readable = False
+        self._probes_out = set()     # a new selection waits on its own probes
         self._baseline = None
         self._pending_art = None
         self._baseline_art = None
@@ -1213,49 +1415,125 @@ class DetailsView(VerticalScroll, can_focus=True):
             self._trace_hide(restore=False)
 
     def _apply_pending(self) -> None:
+        """Show the pending selection — from cache if it is there, from a
+        worker if it is not. NOTHING here touches the filesystem: the read
+        was the last event-loop call in the app (rule 4), and a spun-down
+        SMB disk made it a freeze rather than a wait."""
         if self._pending is None:
             return
         target = self._pending
         if isinstance(target, list):
+            self._pending = None
             self._begin_bulk(target, origin=None)
             return
         # re-previewing the SAME file (a resize/gif just landed and the
         # tree re-listed, or a rotate refreshed the pane) must not slam
-        # an open wizard div shut under the user
-        keep_resize = self._resize_open and target == self.path
-        keep_gif = self._gif_open and target == self.path
-        keep_trace = self._trace_open and target == self.path
+        # an open wizard div shut under the user. Decided HERE, before the
+        # read moves self.path, and carried to the apply step.
+        same = target == self.path and self.paths is None
+        self._keep = frozenset(
+            name for name, open_now in (("resize", self._resize_open),
+                                        ("gif", self._gif_open),
+                                        ("trace", self._trace_open))
+            if open_now and same)
+        # self.path is the pane's TARGET from here on — set before the read,
+        # not after it, so a worker that comes back late can tell whether
+        # anyone still wants its answer (_apply_resolved's one guard).
         self.path = target
         self.paths = None
-        self.kind = kinds.kind_of(target)
-        self._reset_state(keep_trace=keep_trace)
-        if self.kind == kinds.FOLDER:
-            bulk = adapters.bulk_paths_for_folder(target)
-            if bulk:      # an album-like folder edits as its contents
-                self._begin_bulk(bulk, origin=target)
-                return
+        resolved = adapters.peek(target)
+        if resolved is not None:
+            self._pending = None
+            self._apply_resolved(resolved)
+            return
+        self._begin_read(target, same=same)
+
+    def _begin_read(self, target: Path, same: bool = False) -> None:
+        """The cold path: say what we know and read the rest in a thread.
+
+        ``same`` is a FORCED re-read of what is already on screen (a write
+        just landed): those values are stale by a hair, not wrong, so the
+        panel and the bar stay up rather than flashing the whole pane
+        through "reading…". Either way ``busy`` is true until the answer
+        lands, so nothing treats the pane as settled meanwhile.
+        """
+        if same:
+            self._read_worker(target, None)
+            return
+        self.kind = None
+        self._reset_state(keep_trace="trace" in self._keep)
+        self.query_one("#dtitle", Label).update(f"{target.name} — {READING}")
+        self.query_one("#dtitle").display = True
+        self.query_one("#row-fname").display = False
+        self.query_one("#row-audio-info").display = False
+        for panel in PANELS:
+            self.query_one(f"#panel-{panel}").display = False
+        self._sync_pane_bar()
+        # the tree knows is_dir from its DirEntry and could hand it
+        # over; until it does, the worker pays the one stat
+        self._read_worker(target, None)
+
+    @work(thread=True, exclusive=True, group="read")
+    def _read_worker(self, target: Path, is_dir: bool | None) -> None:
+        # one pass for the kind, the album-folder probe, and the details:
+        # three filesystem answers the pane used to take on its own thread
+        try:
+            resolved = adapters.resolve(target, is_dir=is_dir)
+        except Exception as error:
+            self.app.call_from_thread(self._read_failed, target, error)
+            return
+        self.app.call_from_thread(self._apply_resolved, resolved)
+
+    def _read_failed(self, target: Path, error: Exception) -> None:
+        if self.path != target or self.paths is not None:
+            return                          # the cursor moved on
+        if not self._dom_intact():
+            return
+        self._pending = None
+        self._readable = False      # a forced re-read can land here too
+        self.query_one("#dtitle", Label).update(
+            f"{target.name} — unreadable ({error})")
+        self._trace_hide(restore=False)
+        self._show_editable(False)
+        # a descent armed on a file that turns out unreadable must not fire
+        # later, on whatever row the cursor reaches next
+        descending = self._focus_after_load
+        self._claim_focus()         # disarms (an unreadable pane can't focus)
+        if descending:
+            self.app.view_details()     # narrow: the error IS the view
+        self._settle()
+
+    def _apply_resolved(self, resolved: adapters.Resolved) -> None:
+        """Fill the pane from a resolved selection. Synchronous and
+        IO-free — equally the cache-hit path and the worker's callback."""
+        target = resolved.path
+        if self.path != target or self.paths is not None:
+            return                  # a later selection already took over
+        if not self._dom_intact():
+            return                  # torn down under a worker callback
+        self._pending = None
+        self.kind = resolved.kind
+        self._reset_state(keep_trace="trace" in self._keep)
+        if resolved.bulk:           # an album-like folder edits as its contents
+            self._begin_bulk(resolved.bulk, origin=target)
+            return
+        assert resolved.details is not None
         title = self.query_one("#dtitle", Label)
         title.update(self.path.name)
         for panel in PANELS:
             self.query_one(f"#panel-{panel}").display = (panel == self.kind)
         self.query_one("#row-audio-info").display = False   # _fill_audio shows it
-        try:
-            details = adapters.read_details(self.path)
-        except Exception as error:
-            title.update(f"{self.path.name} — unreadable ({error})")
-            self._trace_hide(restore=False)
-            self._show_editable(False)
-            return
         self._readable = True
         self._show_editable(self.can_edit())
-        getattr(self, f"_fill_{self.kind}")(self.path, details)
+        getattr(self, f"_fill_{self.kind}")(self.path, resolved.details)
+        self._align_filename()      # the form's column is known now
         self._baseline = self._current_state()
         self._refresh_marks()
-        if keep_resize and self.kind == kinds.IMAGE:
+        if "resize" in self._keep and self.kind == kinds.IMAGE:
             # reopen without re-prefilling: the user's numbers stand
             self._resize_open = True
             self.query_one("#resize-div").display = True
-        if keep_gif and self.kind == kinds.VIDEO:
+        if "gif" in self._keep and self.kind == kinds.VIDEO:
             self._gif_open = True
             self.query_one("#gif-div").display = True
         if self._trace_open:
@@ -1263,6 +1541,166 @@ class DetailsView(VerticalScroll, can_focus=True):
             # the fill re-showed what trace mode hides, so hide it again
             self._trace_apply_layout()
             self._trace_schedule()
+        self._claim_focus()
+        self._settle()
+
+    # -- questions: the micro-modals, as a state of the Contextual bar -------
+    # Nick's answer #5 (2026-10-26): "replace the modals with an inline
+    # change to the contextual button bar … move focus to the first button
+    # on this bar … and prevent the user from navigating away from this
+    # button bar until the modal content is resolved." Both modals the app
+    # had are questions of this shape — a destructive fork mid-write whose
+    # answer cannot be inferred — so both became bar states, and anything
+    # else of that shape uses `ask` rather than a new screen.
+
+    def ask(self, choices: list[str], decided, prompt: str | None = None,
+            title: str = "") -> None:
+        """Put a question's answers on the Contextual bar and lock focus
+        to them. ``choices`` are action names the bar already holds, the
+        first takes focus, and nothing else is reachable until one of them
+        is pressed. Any explanation rides a toast — the buttons ARE the
+        question, as the mockup's unsaved-changes bar shows it."""
+        self._question = (list(choices), decided)
+        self._asked_from = self.app.focused      # "keep editing" goes back
+        self._sync_pane_bar()
+        self.app.reveal_details()
+        self.query_one(f"#act-{choices[0]}", ActionButton).focus()
+        if prompt:
+            self.notify(prompt, title=title or "confirm",
+                        severity="warning", timeout=12)
+
+    @property
+    def question_open(self) -> bool:
+        return self._question is not None
+
+    def _answer(self, choice: str) -> None:
+        """Resolve the open question — first answer wins, as the modals'
+        own guard did (a second dismiss was app death: fuzz seed 10)."""
+        if self._question is None:
+            return
+        _, decided = self._question
+        self._question = None
+        self._sync_pane_bar()
+        # back to the control the question interrupted, BEFORE the answer
+        # runs: "keep editing" means carry on where you were, and any
+        # other answer moves focus itself (to the tree, or into a plan)
+        was, self._asked_from = self._asked_from, None
+        if was is not None and was.is_attached and was.display:
+            try:
+                was.focus()
+            except Exception:
+                pass
+        decided(choice)
+
+    def action_confirm_save(self) -> None:
+        self._answer("save")
+
+    def action_confirm_discard(self) -> None:
+        self._answer("discard")
+
+    def action_confirm_keep(self) -> None:
+        self._answer("cancel")
+
+    def action_case_keep(self) -> None:
+        self._answer("keep")
+
+    def action_case_purge(self) -> None:
+        self._answer("purge")
+
+    def action_case_cancel(self) -> None:
+        self._answer("cancel")
+
+    def _claim_focus(self) -> None:
+        """Descend if a descent was waiting on this read. ⏎ no longer
+        blocks on the NAS — it arms this and lets the tree keep the keys."""
+        if not self._focus_after_load:
+            return
+        self._focus_after_load = False
+        if self.can_edit():
+            self.focus()
+
+    # -- settling: the read, then the button probes -----------------------------------
+
+    BUTTON_PROBES = {
+        # name → (the engine's test, the flag _sync_pane_bar reads). These
+        # six are what `settled` waits for, because each one PUTS A BUTTON
+        # on the bar: a late yes renumbers every button to its right. A
+        # probe that fills only a VALUE (a video's header, a folder's
+        # totals, an .ai's canvas) can land whenever it likes — no chord
+        # moves when it does — so it stays outside this table.
+        "folderize": (folderize.probe, "_folderize_ready"),
+        "multiartist": (multiartist.probe, "_multiartist_ready"),
+        "omnibus": (omnibus.probe, "_omnibus_ready"),
+        "sort": (booksort.probe, "_sort_ready"),
+        "sort_book": (booksort.probe_book, "_sort_ready"),
+        "standardize": (standardize.probe_folder, "_standardize_ready"),
+    }
+
+    def _probe(self, name: str, path: Path) -> None:
+        """Launch a button-bearing probe and remember the bar is still
+        incomplete until it answers.
+
+        One group PER PROBE, exclusive — so arrowing onto the next row
+        cancels the row we left before its probe even starts. Six zip
+        reads per keypress down a folder is how the NAS gets slow (rule
+        4); a cancelled launch is safe because the new selection cleared
+        and re-added the name it answers for. ``run_worker`` rather than
+        ``@work`` because the group is per CALL, not per method.
+        """
+        self._probes_out.add(name)
+        self.run_worker(partial(self._probe_body, name, path),
+                        group=f"probe-{name}", exclusive=True, thread=True)
+
+    def _probe_body(self, name: str, path: Path) -> None:
+        test = self.BUTTON_PROBES[name][0]
+        try:
+            ready = bool(test(path))
+        except Exception:
+            ready = False       # a probe that cannot answer offers no button
+        try:
+            self.app.call_from_thread(self._probed, name, path, ready)
+        except Exception:
+            pass        # every probe reports now, including during teardown
+                        # (_probe_totals' guard, for the same reason)
+
+    def _probed(self, name: str, path: Path, ready: bool) -> None:
+        """One probe answered — ready or not, both end the wait. A thread
+        can't be cancelled mid-read, so an answer for a selection already
+        left behind lands here too: it must not settle the current one."""
+        if self.path != path or not self._dom_intact():
+            return
+        self._probes_out.discard(name)
+        if ready and not self.plan_preview_open():
+            setattr(self, self.BUTTON_PROBES[name][1], True)
+            self._sync_pane_bar()
+        self._settle()
+
+    def _settle(self) -> None:
+        """Announce the busy→idle edge for the selection on show.
+
+        Posted even when the read FAILED: the pane has stopped changing
+        shape either way, and the buffered chords waiting on it have to
+        be let go rather than wait for a bar that will never arrive.
+        """
+        if self.busy:
+            return
+        target = self.paths if self.paths is not None else self.path
+        if target is not None:
+            self.post_message(self.Settled(target))
+
+    def all_chords(self) -> frozenset[str]:
+        """Every chord ANY pane button can print, on show or not.
+
+        The app buffers these while the pane is unsettled (Nick's answer
+        #4), so the set has to be known before the bar that will answer
+        them is built. Derived from the composed bars, so adding an
+        action keeps it honest.
+        """
+        if self._all_chords is None:
+            self._all_chords = frozenset(
+                chord for button in self.query(ActionButton)
+                if (chord := button.spec.chord) is not None)
+        return self._all_chords
 
     # -- bulk view: one form applied to many files -----------------------------------
 
@@ -1270,9 +1708,18 @@ class DetailsView(VerticalScroll, can_focus=True):
     def loading_bulk(self) -> bool:
         return self.paths is not None and not self._readable
 
+    def invalidate(self) -> None:
+        """Forget that what is on screen was read, without clearing it: the
+        next preview of the same selection re-reads instead of
+        short-circuiting. ^r refresh, and nothing else."""
+        self._readable = False
+
     def focus_when_loaded(self) -> None:
-        """Descend (enter on a folder/selection) once the bulk read lands."""
+        """Arm the descent: take focus as soon as the selection on its way
+        in can hold it (_claim_focus), or immediately if it already is."""
         self._focus_after_load = True
+        if not self.reading:
+            self._claim_focus()
 
     def _count_label(self) -> str:
         n = len(self.paths or [])
@@ -1333,10 +1780,11 @@ class DetailsView(VerticalScroll, can_focus=True):
         form = self._active_form()
         assert form is not None
         form.set_fields(bulk.fields, bulk.mixed)
+        self._align_filename()
         if bulk.kind == kinds.AUDIO:
             gutter = " " * form.label_width
-            self.query_one("#art-label", Label).update(
-                f"{'album art':<{form.label_width}}")
+            self.query_one("#art-label", FieldLabel).set_text(
+                "album art", form.label_width)
             self.query_one("#art-buttons-pad", Label).update(gutter)
             self.query_one("#art-path-pad", Label).update(gutter)
             self._set("audio-info",
@@ -1351,13 +1799,12 @@ class DetailsView(VerticalScroll, can_focus=True):
         self._baseline = self._current_state()
         self._refresh_marks()
         if self.path is not None:               # album-folder origin: the
-            self._probe_folderize(self.path)    # folder actions still apply
-            self._probe_multiartist(self.path)
-            self._probe_standardize(self.path)
-            self._probe_sort(self.path)
-        if self._focus_after_load:
-            self._focus_after_load = False
-            self.focus()
+            self._probe("folderize", self.path)    # folder actions still apply
+            self._probe("multiartist", self.path)
+            self._probe("standardize", self.path)
+            self._probe("sort", self.path)
+        self._claim_focus()
+        self._settle()
 
     def _show_editable(self, editable: bool) -> None:
         """Editable selections show the filename input; others the title."""
@@ -1366,13 +1813,24 @@ class DetailsView(VerticalScroll, can_focus=True):
         self._sync_pane_bar()
         if editable and self.path is not None:
             self.query_one("#fname", Input).value = self.path.name
+        self._align_filename()
+
+    def _align_filename(self) -> None:
+        """Give the filename's chip the panel's label column, so its value
+        lines up with every other value. A metadata form's column depends
+        on the tags the file carries, so it is asked; a fixed panel's
+        comes from PANEL_LABEL."""
+        form = self._active_form()
+        width = (form.label_width if form is not None and form.label_width
+                 else _panel_width(self.kind or ""))
+        self.query_one("#fname-label", FieldLabel).set_text("filename", width)
 
     def _fill_audio(self, path: Path, d: adapters.AudioDetails) -> None:
         form = self.query_one("#form-audio", EditForm)
         form.set_fields(d.fields)
         gutter = " " * form.label_width
-        self.query_one("#art-label", Label).update(
-            f"{'album art':<{form.label_width}}")
+        self.query_one("#art-label", FieldLabel).set_text(
+            "album art", form.label_width)
         self.query_one("#art-buttons-pad", Label).update(gutter)
         self.query_one("#art-path-pad", Label).update(gutter)
         self._set("audio-info",
@@ -1424,8 +1882,8 @@ class DetailsView(VerticalScroll, can_focus=True):
         self._book_cover = d.cover is not None
         self._sync_pane_bar()       # extract-cover appears with the cover
         if path.suffix.lower() == ".epub":
-            self._probe_omnibus(path)   # split button fills in late
-            self._probe_sort_book(path)  # sort button fills in late too
+            self._probe("omnibus", path)   # split button fills in late
+            self._probe("sort_book", path)  # sort button fills in late too
 
     def _fill_image(self, path: Path, d: adapters.ImageDetails) -> None:
         self._set("image-size", human_size(d.size))
@@ -1448,10 +1906,10 @@ class DetailsView(VerticalScroll, can_focus=True):
         self._set("folder-files", "…")
         self._set("folder-size", "…")
         self._probe_totals(path)
-        self._probe_folderize(path)
-        self._probe_multiartist(path)
-        self._probe_standardize(path)
-        self._probe_sort(path)
+        self._probe("folderize", path)
+        self._probe("multiartist", path)
+        self._probe("standardize", path)
+        self._probe("sort", path)
 
     @work(thread=True, exclusive=True, group="folder-totals")
     def _probe_totals(self, root: Path) -> None:
@@ -1623,22 +2081,29 @@ class DetailsView(VerticalScroll, can_focus=True):
                 bars.append(bar)
         return bars
 
-    def _number_action_buttons(self) -> None:
-        """Hand out ^1…^9 across the WHOLE pane, not per bar (Nick's A/B,
-        2026-08-25): two bars each starting at ^1 would print the same
-        number twice, and the printed number is what fires.
+    NUMBERED_BARS = ("actions-bar",)
+    """The one bar whose buttons wear ^1…^9 — "the filetype button bar",
+    which is where Nick's complaint lives: too many unmemorable letters.
 
-        The pane bar goes first, so "save" keeps the number it had before
-        a wizard div opened above it; the sub-bar on show takes the tail.
-        A bar that isn't on show prints nothing.
+    Every other bar keeps LETTERS, because each is short and fixed and
+    the letter means the same thing everywhere: save/apply/cancel on the
+    Contextual bar, open/cut/copy/delete on the File bar, import/fetch
+    under the album art, and a wizard's own save. A numbered bar prints
+    no letters at all (action_markup), so these are the bars whose chords
+    stay printed — and a printed chord is the only kind that works.
+    """
+
+    def _number_action_buttons(self) -> None:
+        """Hand out ^1…^9 — per numbered bar, each starting at 1.
+
+        Which bar answers a number is decided by focus, not by the label:
+        a focused wizard confines dispatch to its own controls
+        (_focus_scope), so its ^1 is its own.
         """
         active = self._active_bars()
-        start = 1
-        for bar in sorted(active, key=lambda b: b.id != "pane-bar"):
-            start = bar.number_from(start)
         for bar in self.query(ActionBar):
-            if bar not in active:
-                bar.number_from(None)
+            numbered = bar in active and bar.id in self.NUMBERED_BARS
+            bar.number_from(1 if numbered else None)
 
     def _art_buttons(self) -> list[ActionButton]:
         if self.kind != kinds.AUDIO or not self.can_edit():
@@ -1646,18 +2111,26 @@ class DetailsView(VerticalScroll, can_focus=True):
         return self.query_one("#art-bar", ActionBar).buttons()
 
     def _sync_pane_bar(self) -> None:
-        """Show the pane-bar buttons the current selection has earned."""
+        """Show the buttons the current selection has earned, across all
+        three bars — one decision, fanned out (the bars keep what they own).
+        """
         names: set[str] = set()
-        if self.plan_preview_open():            # a preview owns the bar
+        if self._question is not None:          # a question owns the bars
+            names = set(self._question[0])
+        elif self.plan_preview_open():          # …as does a preview
             names = {"plan_apply", "plan_cancel"}
         else:
+            # The File bar: whatever this selection is, it can be handed
+            # to the OS, carried, or trashed. These are the tree's own
+            # commands wearing buttons, so they do NOT ride the save gate
+            # the way they did when a button had to be focus-reachable
+            # (Nick, 2026-10-26 — the actions are always available now).
+            if self.path is not None or self.paths is not None:
+                names |= {"cut", "copy", "delete"}
+            if self._open_target() is not None:
+                names.add("open")               # every single file, first
             if self.can_edit():
                 names.add("save")
-                # "open" rides the same gate as save, not because it
-                # writes anything but because a pane that can't take
-                # focus has no reachable buttons
-                if self._open_target() is not None:
-                    names.add("open")           # every single file, 2nd
                 if (self.kind == kinds.BOOK and self.paths is None
                         and self.path is not None):
                     suffix = self.path.suffix.lower()
@@ -1705,13 +2178,23 @@ class DetailsView(VerticalScroll, can_focus=True):
                 if self._shift_open:            # the write manifest: ^s
                     names.add("save")           # writes the pending shift
         try:
-            bar = self.query_one("#pane-bar", ActionBar)
+            bars = [self.query_one(f"#{id}", ActionBar)
+                    for id in ("contextual-bar", "file-bar", "actions-bar")]
         except NoMatches:
             # a probe worker's call_from_thread can land mid-teardown,
             # after the pane's children are gone — a late result is
             # meaningless then, not an error (flaked the suite twice)
             return
-        bar.set_visible(names)
+        for bar in bars:
+            # every bar gets the WHOLE set and keeps what it owns: one
+            # decision about what this selection offers, three rows
+            bar.set_visible(names)
+        # the spine draws itself from where the rows ARE, so it has to be
+        # told when they move — which is here: every selection change and
+        # every bar change comes through this method. Coalesced, because
+        # this method also runs on every probe answer.
+        self._spine_dirty = True
+        self.call_after_refresh(self._redraw_spine)
         self._number_action_buttons()   # positions moved with the visible set
         # the tree's ^f mirrors whatever folderize this selection earned,
         # and the strip only prints a key that works — so a bar change is
@@ -1750,20 +2233,21 @@ class DetailsView(VerticalScroll, can_focus=True):
         if self._jobs is not None:
             self._jobs.dismiss(key)
 
-    FOLDERIZE_WORD = "folderize"
+    FOLDERIZE_WORD = "Folderize"
     """Three actions wear this word — a single epub's ``sort_book``, a
-    video's ``folderize_video``, an audio folder's ``folderize``. The
-    tree's ^f fires whichever one the selection is showing, so the word
-    (not the name) is what identifies the command across views."""
+    video's ``folderize_video``, an audio folder's ``folderize``. Which
+    one a selection offers is the kind's business; the word is how the
+    one BUTTON is found (it is numbered, like every kind action)."""
 
     def folderize_action(self) -> Action | None:
         """The folderize on show for the current selection, or None.
 
         Reads the composed bar rather than re-deriving the rules: the
-        button IS the contract (todo-4), so if it isn't printed, ^f from
-        the tree does nothing either."""
+        button IS the contract. Kept as the seam the tests use — the
+        special-case ^f dispatch it was written for is gone, because
+        every action reaches the tree now (2026-10-26)."""
         try:
-            bar = self.query_one("#pane-bar", ActionBar)
+            bar = self.query_one("#actions-bar", ActionBar)
         except NoMatches:
             return None
         for button in bar.buttons():
@@ -1789,6 +2273,8 @@ class DetailsView(VerticalScroll, can_focus=True):
     def _focus_scope(self) -> set[str] | None:
         """Action names reachable from the focused sub-view — None when
         no sub-view owns focus (everything visible is reachable)."""
+        if self._question is not None:
+            return set(self._question[0])   # a question answers only itself
         if self._within("#row-art-path"):       # Import Album Art
             return set()                        # ⏎ applies, esc cancels
         if self._within("#book-cover-div"):     # Import Cover
@@ -1821,6 +2307,11 @@ class DetailsView(VerticalScroll, can_focus=True):
             # still hold the scoped action on the same chord
         return None
 
+    def trigger_by_name(self, name: str) -> None:
+        handler = getattr(self, f"action_{name}", None)
+        if handler is not None:
+            handler()
+
     def trigger(self, action: Action) -> None:
         handler = getattr(self, f"action_{action.name}", None)
         if handler is not None:
@@ -1830,29 +2321,44 @@ class DetailsView(VerticalScroll, can_focus=True):
         ev.stop()
         self.trigger(ev.action)
 
+    def _nav_rows(self) -> list[list]:
+        """What ↑↓ walks, a ROW at a time (Nick, 2026-10-26).
+
+        Every field is a row of one; every BAR is a row of its buttons.
+        So ↓ off the last field lands on the first button of the first
+        bar, and ↓ again lands on the first button of the NEXT bar —
+        rather than stepping sideways through nine converts to get past
+        them. ←→ move inside a row (action_pane_left / _right).
+        """
+        return [item if isinstance(item, list) else [item]
+                for item in self._nav_items()]
+
     def _nav_items(self) -> list:
-        """Everything ↑↓ walks, top to bottom: the fields, then any open
-        wizard's controls, then every visible action button in reading
-        order. A FOCUSED sub-view confines the walk to its own controls
-        (focus lockdown, todo-4): save or cancel to leave."""
+        """The rows ↑↓ walks, top to bottom: the fields, then any open
+        wizard's controls, then each visible BAR as one entry (a list of
+        its buttons). A FOCUSED sub-view confines the walk to its own
+        controls (focus lockdown, todo-4): save or cancel to leave."""
+        if self._question is not None:
+            return [[self.query_one(f"#act-{name}", ActionButton)
+                     for name in self._question[0]]]
         if self._within("#shift-div"):          # its save is the pane ^s
             items: list = [self.query_one("#shift-control", ShiftControl)]
             save = self.query_one("#save-btn", ActionButton)
             if save.display:
-                items.append(save)
+                items.append([save])
             return items
         if self._within("#resize-div"):
             return [self.query_one("#resize-w", FieldInput),
                     self.query_one("#resize-h", FieldInput),
                     self.query_one("#resize-link", Checkbox),
-                    *self.query_one("#resize-bar", ActionBar).buttons()]
+                    self.query_one("#resize-bar", ActionBar).buttons()]
         if self._within("#trace-div"):
             return [*self.query(TraceControl),
-                    *self.query_one("#trace-bar", ActionBar).buttons()]
+                    self.query_one("#trace-bar", ActionBar).buttons()]
         if self._within("#gif-div"):
             return [self.query_one("#gif-fps", FieldInput),
                     self.query_one("#gif-width", FieldInput),
-                    *self.query_one("#gif-bar", ActionBar).buttons()]
+                    self.query_one("#gif-bar", ActionBar).buttons()]
         if self._within("#row-art-path"):       # single-input sub-forms:
             return [self.query_one("#art-path", ArtPathInput)]
         if self._within("#book-cover-div"):     # ↑↓ stay put
@@ -1865,19 +2371,21 @@ class DetailsView(VerticalScroll, can_focus=True):
                           self.query_one("#gif-width", FieldInput)])
         if items:
             for bar in self._active_bars():
-                items.extend(bar.buttons())
+                if (buttons := bar.buttons()):
+                    items.append(buttons)      # one bar, one row
         return items
 
     def _move_nav(self, delta: int) -> None:
-        items = self._nav_items()
-        if not items:
+        """↑↓ : one row up or down, landing on the row's first control."""
+        rows = self._nav_rows()
+        if not rows:
             return
         focused = self.app.focused
-        if focused in items:
-            index = max(0, min(len(items) - 1, items.index(focused) + delta))
-        else:
-            index = 0
-        items[index].focus()
+        at = next((i for i, row in enumerate(rows) if focused in row), None)
+        if at is None:
+            rows[0][0].focus()
+            return
+        rows[max(0, min(len(rows) - 1, at + delta))][0].focus()
 
     def action_field_next(self) -> None:
         self._move_nav(+1)
@@ -1910,6 +2418,11 @@ class DetailsView(VerticalScroll, can_focus=True):
                 row[index + 1].focus()
 
     def action_release(self) -> None:
+        if self._question is not None:
+            # every question's last choice is its way out (keep editing /
+            # cancel), and esc is printed on that button
+            self.trigger_by_name(self._question[0][-1])
+            return
         if self.plan_preview_open():        # esc backs out of a plan/split
             self.action_plan_cancel()       # (which returns focus to the tree)
             return
@@ -1932,7 +2445,8 @@ class DetailsView(VerticalScroll, can_focus=True):
                    and self._video_srt is not None
                    else self._count_label() if self.paths is not None
                    else self.path.name if self.path is not None else "?")
-        self.app.push_screen(ConfirmSave(subject), decided)
+        self.ask(["confirm_save", "confirm_discard", "confirm_keep"],
+                 decided, f"Save changes to {subject}?", title="save")
 
     def _restore_baseline(self) -> None:
         if self._shift_pending:         # discard a pending shift: close the div
@@ -2057,7 +2571,7 @@ class DetailsView(VerticalScroll, can_focus=True):
     def _book_cover_done(self, book: Path) -> None:
         self.job("cover", "cover", "cover updated", done=True)
         if self.path == book:
-            self.preview(book, immediate=True)      # refresh the cover preview
+            self.preview(book, immediate=True, force=True)   # the cover changed
 
     def _set_pending_art(self, data: bytes) -> None:
         self._pending_art = data
@@ -2365,7 +2879,7 @@ class DetailsView(VerticalScroll, can_focus=True):
     # lives in the engine); rotate is the one in-place pixel edit. The
     # resize div is the second wizard div (shift-subs is the exemplar):
     # ^e toggles it, ⏎ or ^a applies, esc closes — resize never pends,
-    # so there is no ConfirmSave leg.
+    # so there is no save-question leg.
 
     def _image_target(self) -> Path | None:
         """The single image file the actions apply to, or None."""
@@ -2500,7 +3014,7 @@ class DetailsView(VerticalScroll, can_focus=True):
         self.notify(f"{path.name}: rotated 90° clockwise{note}",
                     title="rotate")
         if self.path == path:
-            self.preview(path, immediate=True)  # fresh image + dimensions
+            self.preview(path, immediate=True, force=True)  # fresh image + size
 
     # -- image trace: the full-panel wizard (trace.py) -----------------------------
     # Illustrator's Image Trace (Nick, 2026-09-16). The fourth wizard div,
@@ -2511,7 +3025,7 @@ class DetailsView(VerticalScroll, can_focus=True):
     # resolution source in a worker, and potrace draws the result at the
     # picture's exact pixel size — a preview, never a thumbnail of one.
     # Nothing pends (the source is never touched; save writes a sibling),
-    # so esc simply closes: no ConfirmSave leg.
+    # so esc simply closes: no save-question leg.
 
     def action_trace(self) -> None:
         image = self._image_target()
@@ -2569,7 +3083,7 @@ class DetailsView(VerticalScroll, can_focus=True):
         on = self._trace_open
         editable = self.can_edit()
         self.query_one("#trace-div").display = on
-        self.query_one("#pane-bar").display = not on
+        self.query_one("#bars").display = not on
         self.query_one("#row-image-size").display = not on
         self.query_one("#row-image-dims").display = not on
         self.query_one("#dtitle").display = on or not editable
@@ -2640,6 +3154,10 @@ class DetailsView(VerticalScroll, can_focus=True):
                                               self._trace_render)
 
     def on_resize(self, event) -> None:
+        # ONE handler per message per class: a second `on_resize` further
+        # down the class body silently shadows the first (2026-10-27)
+        self._spine_dirty = True
+        self.call_after_refresh(self._redraw_spine)   # rows moved
         if self._trace_open:                    # the picture refits
             self._trace_schedule()
 
@@ -2819,7 +3337,7 @@ class DetailsView(VerticalScroll, can_focus=True):
         self._omnibus_editing = False
         self._sort_plan = None
         if self.path is not None:               # restore the normal view
-            self.preview(self.path, immediate=True)
+            self.preview(self.path, immediate=True, force=True)
         self.app.action_focus_tree()            # ascend out of the pane
 
     # -- case-only folder collisions ------------------------------------------------
@@ -2840,20 +3358,14 @@ class DetailsView(VerticalScroll, can_focus=True):
             self.job(key, title, "cancelled — folder casing left alone",
                      done=True, timeout=6)
 
-        self.app.push_screen(ConfirmCaseRename(pairs), decided)
+        existing, wanted = pairs[0]
+        more = f" (and {len(pairs) - 1} more)" if len(pairs) > 1 else ""
+        self.ask(["case_keep", "case_purge", "case_cancel"], decided,
+                 f"{existing.name}/ already exists where {wanted.name}/ "
+                 f"should go{more}. This filesystem can't hold both "
+                 f"spellings — rename it?", title=title)
 
     # -- folderize --------------------------------------------------------------
-
-    @work(thread=True, exclusive=True, group="folderize-probe")
-    def _probe_folderize(self, root: Path) -> None:
-        ready = folderize.probe(root)
-        if ready:
-            self.app.call_from_thread(self._folderize_probed, root)
-
-    def _folderize_probed(self, root: Path) -> None:
-        if self.path == root and not self.plan_preview_open():
-            self._folderize_ready = True
-            self._sync_pane_bar()
 
     def action_folderize(self) -> None:
         root = self._plan_root()
@@ -2912,20 +3424,9 @@ class DetailsView(VerticalScroll, can_focus=True):
         fs.clear_cache()                        # the subtree just changed
         self.post_message(self.FolderChanged(root))
         if self.path == root:
-            self.preview(root, immediate=True)  # fresh counts, fresh probe
+            self.preview(root, immediate=True, force=True)  # fresh counts/probe
 
     # -- strip multi-artist ---------------------------------------------------------
-
-    @work(thread=True, exclusive=True, group="multiartist-probe")
-    def _probe_multiartist(self, root: Path) -> None:
-        ready = multiartist.probe(root)
-        if ready:
-            self.app.call_from_thread(self._multiartist_probed, root)
-
-    def _multiartist_probed(self, root: Path) -> None:
-        if self.path == root and not self.plan_preview_open():
-            self._multiartist_ready = True
-            self._sync_pane_bar()
 
     def action_strip_multi_artist(self) -> None:
         root = self._plan_root()
@@ -2973,20 +3474,9 @@ class DetailsView(VerticalScroll, can_focus=True):
                  severity="warning" if errors else "information")
         # tags changed in place — no tree structure change, just re-read
         if self.path == root:
-            self.preview(root, immediate=True)  # fresh view, fresh probes
+            self.preview(root, immediate=True, force=True)  # fresh view/probes
 
     # -- split omnibus: the third plan-shaped action (epub, not folder) ------------
-
-    @work(thread=True, exclusive=True, group="omnibus-probe")
-    def _probe_omnibus(self, path: Path) -> None:
-        ready = omnibus.probe(path)             # one zip read
-        if ready:
-            self.app.call_from_thread(self._omnibus_probed, path)
-
-    def _omnibus_probed(self, path: Path) -> None:
-        if self.path == path and not self.plan_preview_open():
-            self._omnibus_ready = True
-            self._sync_pane_bar()
 
     def action_split_omnibus(self) -> None:
         path = self.path
@@ -3061,7 +3551,7 @@ class DetailsView(VerticalScroll, can_focus=True):
         for path in written:
             self.post_message(self.FileCreated(path))
         if self.path == source:
-            self.preview(source, immediate=True)    # restore the book view
+            self.preview(source, immediate=True, force=True)   # the book is back
 
     # -- sort: wrap each book's files into "Author Sort - Title/" ------------------
     # The fourth plan-shaped action (booksort.py) — folderize's exact
@@ -3069,27 +3559,6 @@ class DetailsView(VerticalScroll, can_focus=True):
     # same engine runs one-file and immediately (no preview): rename + wrap,
     # then reveal the book in its new directory, still editable (Wrapped).
     # One _sort_ready flag serves both contexts — they never coexist.
-
-    @work(thread=True, exclusive=True, group="sort-probe")
-    def _probe_sort(self, root: Path) -> None:
-        ready = booksort.probe(root)
-        if ready:
-            self.app.call_from_thread(self._sort_probed, root)
-
-    def _sort_probed(self, root: Path) -> None:
-        if self.path == root and not self.plan_preview_open():
-            self._sort_ready = True
-            self._sync_pane_bar()
-
-    @work(thread=True, exclusive=True, group="sort-book-probe")
-    def _probe_sort_book(self, book: Path) -> None:
-        if booksort.probe_book(book):
-            self.app.call_from_thread(self._sort_book_probed, book)
-
-    def _sort_book_probed(self, book: Path) -> None:
-        if self.path == book and not self.plan_preview_open():
-            self._sort_ready = True
-            self._sync_pane_bar()
 
     def action_sort_book(self) -> None:
         # the single-epub button ("folderize", spec rename) — same engine
@@ -3190,23 +3659,12 @@ class DetailsView(VerticalScroll, can_focus=True):
         fs.clear_cache()                        # the subtree just changed
         self.post_message(self.FolderChanged(root))
         if self.path == root:
-            self.preview(root, immediate=True)  # fresh counts, fresh probes
+            self.preview(root, immediate=True, force=True)  # fresh counts/probes
 
     # -- standardize formatting: strip source cruft, rebuild clean -----------------
     # One engine, two contexts: a single epub, or every direct-child
     # epub of a folder (batch = v1's multi-file mode). Outputs are
     # "(clean)" siblings, so no plan preview — nothing moves.
-
-    @work(thread=True, exclusive=True, group="standardize-probe")
-    def _probe_standardize(self, root: Path) -> None:
-        ready = standardize.probe_folder(root)
-        if ready:
-            self.app.call_from_thread(self._standardize_probed, root)
-
-    def _standardize_probed(self, root: Path) -> None:
-        if self.path == root and not self.plan_preview_open():
-            self._standardize_ready = True
-            self._sync_pane_bar()
 
     def action_standardize(self) -> None:
         if (self.kind == kinds.BOOK and self.paths is None
@@ -3526,7 +3984,7 @@ class DetailsView(VerticalScroll, can_focus=True):
         if result.installed:
             self.post_message(self.FileCreated(video.parent / result.installed))
             if self.path == video:
-                self.preview(video, immediate=True)  # fresh subtitles row
+                self.preview(video, immediate=True, force=True)  # fresh subtitles
 
     def action_clean_subs(self) -> None:
         video = self._video_target()
@@ -3806,7 +4264,7 @@ class DetailsView(VerticalScroll, can_focus=True):
             "✓" if self._shift_pending else "")
 
     def _shift_close(self) -> None:
-        """esc on the control: pending goes through ConfirmSave (the
+        """esc on the control: pending goes through the save question (the
         div refuses to close silently), clean just closes."""
         if self._shift_pending:
             self.action_release()
@@ -3843,7 +4301,7 @@ class DetailsView(VerticalScroll, can_focus=True):
         if self.path == video:
             self._shift_applied_ms = target_ms  # ✓ clears, div stays open
             self._shift_refresh()
-        if release:                             # via ConfirmSave: close out
+        if release:                             # via the question: close out
             if self.path == video:
                 self._shift_hide()
             self.app.action_focus_tree()

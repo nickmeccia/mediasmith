@@ -44,6 +44,23 @@ MEDIASMITH = Theme(
     foreground=GREY_90,     # = grey-90, brightest body text
 
     variables={
+        # -- Elements (always-available-actions-3, 2026-10-26)
+        #
+        # Focus stopped being a property of a VIEW and became a property of
+        # one ELEMENT: the thing with focus wears PRIMARY, every other
+        # focusable thing wears GREY_30, and nothing dims because the
+        # cursor is somewhere else. These six replace the idle/focus PAIRS
+        # below for buttons, field labels and tree nodes — the pairs
+        # answered "which view owns focus", which is a question the model
+        # no longer asks. (The scrollbar and text pairs below still flip
+        # with the scroll container's own focus, which is still a thing.)
+        "element-bg": GREY_30,
+        "element-fg": GREY_90,
+        "element-key": PRIMARY,         # the chord printed in a label
+        "element-bg-focus": PRIMARY,
+        "element-fg-focus": GREY_90,
+        "element-key-focus": GREY_90,   # on PRIMARY, the chord goes quiet
+
         "black": BLACK,
         "grey-10": GREY_10,
         "grey-20": GREY_20,
