@@ -40,7 +40,7 @@ views, which sit on GREY_10. Move it onto the ramp whenever you like;
 nothing else reads it (todo-6, rule 5)."""
 
 PRIMARY = "#ffa62b"
-TRAVERSED="#bf8028"
+TRAVERSED="#9d6a32"
 SUCCESS = "#4ebf71"
 WARNING = "#ffa62b"
 ERROR = "#ba3c5b"
