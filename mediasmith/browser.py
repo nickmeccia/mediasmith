@@ -299,11 +299,22 @@ class LibraryTree(DirectoryTree):
         "tree--node-chip",
         "tree--run",
         "tree--run-traversed",
+        "tree--selected",
+        "tree--selected-cursor",
     }
     """``tree--node-chip``: the grey block every row wears to say "this is
     a focusable thing". ``tree--run``: the connector's horizontal stroke,
     drawn from the selected row across to the details pane. Both colored
     in app.py's CSS, like every other component class."""
+
+    def _selected_style(self, node) -> Style:
+        """How a shift-marked row looks — and how it looks when it is
+        ALSO the row under the cursor, which is a pair of its own."""
+        cursor = self.cursor_node
+        at_cursor = cursor is not None and cursor is node
+        return self.get_component_rich_style(
+            "tree--selected-cursor" if at_cursor else "tree--selected",
+            partial=True)
 
     def _run_style(self) -> Style:
         """The run's color. It is only TRAVERSED once focus has travelled
@@ -619,7 +630,9 @@ class LibraryTree(DirectoryTree):
             if color:
                 label.stylize(Style(color=color, dim=dim))
         if str(node.data.path) in self._selected:
-            label.stylize("reverse")
+            # the marked look is a STATE with its own colours, not a
+            # reversal of whatever was there (Nick, todo-6)
+            label.stylize(self._selected_style(node))
         return label
 
     def _directory_content(self, location: Path, worker):
@@ -1080,12 +1093,13 @@ class LibraryTree(DirectoryTree):
                 # one adjacent to the rightmost box character, so it wears
                 # the LABEL style, not the guide's — the selection color
                 # starts there (2026-08-23). Box characters keep their own.
-                # A shift-marked row reverses its whole label, so the pad
-                # reverses with it or the block starts a cell late.
+                # A shift-marked row carries the selected colours across
+                # its whole label, so the pad carries them too or the
+                # block starts a cell late.
                 pad_style = label_style
                 data = line.path[-1].data
                 if data is not None and str(data.path) in self._selected:
-                    pad_style += Style(reverse=True)
+                    pad_style += self._selected_style(line.path[-1])
                 guides.append(guide[:-1], style=guide_style)
                 guides.append(guide[-1:], style=pad_style)
 

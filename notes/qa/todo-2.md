@@ -1689,3 +1689,86 @@ never altered; and `MEDIASMITH_NO_UPDATE=1` turns it off.
       that is a colour decision with no token behind it — it shows
       whatever swap the row happens to produce. Worth a look now that
       the states are named.
+
+
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+
+## Session 22, batch 5 (2026-10-31, Opus) — todo-6, your fifth list
+
+- [ ] **No more dangling `──`**, and a wrapped bar navigates the way it
+      looks. You were right that the model was the problem: a link is
+      now placed only once the next button is known to share its line,
+      which also stops the decision feeding back on itself (hiding a
+      link frees two cells, which could un-wrap the button that made it
+      dangle, which would want the link back). ↓ from a wrapped row
+      reaches the row below it, ←→ stop at the end of their own line.
+      One thing I did NOT do: make each wrapped line a separate
+      `ActionBar` widget. Moving buttons between parents at runtime is
+      the remove/mount path rule 2 warns about, and the ids and the
+      positional chords both key off one bar per group. The bar is still
+      one widget; `visual_rows()` is what the arrow keys and the Spine
+      both read, so what you observe is the model either way.
+- [ ] **Every strip command works from any non-dirty state** (`^r`,
+      `^.`, `^n`, `^←`), with the same three refusals `^/` makes: a
+      question owns the keys, a sub-form that has taken focus keeps
+      them, and a pending edit says so first. Two notes:
+      `^←` is NOT a priority binding, so inside a text field it stays
+      word-left (the strip is printing the pane's commands there, not
+      the tree's); and a command that RELISTS (`^r`, `^.`) now lands
+      focus on the tree, because the relist takes away the field that
+      had it and the app was left with nothing focused at all.
+- [ ] **A marked row has colours of its own** — your four tokens, wired
+      to `tree--selected` and `tree--selected-cursor`. Nothing on screen
+      reaches the terminal reversed any more.
+
+**Shrink a comic** (`comics.py`, the fifth plan-shaped action). Measured
+on your four books rather than guessed:
+
+| book | pages | page size | now | after |
+|---|---|---|---|---|
+| Blood & Thunder 018 | 32 | 1988×3056 | 146 MB | 30 MB |
+| Cyberpunk — Chrome 04 | 24 | 3816×5868 | 236 MB | 36 MB |
+| Cyberpunk — Jayk's Case 01 | 32 | 3975×6113 | 279 MB | 38 MB |
+| You'll Never Leave… 001 | 42 | 1988×3056 | 163 MB | 60 MB |
+
+824 MB → 164 MB, and every page still 3000 px tall.
+
+- [ ] **Where the weight actually is.** Two places, and neither is the
+      drawing. Every page is 4:4:4 chroma at quality 95–100 — Blood &
+      Thunder's luma quantization table is all ones, which is quality
+      100 — so re-encoding at q85 / 4:2:0 / progressive takes a 6.3 MB
+      page to 1.4 MB AT THE SAME PIXEL SIZE. On top of that the two
+      Cyberpunk books are ~24 megapixels a page, a 600 DPI print scan.
+- [ ] **Why 3000 px.** Your 2019 iPad Pro is 2732×2048 (12.9") or
+      2388×1668 (11"); the 2024 13" is 2752×2064, the tallest panel
+      Apple has shipped. A page is taller and narrower than the screen,
+      so height binds, and 3000 clears all of them with room to zoom.
+- [ ] **Height is the cap, not the long edge** — a double-page spread is
+      as tall as a page and twice as wide, and capping its long edge
+      would make each half blurrier than the pages around it. A page
+      within 5% of the cap is re-encoded but not resampled: 3056 → 3000
+      costs sharpness to save 2% of the pixels.
+- [ ] **WebP stays off.** Your report checks out: Synology's iOS apps
+      have known WebP problems and DS File does not document it as
+      supported. Output is JPEG whatever went in.
+- [ ] **It REPLACES the pages**, which is the point, so the preview is
+      the whole confirmation — it shows the sizes before anything is
+      written, and Apply is the only thing that writes. A page that
+      would come out bigger is left alone, name and all. The button
+      appears on a folder of ≥3 images with no other media in it, so an
+      album folder with a cover.jpg never offers it.
+
+**Crop** (`imageops.crop` + the fifth wizard div). You asked whether I
+could implement one or whether you should design first — here is one to
+react to. A ratio row on top (free · 1:1 · 4:3 · 3:2 · 16:9 · 3:4 · 2:3
+· 9:16) and the four edges below it, each a ←→ stepper (⇧ for 25). The
+ratio sets the edges to the largest CENTRED rectangle; nudging an edge
+drops back to "free", since the edges are then the truth. The picture
+redraws cropped on every nudge — a crop you cannot see is not one you
+can judge — and the result line reads `1200 × 1800 → 1200 × 1200`. `^s`
+writes `name (cropped).ext` beside the source and refuses to overwrite,
+like every other product.
+
+Mockups welcome. Things I would ask about first: whether the edges
+should be pixels or percentages, whether ⇧ should be 25 or 10, and
+whether the ratio list is the right one.

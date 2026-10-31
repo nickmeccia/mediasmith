@@ -34,7 +34,7 @@ from textual.strip import Strip
 from textual.widget import Widget
 from textual.widgets import Button, Checkbox, Input, Label, Static
 
-from . import (adapters, artfetch, booksort, calibre, casing, epub,
+from . import (adapters, artfetch, booksort, calibre, casing, comics, epub,
                illustrator,
                folderize, fs, gif, imageops, images, kinds, multiartist,
                omnibus, posters, progress, srt, standardize, subsync, trace,
@@ -131,7 +131,13 @@ PANE_ACTIONS = [
     # image — rotate/resize precede the converts (spec order)
     Action("rotate", "Rotate"),
     Action("resize", "Resize"),
+    Action("crop", "Crop"),
     Action("trace", "Trace"),
+    # comics: the one action that reads a FOLDER of images as a thing
+    # (comics.py). Sitting here puts it after the image operations on an
+    # image and before the folder ones on a folder — move it, Nick, if
+    # the grouping reads wrong on either.
+    Action("shrink", "Shrink"),
     Action("convert_jpg", "Convert to JPG"),
     Action("convert_png", "Convert to PNG"),
     Action("convert_tiff", "Convert to TIFF"),
@@ -562,6 +568,40 @@ def _mk(text: str) -> str:
 PLAN_PREVIEW_LINES = 40
 
 
+def render_shrink(plan) -> str:
+    """The shrink preview: what each page costs now, and what the whole
+    thing would cost after. The estimate names its own sample, because
+    an estimate that does not is a promise (comics.py)."""
+    pages = len(plan.pages)
+    tall = plan.tallest
+    resizing = plan.resizes
+    lines = [
+        f"{pages} page{'s' if pages != 1 else ''}, "
+        f"{human_size(plan.before_total)} → "
+        f"[bold]{human_size(plan.after_total)}[/]  "
+        f"[dim]({plan.ratio:.0%}, estimated from "
+        f"{plan.sampled} page{'s' if plan.sampled != 1 else ''})[/]",
+        "",
+        f"  JPEG quality {plan.quality}, 4:2:0 chroma",
+    ]
+    if resizing:
+        lines.append(f"  tallest page {tall}px → {plan.height}px "
+                     f"[dim](a spread keeps its width)[/]")
+    else:
+        lines.append(f"  {tall}px tall, near enough to {plan.height} — "
+                     f"[dim]re-encoded, not resampled[/]")
+    lines += ["",
+              "  [dim]Pages are REPLACED. A page that would grow is left"
+              " alone.[/]", ""]
+    for page in plan.pages[:8]:
+        lines.append(f"    {_mk(page.path.name)}  "
+                     f"[dim]{page.width}×{page.height}, "
+                     f"{human_size(page.before)}[/]")
+    if pages > 8:
+        lines.append(f"    [dim]…and {pages - 8} more[/]")
+    return "\n".join(lines)
+
+
 def render_plan(plan) -> str:
     """The folderize preview: the structure the apply button will build."""
     n = len(plan.moves)
@@ -871,6 +911,44 @@ class TraceControl(Static, can_focus=True):
 
     def action_close(self) -> None:
         self.screen.query_one(DetailsView)._trace_close()
+
+
+CROP_CONTROLS: tuple[tuple[str, str], ...] = (
+    ("ratio", "ratio"), ("left", "left"), ("top", "top"),
+    ("right", "right"), ("bottom", "bottom"))
+"""Crop's rows, top to bottom. Ratio first because it is usually the
+whole answer — "make it square" — and the edges below it are the
+adjustment (Nick, todo-6)."""
+
+CROP_STEP, CROP_BIG_STEP = 1, 25
+"""←→ move one pixel, ⇧←→ twenty-five. A page is thousands of pixels
+tall, so the big step is what gets you there and the small one is what
+lands it."""
+
+
+class CropControl(Static, can_focus=True):
+    """One crop control: ←→ nudge an edge (⇧ by twenty-five) or cycle
+    the ratio. Shaped like TraceControl, which is the stepper the trace
+    wizard established."""
+
+    BINDINGS = [
+        Binding("left", "nudge(-1)", show=False),
+        Binding("right", "nudge(1)", show=False),
+        Binding("shift+left", "nudge(-1, True)", show=False),
+        Binding("shift+right", "nudge(1, True)", show=False),
+        Binding("escape", "close", show=False),
+    ]
+
+    def __init__(self, control: str, **kwargs) -> None:
+        super().__init__("", classes="crop-control", **kwargs)
+        self.control = control
+
+    def action_nudge(self, direction: int, big: bool = False) -> None:
+        self.screen.query_one(DetailsView)._crop_nudge(
+            self.control, direction, big)
+
+    def action_close(self) -> None:
+        self.screen.query_one(DetailsView)._crop_close()
 
 
 class EditForm(Vertical):
@@ -1223,6 +1301,8 @@ class DetailsView(VerticalScroll, can_focus=True):
         self._omnibus_plan: omnibus.OmnibusPlan | None = None
         self._omnibus_editing = False   # the editable split form is on show
         self._folderize_ready = False   # probe: this folder has work to do
+        self._shrink_ready = False      # probe: this folder is a comic
+        self._shrink_plan: comics.ShrinkPlan | None = None
         self._folderize_plan: folderize.FolderizePlan | None = None
         self._standardize_ready = False     # probe: uncleaned epubs below
         self._sort_ready = False            # probe: unwrapped books below
@@ -1243,6 +1323,12 @@ class DetailsView(VerticalScroll, can_focus=True):
         # one left off (Illustrator remembers its last trace too)
         self._trace_settings = trace.TraceSettings()
         self._trace_gray = None         # full-res greyscale source (PIL)
+        self._crop_open = False
+        self._crop_ratio = "free"
+        self._crop_edges = {edge: 0 for edge in imageops.EDGES}
+        self._crop_source = None        # the whole image, for the preview
+        self._crop_gen = 0
+        self._crop_debounce = None
         self._trace_source = None       # the original, for "view source"
         self._trace_view = "trace"      # which one the picture shows
         self._trace_gen = 0             # bumps per render: stale drops
@@ -1393,6 +1479,17 @@ class DetailsView(VerticalScroll, can_focus=True):
                     Action("resize_apply", "save", "s",
                            button_id="resize-apply-btn"),
                     id="resize-bar")
+            with Vertical(id="crop-div"):       # Crop
+                crop_width = len("bottom") + LABEL_GUTTER
+                for name, label in CROP_CONTROLS:
+                    with Horizontal(classes="crop-row prow"):
+                        yield FieldLabel(label, crop_width, classes="fkey")
+                        yield CropControl(name, id=f"crop-{name}")
+                yield Static("", id="crop-result")
+                yield ActionBar(
+                    Action("crop_apply", "save", "s",
+                           button_id="crop-apply-btn"),
+                    id="crop-bar")
             with Vertical(id="trace-div"):      # Image Trace
                 width = len("ignore white") + LABEL_GUTTER
                 for name, label in trace.CONTROLS:
@@ -1475,6 +1572,7 @@ class DetailsView(VerticalScroll, can_focus=True):
         self.query_one("#shift-div").display = False
         self.query_one("#gif-div").display = False
         self.query_one("#resize-div").display = False
+        self.query_one("#crop-div").display = False
         self.query_one("#trace-div").display = False
         self._sync_pane_bar()
 
@@ -1736,6 +1834,7 @@ class DetailsView(VerticalScroll, can_focus=True):
         self._omnibus_editing = False
         self.query_one("#panel-omnibus").display = False
         self._folderize_ready = False
+        self._shrink_ready = False
         self._folderize_plan = None
         self._rescue_ready = False
         self._standardize_ready = False
@@ -1915,6 +2014,14 @@ class DetailsView(VerticalScroll, can_focus=True):
         return self._question is not None
 
     @property
+    def focus_locked(self) -> bool:
+        """Whether a sub-form has taken focus and confined the keys to
+        its own controls (the lockdown, todo-4). A tree command from
+        outside has to wait for it to be saved or cancelled — the one
+        exception to "a printed chord works from anywhere"."""
+        return self._focus_scope() is not None
+
+    @property
     def focus_inside(self) -> bool:
         """Whether the thing with focus is in this pane — which is what
         makes ``ESC Exit`` worth printing."""
@@ -1978,6 +2085,7 @@ class DetailsView(VerticalScroll, can_focus=True):
         # totals, an .ai's canvas) can land whenever it likes — no chord
         # moves when it does — so it stays outside this table.
         "folderize": (folderize, "probe", "_folderize_ready"),
+        "shrink": (comics, "probe", "_shrink_ready"),
         "multiartist": (multiartist, "probe", "_multiartist_ready"),
         "omnibus": (omnibus, "probe", "_omnibus_ready"),
         "sort": (booksort, "probe", "_sort_ready"),
@@ -2153,6 +2261,7 @@ class DetailsView(VerticalScroll, can_focus=True):
         self._refresh_marks()
         if self.path is not None:               # album-folder origin: the
             self._probe("folderize", self.path)    # folder actions still apply
+            self._probe("shrink", self.path)
             self._probe("multiartist", self.path)
             self._probe("standardize", self.path)
             self._probe("sort", self.path)
@@ -2262,6 +2371,7 @@ class DetailsView(VerticalScroll, can_focus=True):
         self._set_loading("folder-files", "folder-size")
         self._probe_totals(path)
         self._probe("folderize", path)
+        self._probe("shrink", path)
         self._probe("multiartist", path)
         self._probe("standardize", path)
         self._probe("sort", path)
@@ -2521,7 +2631,7 @@ class DetailsView(VerticalScroll, can_focus=True):
                     names |= {f"convert_{fmt}"
                               for fmt in imageops.CONVERT_FORMATS
                               if fmt != own}
-                    names |= {"resize", "rotate", "trace"}
+                    names |= {"resize", "rotate", "crop", "trace", "shrink"}
                 # the probe found work outside the artboard: the buttons
                 # showing up ARE the finding (Nick, 2026-09-29)
                 if (self.kind == kinds.VECTOR and self.paths is None
@@ -2529,6 +2639,8 @@ class DetailsView(VerticalScroll, can_focus=True):
                     names |= {"rescue_pdf", "rescue_svg"}
             if self._folderize_ready:           # probe: work to do below
                 names.add("folderize")
+            if self._shrink_ready:              # probe: a run of pages
+                names.add("shrink")
             if self._standardize_ready:         # probe: uncleaned epubs
                 names.add("standardize")
             if self._sort_ready:                # probe: unwrapped books —
@@ -2659,6 +2771,8 @@ class DetailsView(VerticalScroll, can_focus=True):
         # toggle is the sub-form's command — pinned-while-pending included)
         if self._within("#shift-div"):          # Shift Subtitles
             return {"save", "shift_subs"}       # ^s writes the shift
+        if self._within("#crop-div"):           # Crop
+            return {"crop_apply", "crop"}
         if self._within("#resize-div"):         # Resize Image
             return {"resize_apply", "resize"}
         if self._within("#gif-div"):            # Make GIF
@@ -2728,6 +2842,9 @@ class DetailsView(VerticalScroll, can_focus=True):
                     self.query_one("#resize-h", FieldInput),
                     self.query_one("#resize-link", Checkbox),
                     self.query_one("#resize-bar", ActionBar).buttons()]
+        if self._within("#crop-div"):
+            return [*self.query(CropControl),
+                    self.query_one("#crop-bar", ActionBar).buttons()]
         if self._within("#trace-div"):
             return [*self.query(TraceControl),
                     self.query_one("#trace-bar", ActionBar).buttons()]
@@ -2747,8 +2864,9 @@ class DetailsView(VerticalScroll, can_focus=True):
                           self.query_one("#gif-width", FieldInput)])
         if items:
             for bar in self._active_bars():
-                if (buttons := bar.buttons()):
-                    items.append(buttons)      # one bar, one row
+                # one LINE, one row: a bar that overflows is two bars to
+                # the eye, so ↓ reaches the second one (Nick, todo-6)
+                items.extend(bar.visual_rows())
         return items
 
     def _move_nav(self, delta: int) -> None:
@@ -2769,11 +2887,21 @@ class DetailsView(VerticalScroll, can_focus=True):
     def action_field_prev(self) -> None:
         self._move_nav(-1)
 
+    def _visual_row(self, button: ActionButton) -> list:
+        """The buttons drawn on the same LINE as this one."""
+        bar = button.parent
+        if not isinstance(bar, ActionBar):
+            return []
+        for row in bar.visual_rows():
+            if button in row:
+                return row
+        return []
+
     def action_pane_left(self) -> None:
         focused = self.app.focused
         if (isinstance(focused, ActionButton)
                 and isinstance(focused.parent, ActionBar)
-                and focused in (row := focused.parent.buttons())):
+                and focused in (row := self._visual_row(focused))):
             # focused not in row: a context change (probe fill-in, a
             # debounced re-preview) hid this button out from under the
             # cursor — fall through and ascend rather than index a list
@@ -2788,7 +2916,7 @@ class DetailsView(VerticalScroll, can_focus=True):
         focused = self.app.focused
         if (isinstance(focused, ActionButton)
                 and isinstance(focused.parent, ActionBar)
-                and focused in (row := focused.parent.buttons())):
+                and focused in (row := self._visual_row(focused))):
             index = row.index(focused)          # focused-not-in-row: no-op
             if index < len(row) - 1:
                 row[index + 1].focus()
@@ -3371,6 +3499,178 @@ class DetailsView(VerticalScroll, can_focus=True):
                 path, w, h, overwrite=ow),
             image)
 
+    # -- crop: the fifth wizard div (Nick, todo-6) ---------------------------
+    # A terminal cannot drag a rectangle, so the crop is said in numbers
+    # and SHOWN in the picture: every nudge redraws the image cropped,
+    # because a crop you cannot see is not a crop you can judge. The
+    # ratio row is first — "make it square" is usually the whole answer,
+    # and the edges under it are the adjustment.
+
+    def action_crop(self) -> None:
+        image = self._image_target()
+        if image is None:
+            return
+        if self._crop_open:                 # react-style toggle
+            div = self.query_one("#crop-div")
+            inside = (self.app.focused is not None
+                      and div in self.app.focused.ancestors)
+            self._crop_close(restore=True)
+            if inside:
+                self.app.action_focus_tree()
+            return
+        self._crop_ratio = "free"
+        self._crop_edges = {edge: 0 for edge in imageops.EDGES}
+        self._crop_open = True
+        self.query_one("#crop-div").display = True
+        self._crop_sync()
+        self.app.reveal_details()           # narrow: display, then focus
+        self.query_one("#crop-ratio", CropControl).focus()
+        self._sync_pane_bar()
+        self._crop_load_worker(image)
+
+    @work(thread=True, exclusive=True, group="crop-load")
+    def _crop_load_worker(self, path: Path) -> None:
+        # a whole-image decode, possibly off the NAS: never on the loop
+        try:
+            from PIL import ImageOps
+            source, _ = images.decode(path.read_bytes())
+            source = ImageOps.exif_transpose(source)
+            if source.mode not in ("RGB", "RGBA", "L", "LA"):
+                source = source.convert("RGBA")
+        except Exception:
+            return                          # no preview; the numbers still work
+        self.app.call_from_thread(self._crop_loaded, path, source)
+
+    def _crop_loaded(self, path: Path, source) -> None:
+        if not self._crop_open or self.path != path:
+            return
+        self._crop_source = source
+        self._crop_render()
+
+    def _crop_close(self, restore: bool = True) -> None:
+        if not self._crop_open:
+            return
+        self._crop_open = False
+        self._crop_source = None
+        if self._crop_debounce is not None:
+            self._crop_debounce.stop()
+            self._crop_debounce = None
+        self.query_one("#crop-div").display = False
+        if restore and self.path is not None:
+            self.preview(self.path, immediate=True, force=True)
+        self._sync_pane_bar()
+
+    def _crop_base(self) -> tuple[int, int] | None:
+        """The source's own size — the numbers are relative to it."""
+        if self._crop_source is not None:
+            return self._crop_source.size
+        return self._resize_base
+
+    def _crop_nudge(self, control: str, direction: int,
+                    big: bool = False) -> None:
+        if not self._crop_open:
+            return
+        base = self._crop_base()
+        if control == "ratio":
+            ratios = imageops.CROP_RATIOS
+            at = (ratios.index(self._crop_ratio) + direction) % len(ratios)
+            self._crop_ratio = ratios[at]
+            if base is not None:
+                self._crop_edges = imageops.centred_edges(
+                    *base, self._crop_ratio)
+        else:
+            step = CROP_BIG_STEP if big else CROP_STEP
+            value = self._crop_edges.get(control, 0) + direction * step
+            self._crop_edges[control] = max(0, value)
+            self._crop_ratio = "free"       # the edges are the truth now
+        self._crop_sync()
+
+    def _crop_sync(self) -> None:
+        """Repaint the rows and the result line, and queue a redraw."""
+        base = self._crop_base()
+        for name, _ in CROP_CONTROLS:
+            try:
+                widget = self.query_one(f"#crop-{name}", CropControl)
+            except NoMatches:
+                continue
+            if name == "ratio":
+                widget.update(self._crop_ratio)
+            else:
+                widget.update(str(self._crop_edges.get(name, 0)))
+        result = self.query_one("#crop-result", Static)
+        if base is None:
+            result.update("")
+        else:
+            width, height = imageops.crop_size(*base, self._crop_edges)
+            result.update(f"[$muted]{base[0]} × {base[1]}  →  "
+                          f"{width} × {height}[/]")
+        if self._crop_debounce is not None:
+            self._crop_debounce.stop()
+        self._crop_debounce = self.set_timer(0.12, self._crop_render)
+
+    def _crop_render(self) -> None:
+        self._crop_debounce = None
+        if not self._crop_open or self._crop_source is None:
+            return
+        cover = self.query_one("#cover-image")
+        if isinstance(cover, Static):       # images off: numbers only
+            return
+        cover.display = True
+        box = self._trace_box()             # same measurement, same picture
+        if box is None:
+            return
+        columns, rows = box
+        cell_width, cell_height = images.cell_pixels()
+        self._crop_gen += 1
+        self._crop_preview_worker(self._crop_gen, self.path,
+                                  self._crop_source, dict(self._crop_edges),
+                                  (columns * cell_width, rows * cell_height),
+                                  (cell_width, cell_height), (columns, rows))
+
+    @work(thread=True, exclusive=True, group="crop-preview")
+    def _crop_preview_worker(self, gen: int, path: Path, source, edges: dict,
+                             room: tuple[int, int],
+                             cell: tuple[int, int],
+                             box: tuple[int, int]) -> None:
+        try:
+            from PIL import Image
+            cropped = source.crop(imageops.crop_box(*source.size, edges))
+            scale = min(room[0] / cropped.width, room[1] / cropped.height, 1.0)
+            size = (max(1, round(cropped.width * scale)),
+                    max(1, round(cropped.height * scale)))
+            picture = cropped.resize(size, Image.Resampling.LANCZOS)
+        except Exception:
+            return
+        cells = (max(1, min(box[0], round(size[0] / cell[0]))),
+                 max(1, min(box[1], round(size[1] / cell[1]))))
+        self.app.call_from_thread(self._crop_previewed, gen, path, picture,
+                                  cells)
+
+    def _crop_previewed(self, gen: int, path: Path, picture,
+                        cells: tuple[int, int]) -> None:
+        if gen != self._crop_gen or not self._crop_open or self.path != path:
+            return
+        cover = self.query_one("#cover-image")
+        cover.styles.width, cover.styles.height = cells
+        cover.image = picture
+        cover.display = True
+
+    def action_crop_apply(self) -> None:
+        image = self._image_target()
+        if image is None or not self._crop_open:
+            return
+        base = self._crop_base()
+        if base is not None and imageops.crop_size(
+                *base, self._crop_edges) == base:
+            self.notify("nothing is being cropped", title="crop",
+                        severity="warning")
+            return
+        edges = dict(self._crop_edges)
+        self._run_producer(
+            "crop",
+            lambda path, ow, e=edges: imageops.crop(path, e, overwrite=ow),
+            image)
+
     def action_rotate(self) -> None:
         image = self._image_target()
         if image is None:
@@ -3646,7 +3946,8 @@ class DetailsView(VerticalScroll, can_focus=True):
     # whichever plan is open receives them.
 
     def plan_preview_open(self) -> bool:
-        return (self._folderize_plan is not None
+        return (self._shrink_plan is not None
+                or self._folderize_plan is not None
                 or self._multiartist_plan is not None
                 or self._omnibus_plan is not None
                 or self._sort_plan is not None)
@@ -3679,7 +3980,12 @@ class DetailsView(VerticalScroll, can_focus=True):
     def action_plan_apply(self) -> None:
         if not self.plan_preview_open():    # a stray ^a must not yank focus
             return
-        if self._folderize_plan is not None:
+        if self._shrink_plan is not None:
+            plan = self._shrink_plan
+            self._shrink_plan = None
+            self.job("shrink", "shrink", "re-encoding…")
+            self._shrink_exec_worker(plan)
+        elif self._folderize_plan is not None:
             plan = self._folderize_plan
             self._folderize_plan = None
             self.job("folderize", "folderize", "organizing…")
@@ -3716,6 +4022,7 @@ class DetailsView(VerticalScroll, can_focus=True):
         self._omnibus_plan = None
         self._omnibus_editing = False
         self._sort_plan = None
+        self._shrink_plan = None
         if self.path is not None:               # restore the normal view
             self.preview(self.path, immediate=True, force=True)
         self.app.action_focus_tree()            # ascend out of the pane
@@ -3744,6 +4051,87 @@ class DetailsView(VerticalScroll, can_focus=True):
                  f"{existing.name}/ already exists where {wanted.name}/ "
                  f"should go{more}. This filesystem can't hold both "
                  f"spellings — rename it?", title=title)
+
+    # -- shrink a comic ----------------------------------------------------------
+    # The fifth plan-shaped action (comics.py). Unlike the other four it
+    # REWRITES the files it names instead of moving them, so the preview
+    # is doing more work than usual: it is the only confirmation there
+    # is, and what it promises — the size — is what the user is here for.
+
+    def _shrink_target(self):
+        """What Shrink would act on: a folder of pages, or one image."""
+        if self.paths is not None:
+            return None
+        if self.path is None:
+            return None
+        if self.kind == kinds.IMAGE:
+            return self.path
+        return self.path if self._shrink_ready else None
+
+    def action_shrink(self) -> None:
+        target = self._shrink_target()
+        if target is None:
+            return
+        self.job("shrink", "shrink", "measuring…")
+        self._shrink_plan_worker(target)
+
+    @work(thread=True, exclusive=True, group="shrink-plan")
+    def _shrink_plan_worker(self, target: Path) -> None:
+        plan = comics.build_plan(target)
+        self.app.call_from_thread(self._shrink_planned, target, plan)
+
+    def _shrink_planned(self, target: Path,
+                        plan: comics.ShrinkPlan) -> None:
+        if self.path != target:                 # selection moved on
+            self.job_dismiss("shrink")
+            return
+        if plan.empty:
+            self.job("shrink", "shrink", "no images here", done=True)
+            return
+        if plan.saved <= 0:
+            self.job("shrink", "shrink",
+                     "already as small as this would make it", done=True)
+            return
+        self._shrink_plan = plan
+        self.job_dismiss("shrink")          # the preview is the answer
+        self._show_plan_preview(f"shrink {target.name}", render_shrink(plan))
+
+    @work(thread=True, exclusive=True, group="shrink-exec")
+    def _shrink_exec_worker(self, plan: comics.ShrinkPlan) -> None:
+        done = kept = failed = 0
+        before = after = 0
+        total = len(plan.pages)
+        for event in comics.apply(plan):
+            if isinstance(event, comics.Shrunk):
+                done += 1
+                before += event.before
+                after += event.after
+            elif isinstance(event, comics.Kept):
+                kept += 1
+                before += event.before
+                after += event.before
+            else:
+                failed += 1
+            if (done + kept + failed) % 4 == 0:
+                self.app.call_from_thread(
+                    self.job, "shrink", "shrink",
+                    f"page {done + kept + failed} of {total}…")
+        saved = max(0, before - after)
+        parts = [f"{done} page{'s' if done != 1 else ''}",
+                 f"{human_size(saved)} saved"]
+        if kept:
+            parts.append(f"{kept} already small")
+        if failed:
+            parts.append(f"{failed} failed")
+        self.app.call_from_thread(self.job, "shrink", "shrink",
+                                  " · ".join(parts), done=True)
+        self.app.call_from_thread(self._shrink_done, plan)
+
+    def _shrink_done(self, plan: comics.ShrinkPlan) -> None:
+        adapters.forget(plan.root)
+        self.post_message(self.FolderChanged(plan.root))
+        if self.path is not None:
+            self.preview(self.path, immediate=True, force=True)
 
     # -- folderize --------------------------------------------------------------
 

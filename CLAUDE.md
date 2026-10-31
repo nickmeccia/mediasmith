@@ -492,6 +492,22 @@ Test-driven, calibrated by layer — this replaces Nick-as-only-QA:
 5. **Responsive/mobile** — narrow-width breakpoints for tmux-from-phone;
    tree-first two-step flow on narrow screens.
 
+Session 22 also added the two features that are not chrome at all.
+**comics.py** shrinks a book of page images IN PLACE behind a plan
+preview — the fifth plan-shaped action, and the only one that rewrites
+the files it names rather than moving them, which is why the preview is
+the whole confirmation. Measured on Nick's own books: 824 MB → 164 MB
+with every page still 3000 px tall, because the weight was never the
+drawing (every page 4:4:4 at q95–100, and the two Cyberpunk books
+scanned at ~24 megapixels). Two rules in there are load-bearing: HEIGHT
+is the cap, not the long edge (a double-page spread is as tall as a page
+and twice as wide, so capping its long edge blurs each half), and a page
+within 5% of the cap is re-encoded but never resampled. Output is JPEG
+whatever went in — Synology's DS File is how Nick reads these, and WebP
+across Synology's iOS apps is unreliable. **Crop** is the fifth wizard
+div (`imageops.crop`): a ratio row over four edge steppers, the picture
+redrawn cropped on every nudge, `name (cropped).ext` beside the source.
+
 Session 22 (2026-10-30, Opus — four rounds of notes in
 `notes/claude/todo-6.md`, logged in `notes/qa/todo-2.md`): the connector
 and the four-state theme above, plus three things that are not chrome.

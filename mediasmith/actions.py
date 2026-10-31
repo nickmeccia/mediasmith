@@ -24,7 +24,7 @@ from dataclasses import dataclass
 
 from rich.segment import Segment
 from textual.content import Content
-from textual.geometry import NULL_OFFSET, Region, Size
+from textual.geometry import NULL_OFFSET, Region, Size, Spacing
 from textual.layout import ArrangeResult, Layout, WidgetPlacement
 from textual.layouts.factory import LAYOUT_MAP
 from textual.message import Message
@@ -213,25 +213,65 @@ class FlowLayout(Layout):
 
     def arrange(self, parent: Widget, children: list[Widget],
                 size: Size, greedy: bool = True) -> ArrangeResult:
+        """Place the buttons, and the links only BETWEEN two of them.
+
+        A link is held back until the next button is placed, because
+        whether it belongs on screen is the same question as whether
+        that button shares its line: a link at the end of a line joins
+        nothing (Nick, todo-6 — he had kept the dangling `──`, then used
+        it and changed his mind).
+
+        Holding it back is also what keeps that decision from feeding
+        back into itself. Hiding a link AFTER the layout chose the wrap
+        would free two cells, which could un-wrap the button that made
+        the link dangle, which would want the link back. Here the link's
+        two cells are charged to the pair that uses them, so a button
+        either fits WITH its incoming link or starts the next line
+        without one.
+        """
         parent.pre_layout(self)
         viewport = parent.app.viewport_size
         placements: list[WidgetPlacement] = []
         x = y = row_height = 0
-        for widget in children:
+        pending: tuple[Widget, int, int, Spacing] | None = None
+
+        def measure(widget: Widget) -> tuple[int, int, Spacing]:
             styles = widget.styles
             gutter_width, gutter_height = styles.gutter.totals
-            margin = styles.margin
             width = widget.get_content_width(size, viewport) + gutter_width
             height = (widget.get_content_height(size, viewport, width)
                       + gutter_height)
+            return width, height, styles.margin
+
+        def place(widget: Widget, width: int, height: int,
+                  margin: Spacing, at_x: int, at_y: int) -> None:
+            placements.append(WidgetPlacement(
+                Region(at_x + margin.left, at_y + margin.top, width, height),
+                NULL_OFFSET, margin, widget))
+
+        for widget in children:
+            width, height, margin = measure(widget)
             span = margin.left + width + margin.right
-            if x and x + span > size.width:     # wrap; a lone widget never does
+            if isinstance(widget, BarLink):
+                # not placed yet: the next button decides whether it has
+                # anything to join
+                pending = (widget, width, height, margin)
+                continue
+            lead = 0 if pending is None or not x else (
+                pending[3].left + pending[1] + pending[3].right)
+            if x and x + lead + span > size.width:   # wrap
                 x = 0
                 y += row_height + self.ROW_GAP
                 row_height = 0
-            placements.append(WidgetPlacement(
-                Region(x + margin.left, y + margin.top, width, height),
-                NULL_OFFSET, margin, widget))
+                lead = 0
+                pending = None                       # it joined nothing
+            if pending is not None and x:
+                link, link_w, link_h, link_m = pending
+                place(link, link_w, link_h, link_m, x, y)
+                row_height = max(row_height, link_h + link_m.top + link_m.bottom)
+                x += lead
+            pending = None
+            place(widget, width, height, margin, x, y)
             x += span
             row_height = max(row_height, height + margin.top + margin.bottom)
         return placements
@@ -412,6 +452,22 @@ class ActionBar(Widget):
         return sorted({b.region.y - top for b in self.buttons()
                        if b.region.height})
 
+    def visual_rows(self) -> list[list[ActionButton]]:
+        """The buttons grouped by the LINE they are drawn on.
+
+        A bar that overflows is two rows to the eye, so it is two rows
+        to the arrow keys as well: ↓ steps to the next line, ←→ stay on
+        this one (Nick, todo-6 — "a better mental model for the code is
+        the mental model of what the user observes").
+        """
+        rows: dict[int, list[ActionButton]] = {}
+        top = self.region.y
+        for button in self.buttons():
+            if button.region.height:
+                rows.setdefault(button.region.y - top, []).append(button)
+        return [sorted(rows[at], key=lambda b: b.region.x)
+                for at in sorted(rows)]
+
     def _link_after(self, button: ActionButton) -> "BarLink | None":
         """The link composed immediately after ``button``."""
         children = list(self.children)
@@ -422,10 +478,10 @@ class ActionBar(Widget):
     def sync_links(self) -> None:
         """Show a link after every visible button but the LAST one.
 
-        Not conditioned on wrapping: whether two buttons share a line
-        depends on how wide the links make them, so suppressing a
-        dangling link would change the layout that decided it was
-        dangling. A wrapped bar can therefore end a line with ``──``.
+        That is the only thing display decides. WHERE a link ends up —
+        and whether it is drawn at all, which it is not at the end of a
+        line — belongs to FlowLayout, which places a link only once it
+        knows the next button shares its row (todo-6).
         """
         row = self.buttons()
         last = row[-1] if row else None

@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from mediasmith import adapters
+from mediasmith import imageops
 from mediasmith import browser as browser_mod
 from mediasmith import details as details_mod
 from mediasmith import fs
@@ -985,12 +986,12 @@ async def test_hidden_files_shown_and_toggleable(media_tree):
         media = tree.root.children[0]             # reload rebuilt the nodes
         names = [c.data.path.name for c in media.children]
         assert ".config" not in names
-        # ^. is a tree-state strip command: inert while details is focused
+        # ^. reaches the tree from the PANE now (Nick, todo-6): every
+        # command the strip prints works from any non-dirty state
         await _goto_first_song(app, pilot)
         await pilot.press("enter")
         await pilot.press("ctrl+full_stop")
-        await pilot.pause()
-        assert app.show_hidden is False           # unchanged from details
+        await until(pilot, lambda: app.show_hidden is True)
 
 
 async def test_tree_is_inset_one_cell_on_both_sides(media_tree):
@@ -3512,8 +3513,8 @@ async def test_image_offers_converts_minus_own_format(media_tree):
     async with app.run_test(size=(120, 40)) as pilot:
         await _goto_photo(app, pilot)
         assert _bar_names(app, "actions-bar") == [
-            "rotate", "resize", "trace", "convert_jpg", "convert_tiff",
-            "convert_webp"]                               # png: no png
+            "rotate", "resize", "crop", "trace", "shrink", "convert_jpg",
+            "convert_tiff", "convert_webp"]               # png: no png
 
 
 async def test_image_convert_creates_sibling(media_tree):
@@ -4669,19 +4670,31 @@ async def test_the_tree_strip_carries_only_tree_commands(media_tree):
 
 async def test_down_walks_bars_not_buttons(media_tree):
     """Nick's worked example (always-available-actions-3, Layer 2): with a
-    File-bar button focused, ↓ lands on the FIRST button of the next bar,
-    ↓ again does nothing, and → steps within the bar."""
+    File-bar button focused, ↓ lands on the FIRST button of the next ROW,
+    ↓ off the end does nothing, and → steps within the row.
+
+    A ROW, not a bar, since todo-6: a bar wide enough to wrap is two
+    rows on screen, so it is two rows to the arrow keys.
+    """
+    from mediasmith.actions import ActionBar
     app = MediasmithApp(media_tree)
     async with app.run_test(size=(120, 40)) as pilot:
         await _goto_dune(app, pilot)
         await pilot.press("enter")                   # #fname
         for _ in range(20):                          # off the end of the
             await pilot.press("down")                # fields, into the bars
-        assert app.focused.id == "act-convert_mobi"   # the last bar's first
+        actions = app.query_one("#actions-bar", ActionBar)
+        rows = actions.visual_rows()
+        assert app.focused is rows[-1][0]            # the LAST row's first
         await pilot.press("down")                    # nothing happens
-        assert app.focused.id == "act-convert_mobi"
-        await pilot.press("right")                   # within the bar
-        assert app.focused.id == "act-convert_azw3"
+        assert app.focused is rows[-1][0]
+        if len(rows[-1]) > 1:
+            await pilot.press("right")               # within the row
+            assert app.focused is rows[-1][1]
+            await pilot.press("left")
+        for above in reversed(rows[:-1]):            # back up, row by row
+            await pilot.press("up")
+            assert app.focused is above[0]
         await pilot.press("up")                      # a row up: the File bar
         assert app.focused.id == "act-open"
         await pilot.press("up")                      # and the Contextual bar
@@ -4981,6 +4994,304 @@ async def test_nothing_reaches_the_terminal_reversed(media_tree):
             if segment.style and segment.style.reverse and segment.text.strip()
         ]
         assert reversed_runs == [], reversed_runs
+
+
+async def test_a_wrapped_row_is_a_row_to_the_arrow_keys(media_tree):
+    """What the user observes is the model the code follows (Nick,
+    todo-6): a bar that overflows is two bars on screen, so ↓ reaches
+    the second one and ←→ stay on the line they are on. It used to look
+    like three ways out of a wrapped button and only two of them
+    worked."""
+    from mediasmith.actions import ActionBar, ActionButton
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(86, 34)) as pilot:       # narrow: wraps
+        await _goto_row(app, pilot, "Pics")
+        await pilot.press("right")
+        await _goto_row(app, pilot, "photo.png")
+        bar = app.query_one("#actions-bar", ActionBar)
+        rows = bar.visual_rows()
+        assert len(rows) > 1, "the viewport was not narrow enough to wrap"
+        rows[0][0].focus()
+        await pilot.pause()
+        # ←→ walk this line and stop at its end — they do NOT run on
+        # into the next line's first button
+        for _ in range(len(rows[0]) + 2):
+            await pilot.press("right")
+            await pilot.pause(0.05)
+        assert app.focused is rows[0][-1]
+        await pilot.press("down")                  # …and ↓ does reach it
+        await pilot.pause(0.1)
+        assert app.focused is rows[1][0]
+        await pilot.press("up")
+        await pilot.pause(0.1)
+        assert app.focused is rows[0][0]
+
+
+async def test_a_wrapped_line_does_not_end_in_a_dangling_link(media_tree):
+    """A link joins two buttons; at the end of a line it joins nothing
+    (Nick used it and changed his mind, todo-6)."""
+    from mediasmith.actions import ActionBar, BarLink
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(86, 34)) as pilot:
+        await _goto_row(app, pilot, "Pics")
+        await pilot.press("right")
+        await _goto_row(app, pilot, "photo.png")
+        bar = app.query_one("#actions-bar", ActionBar)
+        assert len(bar.visual_rows()) > 1
+        drawn = [link for link in bar.query(BarLink)
+                 if link.display and link.region.width]
+        for link in drawn:
+            after = [b for b in bar.buttons()
+                     if b.region.y == link.region.y
+                     and b.region.x > link.region.x]
+            assert after, f"link at {link.region} joins nothing on its right"
+
+
+async def test_the_trees_commands_work_from_the_pane(media_tree):
+    """"All commands printed in the command strip should work from any
+    non-dirty state" (Nick, todo-6) — ^. here, with the same refusals ^/
+    makes."""
+    from mediasmith import prefs
+    (media_tree / ".dotfile").write_text("hidden")
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _goto_first_song(app, pilot)
+        await pilot.press("enter")                      # a field has focus
+        assert app.focused.id == "fname"
+        was = app.show_hidden
+        await pilot.press("ctrl+full_stop")
+        await until(pilot, lambda: app.show_hidden is not was)
+        await until(pilot, lambda: prefs.load()["show_hidden"] is not was)
+
+
+async def test_the_path_input_keeps_the_tree_commands_out(media_tree):
+    """The path input is the lockdown one level up: while it has focus
+    the strip prints ITS commands, and typing a path must not relist the
+    tree under you (todo-6)."""
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await settle(pilot)
+        await pilot.press("ctrl+slash")
+        assert isinstance(app.focused, PathInput)
+        was = app.show_hidden
+        await pilot.press("ctrl+full_stop")
+        await pilot.pause(0.3)
+        assert app.show_hidden is was
+        assert isinstance(app.focused, PathInput)       # still typing
+
+
+async def test_a_tree_command_lands_focus_on_the_tree(media_tree):
+    """^r RELISTS, which takes away the field that had focus — and the
+    app was left with nothing focused at all, where no arrow key could
+    recover it (todo-6). It must also actually refresh: the first cut
+    called the tree's coroutine without awaiting it, which moved focus
+    and refreshed nothing."""
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _goto_first_song(app, pilot)
+        await pilot.press("enter")
+        assert app.focused.id == "fname"
+        (media_tree / "Music" / "03 Song Three.mp3").write_bytes(b"new")
+        await pilot.press("ctrl+r")
+        await settle(pilot)
+        assert app.focused is app.query_one(LibraryTree)
+        tree = app.query_one(LibraryTree)
+        assert await until(
+            pilot,
+            lambda: any("03 Song Three.mp3" in str(line.path[-1].label)
+                        for line in tree._tree_lines)) is True
+
+
+async def test_a_tree_command_waits_for_a_pending_edit(media_tree):
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _goto_first_song(app, pilot)
+        await pilot.press("enter")
+        app.focused.value = "Edited.mp3"
+        was = app.show_hidden
+        await pilot.press("ctrl+full_stop")
+        await pilot.pause(0.3)
+        assert app.show_hidden is was                   # refused…
+        assert any(n.title == "hidden files" for n in app._notifications)
+        await pilot.press("escape")                     # …and says why
+        await pilot.pause(0.2)
+
+
+async def test_a_marked_row_has_colours_of_its_own(media_tree):
+    """Not a REVERSAL of whatever was there — the same SGR 7 that hid
+    the focused-button bug. Four explicit values (Nick, todo-6)."""
+    from mediasmith.theme import MEDIASMITH
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(100, 34)) as pilot:
+        await _goto_first_song(app, pilot)
+        await pilot.press("shift+down")                 # mark a range
+        await settle(pilot)
+        tree = app.query_one(LibraryTree)
+        want = MEDIASMITH.variables
+        strips = list(app.screen._compositor.render_strips())
+        top = tree.region.y - tree.scroll_offset.y
+        marked = strips[top + tree.cursor_line - 1]
+        cursor = strips[top + tree.cursor_line]
+
+        def colours(strip, needle):
+            for segment in strip:
+                if needle in segment.text:
+                    return (segment.style.color.triplet.hex,
+                            segment.style.bgcolor.triplet.hex,
+                            bool(segment.style.reverse))
+            raise AssertionError(f"no {needle!r} on this row")
+
+        assert colours(marked, "Song One") == (
+            want["selected-fg"], want["selected-bg"], False)
+        assert colours(cursor, "Song Two") == (
+            want["selected-and-focused-fg"],
+            want["selected-and-focused-bg"], False)
+
+
+def _make_comic(root, pages=4, width=1200, height=1800):
+    """A folder shaped like one of Nick's books: a flat run of big
+    quality-100 JPEGs and nothing else."""
+    from PIL import Image
+    folder = root / "Scratch Comic 001"
+    folder.mkdir()
+    for n in range(pages):
+        image = Image.new("RGB", (width, height), (40, 60 + n * 10, 120))
+        for y in range(0, height, 6):
+            for x in range(0, width, 9):
+                image.putpixel((x, y), ((x * 5) % 256, (y * 3) % 256, 70))
+        image.save(folder / f"page-{n:03}.jpg", "JPEG", quality=100,
+                   subsampling=0)
+    return folder
+
+
+async def test_a_comic_folder_offers_shrink(media_tree):
+    """The probe is the finding: a run of pages gets the button, an
+    album folder with a cover in it does not (todo-6)."""
+    _make_comic(media_tree)
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _goto_folder(app, pilot, "Scratch Comic 001")
+        assert "shrink" in _bar_names(app)
+        await _goto_folder(app, pilot, "Music")        # has mp3s in it
+        assert "shrink" not in _bar_names(app)
+
+
+async def test_shrink_previews_before_it_rewrites_anything(media_tree):
+    """It REPLACES the pages, so the preview is the whole confirmation —
+    and nothing may be written until Apply."""
+    from mediasmith.details import DetailsView
+    folder = _make_comic(media_tree)
+    untouched = {p.name: p.read_bytes() for p in folder.iterdir()}
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _goto_folder(app, pilot, "Scratch Comic 001")
+        pane = app.query_one(DetailsView)
+        await _fire(app, pilot, "shrink")
+        assert await until(pilot, lambda: pane.plan_preview_open()) is True
+        plan = pane._shrink_plan
+        assert len(plan.pages) == 4
+        assert plan.after_total < plan.before_total
+        assert {p.name: p.read_bytes() for p in folder.iterdir()} == untouched
+        text = str(app.query_one("#plan-tree").render())
+        assert "4 pages" in text
+        assert "REPLACED" in text
+
+        await pilot.press("escape")                    # cancel writes nothing
+        await settle(pilot)
+        assert {p.name: p.read_bytes() for p in folder.iterdir()} == untouched
+
+
+async def test_shrink_applies_in_place_and_keeps_the_page_order(media_tree):
+    folder = _make_comic(media_tree)
+    before = {p.name: p.stat().st_size for p in folder.iterdir()}
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        from mediasmith.details import DetailsView
+        await _goto_folder(app, pilot, "Scratch Comic 001")
+        pane = app.query_one(DetailsView)
+        await _fire(app, pilot, "shrink")
+        assert await until(pilot, lambda: pane.plan_preview_open()) is True
+        pane.action_plan_apply()
+        assert await until(
+            pilot,
+            lambda: sum(p.stat().st_size for p in folder.iterdir())
+            < sum(before.values()), timeout=40) is True
+        await settle(pilot, timeout=40)
+    after = {p.name: p.stat().st_size for p in folder.iterdir()}
+    assert sorted(after) == sorted(before)             # names, hence order
+    assert sum(after.values()) < sum(before.values()) / 2
+
+
+async def _goto_image(app, pilot, name="photo.png"):
+    await settle(pilot)
+    await _goto_row(app, pilot, "Pics")
+    await pilot.press("right")
+    await _goto_row(app, pilot, name)
+
+
+async def test_crop_opens_a_wizard_with_a_ratio_and_four_edges(media_tree):
+    """The fifth wizard div (Nick, todo-6). Ratio first, because "make
+    it square" is usually the whole answer."""
+    from mediasmith.details import CropControl, DetailsView
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _goto_image(app, pilot)
+        pane = app.query_one(DetailsView)
+        assert "crop" in _bar_names(app)
+        await _fire(app, pilot, "crop")
+        await pilot.pause(0.3)
+        assert pane._crop_open
+        assert app.query_one("#crop-div").display
+        assert app.focused is app.query_one("#crop-ratio", CropControl)
+        assert [c.control for c in app.query(CropControl)] == [
+            "ratio", "left", "top", "right", "bottom"]
+        # ↑↓ stay inside the div: a wizard with focus owns the keys
+        await pilot.press("down", "down")
+        assert isinstance(app.focused, CropControl)
+        await pilot.press("escape")
+        await pilot.pause(0.3)
+        assert not pane._crop_open
+
+
+async def test_a_ratio_sets_the_edges_and_an_edge_clears_the_ratio(media_tree):
+    from mediasmith.details import DetailsView
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _goto_image(app, pilot)
+        pane = app.query_one(DetailsView)
+        await _fire(app, pilot, "crop")
+        await until(pilot, lambda: pane._crop_base() is not None)
+        await pilot.press("right")                   # ratio: free -> 1:1
+        await pilot.pause(0.2)
+        assert pane._crop_ratio == "1:1"
+        width, height = pane._crop_base()
+        assert imageops.crop_size(width, height, pane._crop_edges) == (
+            min(width, height), min(width, height))
+        await pilot.press("down", "right")           # nudge an edge
+        await pilot.pause(0.2)
+        assert pane._crop_ratio == "free"            # the edges are the truth
+        assert pane._crop_edges["left"] == 1
+
+
+async def test_crop_writes_a_sibling_and_leaves_the_source(media_tree):
+    from mediasmith.details import DetailsView
+    from PIL import Image
+    source = media_tree / "Pics" / "photo.png"
+    before = source.read_bytes()
+    app = MediasmithApp(media_tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _goto_image(app, pilot)
+        pane = app.query_one(DetailsView)
+        await _fire(app, pilot, "crop")
+        await until(pilot, lambda: pane._crop_base() is not None)
+        pane._crop_edges = {"left": 1, "top": 2, "right": 1, "bottom": 0}
+        pane.action_crop_apply()
+        target = media_tree / "Pics" / "photo (cropped).png"
+        assert await until(pilot, target.exists) is True
+        await settle(pilot)
+    assert source.read_bytes() == before             # never in place
+    with Image.open(target) as image:
+        assert image.size == (6, 6)                  # the fixture is 8×8
 
 
 async def test_the_spine_is_composited_into_the_pane(media_tree):

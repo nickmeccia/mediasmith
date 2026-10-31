@@ -743,7 +743,7 @@ BG New (Partial):
 
 - [x] Previous Claudes have recommended I keep this app as a Python/Textual app instead of porting it to Go and releasing it as a binary, with the main reason being several libraries currently in use would need to be rewritten from scratch to make it into a Go project, and also there is a convention in projects released through Github to be released as source code instead of as a binary. However, a couple of friends are interested in using this app even though it's not 100% polished, and I would like for them to receive updates automatically when they run the app. Is this possible? If so, can you make it happen? And if not, please discuss.
 
-- [ ] After using the app, I would like to change my mind on an earlier decision.
+- [x] After using the app, I would like to change my mind on an earlier decision.
       From earlier in the conversation:
       ```
       ├── ^1 Rotate ── ^2 Resize ── ^3 Trace ──
@@ -779,9 +779,9 @@ BG New (Partial):
       However, only the first two options are valid inputs; pressing down arrow does *not* move focus to `^3 Make GIF`
       I think that a better mental model for the code to adopt is the mental model of what the user observes: instead of *wrapping* an overflowing button bar, a *new* button bar should be appended to the list of button bars and populated with any buttons which overflow a longer button bar directly above. If the overflowed buttons appear in a separate bar, that also simplifies the styling you've had to do to make the overflowed buttons "look like" a new button bar. And, of course, it would unify the navigation controls with all other button bars.
       
-- [ ] You had a question for me: "Should ^., ^r and ^n work from anywhere, the way ^/ now does?" My answer is, yes, all commands printed in the command strip should work from any non-dirty state.
+- [x] You had a question for me: "Should ^., ^r and ^n work from anywhere, the way ^/ now does?" My answer is, yes, all commands printed in the command strip should work from any non-dirty state.
 
-- [ ] Another issue raised by you: "A shift-marked tree row is drawn by reversing its colours — the same mechanism that just bit us, still in browser.py by intent. Under the four-state model it has no token behind it."
+- [x] Another issue raised by you: "A shift-marked tree row is drawn by reversing its colours — the same mechanism that just bit us, still in browser.py by intent. Under the four-state model it has no token behind it."
       Explicit values should be set in theme.py for selected states:
       ```
       "selected-bg": GREY_90
@@ -790,9 +790,9 @@ BG New (Partial):
       "selected-and-focused-fg": GREY_10
       ```
 
-- [ ] New feature: cropping an image. I would like to use this process: see what you come up with, use it, then provide you with mockups for changes. Are you able to implement a cropping feature, or would you like me to design one first?
+- [x] New feature: cropping an image. I would like to use this process: see what you come up with, use it, then provide you with mockups for changes. Are you able to implement a cropping feature, or would you like me to design one first?
 
-- [ ] I would like your help in creating a new feature to reduce the size of digital comics. Please check out ~/Documents/Comics for a few examples.
+- [x] I would like your help in creating a new feature to reduce the size of digital comics. Please check out ~/Documents/Comics for a few examples.
       The size of digital comics has risen drastically in a short time period: only a couple of years ago, a single issue was somewhere in the range of 30-60 MB for 25-30 images. Included in this folder are some of the most egregious examples from recent months, all over 150 MB, and a record high of 279 MB for 33 images. I don't think this is a reasonable amount of space for these image files to take up, and I would like a feature in Mediasmith to resize/downsample/convert both a single focused image as well as a folder of focused images.
       However, I don't have perfect parameters for you off the top of my head, and I am hoping that you can help me with this. Here are a few constraints from me:
       - I typically read comics on a 2019 iPad Pro -- you probably know the resolution of this

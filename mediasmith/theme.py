@@ -40,6 +40,7 @@ views, which sit on GREY_10. Move it onto the ramp whenever you like;
 nothing else reads it (todo-6, rule 5)."""
 
 PRIMARY = "#ffa62b"
+TRAVERSED="#bf8028"
 SUCCESS = "#4ebf71"
 WARNING = "#ffa62b"
 ERROR = "#ba3c5b"
@@ -98,13 +99,24 @@ MEDIASMITH = Theme(
         # you are on
         "focused-fg": GREY_10,
 
-        "traversed-path-fg": PRIMARY,
-        "traversed-element-bg": PRIMARY,
+        "traversed-path-fg": TRAVERSED,
+        "traversed-element-bg": TRAVERSED,
         "traversed-element-fg": GREY_10,
 
         # an UNtraversed path character is ordinary text: canvas colors,
         # no state of its own (todo-6 ¹, the `path` state)
         "path-fg": GREY_90,
+
+        # SELECTED: a row the user has shift-marked. It used to be drawn
+        # by REVERSING the row's colours, which is not a state at all —
+        # it is whatever swap the row happened to produce, and it is the
+        # same SGR 7 that hid the focused-button bug above. Explicit
+        # values now (Nick, todo-6), including the pair for a row that
+        # is marked AND under the cursor.
+        "selected-bg": GREY_90,
+        "selected-fg": GREY_10,
+        "selected-and-focused-bg": PRIMARY,
+        "selected-and-focused-fg": GREY_10,
 
         # -- Secondary text ------------------------------------------------
         # the command strip, end to end: its words, its bullets, the

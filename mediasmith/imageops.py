@@ -95,6 +95,87 @@ def resize(path: Path, width: int, height: int,
     return target
 
 
+# -- crop ---------------------------------------------------------------------
+# A terminal cannot drag a rectangle, so a crop is said in numbers: how
+# much comes off each EDGE. Ratios are offered beside them because the
+# crops this app is actually for — album art that is not square, a
+# poster with letterboxing, a scanned page with a border — are mostly
+# "make it this shape, from the middle" (Nick, todo-6).
+
+CROP_RATIOS: tuple[str, ...] = ("free", "1:1", "4:3", "3:2", "16:9",
+                                "3:4", "2:3", "9:16")
+"""Offered aspect ratios, in stepper order. ``free`` leaves the edges
+alone; the rest recompute them as the largest centred rectangle."""
+
+EDGES = ("left", "top", "right", "bottom")
+
+
+def parse_ratio(name: str) -> tuple[int, int] | None:
+    """(w, h) for a ratio name, or None for ``free``/nonsense."""
+    if ":" not in name:
+        return None
+    try:
+        width, height = (int(part) for part in name.split(":", 1))
+    except ValueError:
+        return None
+    return (width, height) if width > 0 and height > 0 else None
+
+
+def centred_edges(width: int, height: int, ratio: str) -> dict[str, int]:
+    """The edges that leave the largest centred rectangle of ``ratio``.
+
+    An odd remainder goes to the right/bottom edge, so the result is
+    exactly the ratio rather than a pixel off it.
+    """
+    parsed = parse_ratio(ratio)
+    if parsed is None:
+        return {edge: 0 for edge in EDGES}
+    want_w, want_h = parsed
+    if width * want_h > height * want_w:         # too wide: trim the sides
+        keep = max(1, round(height * want_w / want_h))
+        spare = width - keep
+        return {"left": spare // 2, "right": spare - spare // 2,
+                "top": 0, "bottom": 0}
+    keep = max(1, round(width * want_h / want_w))  # too tall: trim top/bottom
+    spare = height - keep
+    return {"left": 0, "right": 0,
+            "top": spare // 2, "bottom": spare - spare // 2}
+
+
+def crop_box(width: int, height: int, edges) -> tuple[int, int, int, int]:
+    """PIL's (left, upper, right, lower) for these edge trims.
+
+    Clamped so the box always keeps at least one pixel: a stepper held
+    down must stop at the middle, not invert the image.
+    """
+    left = max(0, min(int(edges.get("left", 0)), width - 1))
+    top = max(0, min(int(edges.get("top", 0)), height - 1))
+    right = max(0, min(int(edges.get("right", 0)), width - 1 - left))
+    bottom = max(0, min(int(edges.get("bottom", 0)), height - 1 - top))
+    return left, top, width - right, height - bottom
+
+
+def crop_size(width: int, height: int, edges) -> tuple[int, int]:
+    left, top, right, bottom = crop_box(width, height, edges)
+    return right - left, bottom - top
+
+
+def crop(path: Path, edges, overwrite: bool = False) -> Path:
+    """Crop ``path`` by these edge trims, beside the source as
+    ``name (cropped).ext``. Refuses to overwrite unless ``overwrite``."""
+    target = path.with_name(f"{path.stem} (cropped){path.suffix}")
+    if target.exists() and not overwrite:
+        raise FileExistsError(f"{target.name} already exists")
+    img = _open(path)
+    box = crop_box(img.width, img.height, edges)
+    if box == (0, 0, img.width, img.height):
+        raise ValueError("nothing is being cropped")
+    fmt = img.format or _PIL_FORMAT.get(path.suffix.lstrip(".").lower())
+    cropped = img.crop(box)
+    cropped.save(target, format=fmt, **_save_kwargs(img, fmt or ""))
+    return target
+
+
 def rotate(path: Path, quarter_turns: int = 1) -> tuple[Path, bool]:
     """Rotate clockwise by 90° × ``quarter_turns``, in place. Returns
     (path, lossy) — lossy is True for re-encoded JPEGs."""

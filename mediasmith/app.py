@@ -94,7 +94,17 @@ class MediasmithApp(App):
         Binding("ctrl+slash", "focus_path", "path", show=False, priority=True),
         Binding("ctrl+underscore", "focus_path", "path", show=False,
                 priority=True),
+        # The TREE's commands, from wherever focus is (Nick, todo-6:
+        # "all commands printed in the command strip should work from
+        # any non-dirty state"). Not priority bindings: a focused widget
+        # that already owns the key keeps it — which is how `^←` stays
+        # word-left inside a text field, where the strip is printing the
+        # pane's commands anyway.
         Binding("ctrl+full_stop", "toggle_hidden", "hidden", show=False),
+        Binding("ctrl+r", "tree_refresh", "refresh", show=False),
+        Binding("ctrl+n", "tree_new_directory", "new directory", show=False),
+        Binding("ctrl+left", "tree_collapse_level", "collapse level",
+                show=False),
         # delete stays app-dispatched in on_key: ctrl+delete has no single-
         # char chord shape. Cut/paste/new-directory are LibraryTree bindings
         # (tree commands per todo-4). The old ⌘⇧N / ⌘⌫ Finder chords are
@@ -172,6 +182,15 @@ class MediasmithApp(App):
     LibraryTree > .tree--guides { color: $guide-fg; }
     LibraryTree > .tree--guides-hover,
     LibraryTree > .tree--guides-selected { color: $guide-level-fg; }
+    /* a shift-marked row, and one that is marked AND under the cursor */
+    LibraryTree > .tree--selected {
+        color: $selected-fg;
+        background: $selected-bg;
+    }
+    LibraryTree > .tree--selected-cursor {
+        color: $selected-and-focused-fg;
+        background: $selected-and-focused-bg;
+    }
     LibraryTree > .tree--run {
         color: $path-fg;
         background: $background;
@@ -291,6 +310,13 @@ class MediasmithApp(App):
     #shift-control { width: auto; }
     ShiftControl:focus { text-style: reverse; }
     #shift-hint { height: 1; color: $muted; }
+    /* the crop wizard div — rows of steppers, then the result line */
+    #crop-div { height: auto; margin-top: 1; }
+    .crop-row { height: 1; }
+    .crop-control { width: auto; }
+    CropControl:focus { background: $focused-bg; color: $focused-fg; }
+    #crop-result { height: 1; margin-top: 1; }
+    #crop-bar { margin-top: 1; }
     /* the resize wizard div — same block shape as #shift-div */
     #resize-div { height: auto; margin-top: 1; }
     #resize-row { height: 1; }
@@ -468,12 +494,66 @@ class MediasmithApp(App):
         self._details_viewing = False
         self.screen.remove_class("-details-open")
 
-    def action_toggle_hidden(self) -> None:
-        # a tree-state strip command: inert anywhere else (todo-4)
+    def _tree_command_ready(self, title: str) -> bool:
+        """Whether a TREE command may fire from where focus is now.
+
+        The same three refusals as ^/ (todo-6): a question owns the
+        keys until it is answered, a pending edit has to be dealt with
+        first, and a sub-form that has taken focus confines the keys to
+        its own controls. Everything else is fair game, wherever the
+        user happens to be standing.
+        """
+        if isinstance(self.focused, PathInput):
+            # the path input is the lockdown one level up (CLAUDE.md):
+            # while it has focus the strip is printing ITS commands, and
+            # typing a path must not relist the tree under you
+            return False
+        details = self.query_one(DetailsView)
+        if details.question_open:
+            return False
+        if details.focus_locked:
+            return False
+        if details.dirty:
+            self.notify("unsaved edits — ^s saves, esc asks",
+                        title=title, severity="warning")
+            return False
+        return True
+
+    def _to_the_tree(self) -> LibraryTree:
+        """Hand focus back to the tree before a command that RELISTS it.
+
+        A reload rebuilds the rows the pane is showing, and a field that
+        goes away takes focus with it — which left the app with nothing
+        focused at all, and no arrow key able to fix it (todo-6). The
+        tree is home base, so a tree command ends there.
+        """
+        tree = self.query_one(LibraryTree)
         if not isinstance(self.focused, LibraryTree):
+            tree.focus()
+        return tree
+
+    async def action_tree_refresh(self) -> None:
+        # async, and awaited: the tree's own refresh is a coroutine, and
+        # calling it without awaiting moved focus while refreshing
+        # nothing (the RuntimeWarning that caught it, todo-6)
+        if self._tree_command_ready("refresh"):
+            await self._to_the_tree().action_refresh()
+
+    def action_tree_new_directory(self) -> None:
+        # not _to_the_tree: this one ENDS in the new folder's rename
+        # field on purpose (a wrap takes focus, cookbook rule 7)
+        if self._tree_command_ready("new directory"):
+            self.query_one(LibraryTree).action_new_directory()
+
+    def action_tree_collapse_level(self) -> None:
+        if self._tree_command_ready("collapse level"):
+            self._to_the_tree().action_collapse_level()
+
+    def action_toggle_hidden(self) -> None:
+        if not self._tree_command_ready("hidden files"):
             return
         self.show_hidden = not self.show_hidden
-        self.query_one(LibraryTree).reload()
+        self._to_the_tree().reload()
         # the choice outlives the session (Nick, todo-6). In a thread
         # because it writes a file, even a small local one.
         self.run_worker(partial(prefs.save, show_hidden=self.show_hidden),

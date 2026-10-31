@@ -75,3 +75,62 @@ def test_rotate_jpeg_reports_lossy(tmp_path):
     _, lossy = imageops.rotate(src)
     assert lossy is True
     assert Image.open(src).size == (6, 8)
+
+
+# -- crop (todo-6) -------------------------------------------------------------
+
+def _image(tmp_path, name="page.jpg", size=(1200, 1800)):
+    from PIL import Image
+    path = tmp_path / name
+    Image.new("RGB", size, (20, 80, 160)).save(path)
+    return path
+
+
+def test_a_ratio_leaves_the_largest_centred_rectangle():
+    edges = imageops.centred_edges(1200, 1800, "1:1")
+    assert edges == {"left": 0, "right": 0, "top": 300, "bottom": 300}
+    assert imageops.crop_size(1200, 1800, edges) == (1200, 1200)
+
+
+def test_a_ratio_on_a_wide_image_trims_the_sides():
+    edges = imageops.centred_edges(4000, 2000, "1:1")
+    assert imageops.crop_size(4000, 2000, edges) == (2000, 2000)
+
+
+def test_an_odd_remainder_still_lands_on_the_ratio():
+    """501 spare pixels cannot be split evenly; the result must still be
+    exactly square."""
+    edges = imageops.centred_edges(1000, 1501, "1:1")
+    assert imageops.crop_size(1000, 1501, edges) == (1000, 1000)
+
+
+def test_free_means_no_trim():
+    assert imageops.centred_edges(1200, 1800, "free") == {
+        "left": 0, "top": 0, "right": 0, "bottom": 0}
+
+
+def test_the_box_never_inverts():
+    """A stepper held down stops at the middle rather than turning the
+    image inside out."""
+    assert imageops.crop_size(100, 100, {"left": 500, "right": 500}) == (1, 100)
+    assert imageops.crop_size(100, 100, {"top": 99, "bottom": 99}) == (100, 1)
+
+
+def test_crop_writes_a_sibling_and_refuses_to_overwrite(tmp_path):
+    from PIL import Image
+    source = _image(tmp_path)
+    target = imageops.crop(source, {"left": 100, "top": 50, "right": 0,
+                                    "bottom": 50})
+    assert target.name == "page (cropped).jpg"
+    with Image.open(target) as image:
+        assert image.size == (1100, 1700)
+    with pytest.raises(FileExistsError):
+        imageops.crop(source, {"left": 1, "top": 0, "right": 0, "bottom": 0})
+    assert imageops.crop(source, {"left": 1, "top": 0, "right": 0,
+                                  "bottom": 0}, overwrite=True) == target
+
+
+def test_cropping_nothing_is_an_error(tmp_path):
+    source = _image(tmp_path)
+    with pytest.raises(ValueError):
+        imageops.crop(source, {"left": 0, "top": 0, "right": 0, "bottom": 0})
