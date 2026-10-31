@@ -113,7 +113,7 @@ class CommandStrip(Widget):
 
     DEFAULT_CSS = """
     CommandStrip { dock: bottom; width: 100%; height: auto;
-                   background: $surface; padding: 0 1; }
+                   background: $chrome-bg; padding: 0 1; }
     """
 
     def __init__(self, **kw) -> None:
@@ -134,12 +134,16 @@ class CommandStrip(Widget):
         tokens = []
         last = len(self._entries) - 1
         for i, entry in enumerate(self._entries):
-            style = "$primary" if entry.primary else "$keybinding"
+            # the KEY is triggerable, the words are a note (todo-6 ⁹):
+            # the strip separates the two exactly as a button's label
+            # does, so a working keybinding looks the same everywhere
+            key_style = "$primary" if entry.primary else "$triggerable-fg"
             plain = f"{entry.key} {entry.label}"
-            markup = f"[{style}]{entry.key} {entry.label}[/]"
+            markup = (f"[{key_style}]{entry.key}[/] "
+                      f"[$note]{entry.label}[/]")
             if i != last:
                 plain += " ·"
-                markup += " [$keybinding-bullet]·[/]"
+                markup += " [$note]·[/]"
             tokens.append((plain, markup))
         return tokens
 
@@ -161,7 +165,7 @@ class CommandStrip(Widget):
                 plain, markup = token_plain, token_markup
         if plain:
             lines.append((plain, markup))
-        logo_markup = f"[$logo]{LOGO}[/]"
+        logo_markup = f"[$note]{LOGO}[/]"
         if not lines:
             return [" " * max(0, width - cell_len(LOGO)) + logo_markup]
         last_plain, last_markup = lines[-1]

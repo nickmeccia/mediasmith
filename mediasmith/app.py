@@ -3,19 +3,20 @@
 from __future__ import annotations
 
 import argparse
+from functools import partial
 from pathlib import Path
 
 from rich.color import Color
 from rich.segment import Segment, Segments
 from rich.style import Style
-from textual import events
+from textual import events, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal
 from textual.scrollbar import ScrollBar, ScrollBarRender
 from textual.widgets import Input
 
-from . import actions, strip
+from . import actions, prefs, strip, update
 from .browser import LibraryTree, PathInput, TreeView
 from .details import DetailsView
 from .strip import CommandStrip
@@ -104,9 +105,11 @@ class MediasmithApp(App):
     #body { layout: horizontal; height: 1fr; }
     /* -- STATE: when each palette look applies (see theme.py — the
        PALETTE). Since 2026-10-26 a focusable ELEMENT carries its own
-       look ($element-*): grey, or PRIMARY when it is the one thing with
-       focus. What still flips with a VIEW's focus is only what belongs
-       to the view itself — its text color and its scrollbar. */
+       look: $focusable-* when it could take focus, $focused-* when it
+       IS the focused element, $traversed-* for the elements and path
+       characters the user came through to reach it, and $triggerable-fg
+       for a keybinding that works right now. Nothing flips with a
+       VIEW's focus (todo-6 ¹). */
     /* NO PANE BORDERS (always-available-actions-3, 2026-10-26). A border
        said "this view has focus", which is the question the path model
        stopped asking: focus is one ELEMENT, and the element says so with
@@ -116,43 +119,36 @@ class MediasmithApp(App):
        margin costs every sibling that width (vertical layout resolves
        1fr against the widest margin), which parked the tree's scrollbar
        3 cells off the border instead of 1 */
-    TreeView { width: 38%; min-width: 30; padding: 0 1; }
+    /* no right padding: the tree's own right edge has to touch the
+       details pane, or the run cannot reach the Spine (todo-6) */
+    TreeView { width: 38%; min-width: 30; padding: 0 0 0 1; }
     /* the Path Input and its chip share ONE box: the chip prints the key
        that gets you in or out, inside the border, on the path's own line */
-    PathRow { height: 3; background: $surface; padding: 0 1;
-              border: round $element-bg; }
-    PathRow:focus-within { border: round $element-bg-focus; }
+    PathRow { height: 3; background: $chrome-bg; padding: 0 1;
+              border: round $focusable-bg; }
+    PathRow:focus-within { border: round $focused-bg; }
     PathChip { width: 5; height: 1; }
-    PathInput { height: 1; width: 1fr; background: $surface;
-                border: none; padding: 0; color: $element-fg; }
+    PathInput { height: 1; width: 1fr; background: $chrome-bg;
+                border: none; padding: 0; color: $focusable-fg; }
     /* the "reading…" wait marker (browser.READING) rides the border, so a
        slow NAS read shows without displacing anything the user is typing */
     PathRow { border-subtitle-align: right;
-              border-subtitle-color: $label-fg-focus; }
+              border-subtitle-color: $muted; }
     /* one cell wide to match the thin thumb glyphs */
     LibraryTree, DetailsView { scrollbar-size-vertical: 1; }
-    /* text + scrollbar ride the same idle/focus flip */
+    /* ONE look each: a view's text and scrollbar do not change because
+       focus moved somewhere else (todo-6) */
     LibraryTree, DetailsView {
-        color: $text-fg-idle;
-        scrollbar-color: $scrollbar-color-idle;
-        scrollbar-color-hover: $scrollbar-color-hover-idle;
-        scrollbar-color-active: $scrollbar-color-active-idle;
-        scrollbar-background: $scrollbar-track-idle;
-        scrollbar-background-hover: $scrollbar-track-idle;
-        scrollbar-background-active: $scrollbar-track-idle;
+        color: $text-fg;
+        scrollbar-color: $scrollbar-color;
+        scrollbar-color-hover: $scrollbar-color;
+        scrollbar-color-active: $traversed-path-fg;
+        scrollbar-background: $scrollbar-track;
+        scrollbar-background-hover: $scrollbar-track;
+        scrollbar-background-active: $scrollbar-track;
         /* the cell where the two scrollbars meet (Textual's
            ScrollBarCorner) — its own token, not the track's */
-        scrollbar-corner-color: $scrollbar-corner-idle;
-    }
-    LibraryTree:focus, DetailsView:focus, DetailsView:focus-within {
-        color: $text-fg-focus;
-        scrollbar-color: $scrollbar-color-focus;
-        scrollbar-color-hover: $scrollbar-color-hover-focus;
-        scrollbar-color-active: $scrollbar-color-active-focus;
-        scrollbar-background: $scrollbar-track-focus;
-        scrollbar-background-hover: $scrollbar-track-focus;
-        scrollbar-background-active: $scrollbar-track-focus;
-        scrollbar-corner-color: $scrollbar-corner-focus;
+        scrollbar-corner-color: $scrollbar-corner;
     }
     /* Tree's default :focus tints the pane 5% lighter, which the track
        can't follow (no scrollbar-background-tint exists); drop the tint
@@ -166,9 +162,39 @@ class MediasmithApp(App):
        cursor too and lets the connector carry the selection; the
        connector is the next slice, so until then the accent stays
        rather than leaving no selection cue at all.) */
-    LibraryTree > .tree--node-chip { background: $element-bg; }
-    LibraryTree > .tree--cursor { background: $element-bg-focus;
-                                  color: $element-fg-focus; }
+    LibraryTree > .tree--node-chip { background: $focusable-bg; }
+    /* the run: ordinary text until focus travels down it (todo-6 ¹) */
+    /* A path cell paints the CANVAS behind it. Colour alone leaves
+       `bgcolor=None`, which is not the app's background but the
+       TERMINAL's — the one place on screen that leaked it, and it read
+       as a block in a different shade under Ghostty (Nick, todo-6 ¹). */
+    /* the tree's structure lines, dimmer than the path that crosses them */
+    LibraryTree > .tree--guides { color: $guide-fg; }
+    LibraryTree > .tree--guides-hover,
+    LibraryTree > .tree--guides-selected { color: $guide-level-fg; }
+    LibraryTree > .tree--run {
+        color: $path-fg;
+        background: $background;
+    }
+    LibraryTree > .tree--run-traversed {
+        color: $traversed-path-fg;
+        background: $background;
+    }
+    /* no vertical scrollbar BETWEEN the panes: it would sit in the
+       connector's way, and its track cells are spaces with a background,
+       so they erase whatever passes under them. The mockup puts this bar
+       at the viewport's edge, which is the full-width-tree architecture
+       (its "Scrollbars" consequence) — until that lands, the tree keeps
+       the cursor visible by centring it and shows no vertical bar. */
+    LibraryTree { scrollbar-size-vertical: 0; }
+    /* the selected row: FOCUSED while the tree has the cursor, and
+       FOCUS-PATH while focus has moved down the path into the pane —
+       it is then a thing the path runs through, not the thing with
+       focus (Nick's example, todo-6) */
+    LibraryTree > .tree--cursor { background: $traversed-element-bg;
+                                  color: $traversed-element-fg; }
+    LibraryTree:focus > .tree--cursor { background: $focused-bg;
+                                        color: $focused-fg; }
     /* While the path bar edits, no node is "selected": hide the cursor. */
     LibraryTree.-editing > .tree--cursor { background: transparent;
                                            text-style: none; }
@@ -176,13 +202,28 @@ class MediasmithApp(App):
     /* the connector's own column, down the pane's left edge. Docked, so
        the line stays put while the content scrolls past it; the stub
        cells are what used to be the pane's left padding. */
-    Spine { dock: left; width: 4; height: 100%; color: $element-bg; }
+    /* width comes from Spine.WIDTH (set in Python) */
+    Spine { dock: left; height: 100%; color: $path-fg; }
+    /* the stretch of line the path runs along, from the selected tree row
+       to the field with focus */
+    Spine > .spine--path {
+        color: $traversed-path-fg;
+        background: $background;     /* same canvas rule as .tree--run */
+    }
     /* every button is a focusable ELEMENT: grey always, PRIMARY when it
        is the one thing with focus. No view-focus flip — a button does not
        dim because the cursor is in the tree; it is still available. */
-    ActionButton { background: $element-bg; color: $element-fg; }
-    ActionButton:focus { background: $element-bg-focus;
-                         color: $element-fg-focus; }
+    ActionButton { background: $focusable-bg; color: $focusable-fg; }
+    /* background-tint: Textual lightens a focused Button by 5%, which
+       would put a color on screen that is not in theme.py (rule 5) */
+    ActionButton:focus { background: $focused-bg; color: $focused-fg;
+                         background-tint: transparent; }
+    ActionButton.-traversed { background: $traversed-element-bg;
+                              color: $traversed-element-fg; }
+    /* the links between buttons: ordinary text, or traversed where the
+       path to the focused button ran through them (todo-6 ⁵) */
+    BarLink { color: $path-fg; }
+    BarLink.-traversed { color: $traversed-path-fg; }
     .panel { height: auto; margin-top: 1; }
     .dtitle { text-style: bold; padding: 1 0 0 0; }
     #row-fname { height: 1; margin-top: 1; }
@@ -193,49 +234,74 @@ class MediasmithApp(App):
     .frow { height: 1; }
     /* a field's LABEL is its chip (FieldLabel paints it; the block hugs
        the word plus one cell so the VALUES still line up) */
-    .fkey { color: $element-fg; }
+    .fkey { color: $focusable-fg; }
     .fval { background: transparent; width: 1fr; }
-    .fval-static { color: $element-fg; }
+    .fval-static { color: $focusable-fg; }
     .cover { width: auto; height: 16; margin: 1 0 0 0; }
     /* pixel dimensions under a cover (album art, book cover, poster) */
-    .cover-dims { height: 1; color: $label-fg-focus; }
+    .cover-dims { height: 1; color: $muted; }
     /* the audio art is a form field: image top-aligned with its label,
        left-aligned with the input column */
-    #row-art { height: auto; }
-    #art-none { color: $label-fg-focus; }
+    #row-art, #row-poster, #row-cover { height: auto; }
+    #row-art { width: 1fr; }
+    /* the blank line that separates the artwork from the metadata */
+    .fgap { height: 1; }
+    /* ² : the info line is its own group, below the buttons. A hidden row
+       contributes no margin, so this leaves no stray blank line on the
+       kinds that have no info row. */
+    #row-audio-info { margin-top: 1; }
+    /* the spinner standing in for a button group still probing (todo-6 ⁸) */
+    /* one cell between the line and the marker: a spinner is not a
+       button, so it does not touch the stub (Nick, todo-6) */
+    #actions-loading { height: 1; color: $muted; padding-left: 1; }
+    #art-none, #poster-none, #cover-none { color: $muted; }
+    /* an empty field prints "-" (or "(mixed)") as Input's PLACEHOLDER,
+       which Textual greys with its own derived $text-disabled — a colour
+       that is not in theme.py (rule 5). It is in-pane secondary text
+       like any other, so it takes $muted. */
+    FieldInput > .input--placeholder { color: $muted; }
     /* 1fr, not auto: a width-auto image inside a width-auto container
        resolves to 0 (no reference width for the aspect computation) */
     ArtField { width: 1fr; height: auto; }
-    ArtField:focus { outline: round $element-bg-focus; }
     #cover-audio { margin: 0; }
-    #row-art-buttons { height: auto; margin-top: 1; }
+    /* the artwork block: label · the path's branch · the stack it leads
+       to (todo-6 ⁴). The stack holds the picture, the method buttons and
+       the import input, so nothing needs a pad to line up any more. */
+    #art-block { height: auto; }
+    #art-stack { width: 1fr; height: auto; }
+    #art-bar { margin-top: 1; }
     #row-art-path { height: 1; margin-top: 1; }
     #art-path { background: transparent; }
     /* book cover: a path input toggled under the cover (art-path twin) */
     #book-cover-div { height: auto; margin-top: 1; }
     #book-cover-path { background: transparent; }
-    #book-cover-hint { height: 1; color: $label-fg-focus; }
+    #book-cover-hint { height: 1; color: $muted; }
     /* the three bars: Contextual, File, Actions (always-available-actions-3).
-       One blank line above the STACK, none between the rows — they read as
-       one block of what is on offer. */
+       A blank line above the stack AND between the groups — they are three
+       answers to three different questions, not one list (Nick, todo-6). */
     #bars { height: auto; margin-top: 1; }
     #bars ActionBar { height: auto; }
+    /* the blank line BETWEEN the groups, by id: `:last-of-type` matched
+       all three, so none of them kept a margin and a group that appeared
+       after its probe landed flush against the one above (Nick's bug
+       report, todo-6) */
+    #contextual-bar, #file-bar { margin-bottom: 1; }
     #shift-div { height: auto; margin-top: 1; }
     #shift-row { height: 1; }
     #shift-control { width: auto; }
     ShiftControl:focus { text-style: reverse; }
-    #shift-hint { height: 1; color: $label-fg-focus; }
+    #shift-hint { height: 1; color: $muted; }
     /* the resize wizard div — same block shape as #shift-div */
     #resize-div { height: auto; margin-top: 1; }
     #resize-row { height: 1; }
     .resize-num { width: 7; background: transparent; }
-    #resize-x { width: 3; color: $label-fg-focus; text-align: center; }
+    #resize-x { width: 3; color: $muted; text-align: center; }
     #resize-link { margin-left: 2; }
     #resize-bar { margin-top: 1; }
     /* the gif wizard div — same block shape as resize */
     #gif-div { height: auto; margin-top: 1; }
     #gif-row { height: 1; }
-    .wsep { width: auto; color: $label-fg-focus; padding: 0 1; }
+    .wsep { width: auto; color: $muted; padding: 0 1; }
     #gif-bar { margin-top: 1; }
     /* Image Trace: the stepper rows, then the picture filling the rest
        (its cell size is set in code — DetailsView._trace_previewed) */
@@ -243,13 +309,13 @@ class MediasmithApp(App):
     .trace-row { height: 1; }
     TraceControl { width: auto; }
     TraceControl:focus { text-style: reverse; }
-    #trace-hint { height: auto; color: $label-fg-focus; }
+    #trace-hint { height: auto; color: $muted; }
     #trace-bar { margin-top: 1; }
     #plan-preview { height: auto; margin-top: 1; }
     #plan-tree { height: auto; }
     /* the editable split-omnibus form (shares .frow/.fkey/.fval) */
     #panel-omnibus { height: auto; margin-top: 1; }
-    .omni-source { color: $label-fg-focus; height: auto; }
+    .omni-source { color: $muted; height: auto; }
     .omni-book { height: auto; margin-top: 1; }
     .omni-head { text-style: bold; }
     /* -- narrow (phone) breakpoint: one column at a time. Which column
@@ -280,7 +346,9 @@ class MediasmithApp(App):
         self.theme = "mediasmith"
         self.start_dir = start_dir
         self.images = images
-        self.show_hidden = True
+        # read once, before the app starts: a saved switch is part of
+        # how it opens, and this is a local file, not the library
+        self.show_hidden = bool(prefs.load()["show_hidden"])
         self._details_viewing = False
         """Narrow "view": the details column is swapped in while the tree
         keeps focus — read-only kinds, which never take focus themselves."""
@@ -306,6 +374,22 @@ class MediasmithApp(App):
         tree = self.query_one(LibraryTree)
         tree.focus()
         await tree.anchor(self.start_dir)   # launch dir in parent context
+        self._check_for_an_update()
+
+    @work(thread=True, group="update", exclusive=True)
+    def _check_for_an_update(self) -> None:
+        """Bring a `uv tool install`ed copy up to date (todo-6).
+
+        In a thread and after the tree is up, because it talks to the
+        network: nobody waits on it, and a copy that is not uv's own —
+        Nick's checkout, for one — is left alone (update.managed_install).
+        """
+        version = update.check()
+        if version:
+            self.call_from_thread(
+                self.notify,
+                f"updated to {version} — it runs on the next launch",
+                title="mediasmith", timeout=10.0)
 
     def sync_strips(self) -> None:
         """Resync for the current focus — what the details bar calls when
@@ -362,9 +446,19 @@ class MediasmithApp(App):
         self.screen.remove_class("-details-open")
 
     def action_focus_path(self) -> None:
-        # ^/ is a Tree-view command ONLY (todo-4: a keybinding not on the
-        # strip must not work) — from details or the path input it idles
-        if not isinstance(self.focused, LibraryTree):
+        """^/ : jump to the Path Input from ANYWHERE that has nothing
+        pending (Nick, todo-6). It used to be a tree-only command, from
+        the days when a chord belonged to one view — but the path input is
+        a step on the path from anywhere, and the only reason to refuse is
+        unsaved work, which esc already asks about."""
+        details = self.query_one(DetailsView)
+        if isinstance(self.focused, PathInput):
+            return                              # already there
+        if details.question_open:
+            return                              # a question owns the keys
+        if details.dirty:
+            self.notify("unsaved edits — ^s saves, esc asks",
+                        title="path", severity="warning")
             return
         # narrow ordering: display the bar, move focus, and only then close
         # any open details column — Textual refuses to focus a non-displayed
@@ -380,6 +474,10 @@ class MediasmithApp(App):
             return
         self.show_hidden = not self.show_hidden
         self.query_one(LibraryTree).reload()
+        # the choice outlives the session (Nick, todo-6). In a thread
+        # because it writes a file, even a small local one.
+        self.run_worker(partial(prefs.save, show_hidden=self.show_hidden),
+                        thread=True, group="prefs", exclusive=True)
 
     def action_focus_tree(self) -> None:
         self.query_one(LibraryTree).focus()

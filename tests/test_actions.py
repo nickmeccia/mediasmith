@@ -149,7 +149,12 @@ async def test_buttons_wrap_like_flexbox():
         assert rows[0] == rows[1] != rows[2]
         assert buttons[2].region.x == buttons[0].region.x
         bar = app.query_one(ActionBar)
-        assert bar.region.height == 2          # the bar grew to hold both rows
+        # two rows of buttons AND the blank line between them: a bar that
+        # wraps reads as two bars, and two bars are always separated
+        # (Nick, todo-6)
+        assert rows[2] - rows[0] == 2
+        assert bar.region.height == 3
+        assert bar.row_offsets() == [0, 2]
 
 
 async def test_hidden_buttons_leave_the_flow():

@@ -40,7 +40,9 @@ KEYS = ([b"\x1b[B"] * 5 + [b"\x1b[A"] * 3
            b"\x0f",                      # ^o: open
            b"\x18", b"\x19", b"\x16",    # ^x ^y ^v: cut, copy, paste
            b"\x01",                      # ^a: plan apply
-           b"\x10", b"\x06",             # ^p ^f: import / fetch album art
+           # ^i import album art (todo-6 ⁵) — in its kitty CSI-u spelling,
+           # because the byte ctrl+i sends IS tab (0x09, pressed above)
+           b"\x1b[105;5u", b"\x06",      # ^i ^f: import / fetch album art
            b"\x0e",                      # ^n: new directory
            b"\x12",                      # ^r: refresh
            b"\x1b[1;5D",                 # ctrl+←: collapse level
@@ -88,6 +90,9 @@ def attempt(seed: int, seconds: float, scratch: Path, media: Path,
         os.environ["TERM"] = "xterm-256color"
         os.environ["PYTHONFAULTHANDLER"] = "1"
         os.environ["MEDIASMITH_OFFLINE"] = "1"   # ^f must not hit the API
+        # the child READS prefs at startup and WRITES them on ^. — into
+        # its own scratch, never Nick's real ~/.config (todo-6)
+        os.environ["XDG_CONFIG_HOME"] = str(scratch / "config")
         argv = _jail_argv([sys.executable, "-m", "mediasmith", str(media)],
                           scratch)
         os.execvp(argv[0], argv)

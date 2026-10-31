@@ -91,6 +91,8 @@ PANE_ACTIONS = [
     #
     # -- contextual: what the pane's STATE offers
     Action("save", "Save", "s", button_id="save-btn", bar=CONTEXTUAL),
+    # the way back up the path, printed while focus is down here (todo-6)
+    Action("exit", "Exit", key_label="ESC", bar=CONTEXTUAL),
     # while any plan preview is up, these two own the bar
     Action("plan_apply", "Apply", "a", bar=CONTEXTUAL),
     Action("plan_cancel", "Cancel", key_label="ESC", bar=CONTEXTUAL),
@@ -177,13 +179,23 @@ PANEL_LABEL = {
     kinds.OTHER: "type",
 }
 
-LABEL_GUTTER = 3
-"""Cells between a field label's text and its input.
+SPINNER = "⣷⣯⣟⡿⢿⣻⣽⣾"
+"""Braille frames for a value (or a button group) still loading. Shown
+AT THE PLACE the content will appear, so the wait is where the answer
+will be (Nick, todo-6 ⁸)."""
 
-Three, not two, since the label became a CHIP (Nick, 2026-10-26): one of
-them is the chip's own right padding, leaving the two blank cells the
-form always had. "Just like buttons and tree nodes, labels should have
-one cell of padding on the right edge."
+SPIN_SECONDS = 0.1
+
+
+LABEL_GUTTER = 3
+"""Cells a field label's column adds to its text.
+
+The label is a CHIP whose background touches the connector (todo-6 ⁴):
+a cell of padding each side of the word. The third cell is the margin
+Nick specified (⁷) — one cell after the widest FOCUSABLE label, which
+works out to two after the widest read-only one, because a read-only
+label has no trailing pad of its own. Either way every value in a panel
+starts in the same column.
 """
 
 
@@ -205,26 +217,45 @@ class Spine(Widget):
     leaves it is a separate cell. One cell, one color.
     """
 
-    WIDTH = 4
-    """``├──`` plus the blank that separates it from the label."""
+    MARGIN = 2
+    """Blank cells between the tree's column and the line (todo-6 ³). The
+    RUN crosses them on the exit row, which is why they belong to this
+    widget rather than to the pane's padding — the stroke has to be
+    continuous."""
+
+    STUB = 2
+    """The horizontal nub from the line to the row's own chip. The chip
+    starts in the very next cell: its background touches the line
+    (todo-6 ⁴/⁵)."""
+
+    WIDTH = MARGIN + 1 + STUB
+
+    COMPONENT_CLASSES = {"spine--path"}
+    """The traversed stretch's color ($traversed-path-fg, in CSS)."""
+
+    @property
+    def _path_style(self):
+        return self.get_component_rich_style("spine--path", partial=True)
 
     def __init__(self, **kw) -> None:
         super().__init__(**kw)
+        # the width is the sum of the parts above, set HERE so there is one
+        # source of truth: a CSS literal drifted from it once already
+        self.styles.width = self.WIDTH
         self._exit: int | None = None
         """Pane-local y where the line turns toward the tree, if that row
         is on screen."""
         self._heads: set[int] = set()    # rows that hold a control
-        self._tails: set[int] = set()    # a wrapped row's later lines
+        self._tails: set[int] = set()    # a wrapped bar's later lines
         self._first: int | None = None
-
-    def set_exit(self, y: int | None) -> None:
-        if y != self._exit:
-            self._exit = y
-            self.refresh()
+        self._last: int | None = None
+        self._path: tuple[int, int] | None = None
+        self._focused_row: int | None = None
 
     def restub(self) -> None:
-        """Recompute where the stubs go. The PANE calls this when its rows
-        move; ``render_line`` then costs nothing.
+        """Recompute the shape. The PANE calls this when its rows move,
+        the tree scrolls, or focus travels; ``render_line`` then costs
+        nothing.
 
         It used to walk the DOM per LINE, which is a query over every row
         in every panel (~100 widgets) forty times per repaint — on a pane
@@ -239,32 +270,189 @@ class Spine(Widget):
         top = self.region.y
         heads: set[int] = set()
         tails: set[int] = set()
-        for row in pane.query(".frow, ActionBar"):
+        block = None
+        try:
+            block = pane.query_one("#art-block")
+        except Exception:
+            pass
+        for row in pane.query(".prow, ActionBar"):
+            # ``prow`` = a row the path reaches: something focusable lives
+            # on it. A read-only value row is not one (todo-6).
             if not row.display or not row.region.height:
+                continue
+            if (block is not None and row is not block
+                    and block in row.ancestors):
+                # inside the artwork block: the BRANCH reaches those, so
+                # the main line does not stub them twice (todo-6 ⁴)
                 continue
             at = row.region.y - top
             if at < 0:
                 continue
             heads.add(at)
-            tails.update(range(at + 1, at + row.region.height))
+            if isinstance(row, ActionBar):
+                # a WRAPPED bar keeps stubbing: its later lines hold
+                # buttons too. A tall field row (an image) does not — the
+                # line just runs past it. Only the lines that HOLD
+                # buttons are stubbed: a wrapped bar now leaves a blank
+                # line between its rows, and a blank line is not a row
+                # the path can reach (todo-6).
+                tails.update(at + off for off in row.row_offsets() if off)
         self._heads, self._tails = heads, tails
         self._first = min(heads) if heads else None
+        self._last = max(heads | tails) if heads else None
+        self._exit = self._exit_row()
+        self._focused_row = self._focused_row_y()
+        self._path = (None if self._exit is None or self._focused_row is None
+                      else (min(self._exit, self._focused_row),
+                            max(self._exit, self._focused_row)))
         self.refresh()
+
+    def _exit_row(self) -> int | None:
+        """Where the line turns toward the tree: the selected row's own
+        screen line, in this widget's coordinates. None when that row is
+        scrolled out of sight — the line then simply runs past."""
+        try:
+            tree = self.app.query_one("LibraryTree")
+        except Exception:
+            return None
+        at = getattr(tree, "cursor_screen_y", lambda: None)()
+        if at is None:
+            return None
+        local = at - self.region.y
+        return local if 0 <= local < self.region.height else None
+
+    def _focused_row_y(self) -> int | None:
+        """The row holding focus, if it is one of ours. The line between
+        it and the exit is the PATH, and it is lit (todo-6 ⁶)."""
+        focused = self.app.focused
+        pane = self.parent
+        if focused is None or pane is None:
+            return None
+        top = self.region.y
+        for node in (focused, *focused.ancestors):
+            if node is pane or not isinstance(node, Widget):
+                break
+            if node.region.height and ("prow" in node.classes
+                                       or isinstance(node, ActionBar)):
+                return node.region.y - top
+        return None
+
+    def _junction(self, up: bool, down: bool,
+                  left: bool, right: bool) -> str:
+        """The box character for the arms that meet in this cell. ``left``
+        is the run arriving from the tree; ``right`` the stub to this
+        row's own chip."""
+        return {
+            (True, True, True, True): "┼",
+            (True, True, True, False): "┤",
+            (True, True, False, True): "├",
+            (True, True, False, False): "│",
+            (False, True, True, True): "┬",
+            (False, True, True, False): "╮",
+            (False, True, False, True): "╭",
+            (True, False, True, True): "┴",
+            (True, False, True, False): "╯",
+            (True, False, False, True): "╰",
+            (False, False, True, True): "─",
+        }.get((up, down, left, right), " ")
+
+    def render_line(self, y: int) -> Strip:
+        """The line's four-or-five cells at ``y``.
+
+        The PATH — from the selected tree row to the focused element —
+        shows only the arms it actually uses, so it reads as one unbroken
+        stroke: no ``┼``, no ``├``, no ``┤`` anywhere along it (Nick,
+        todo-6 ³ / ⁸). Off the path, the line keeps the junctions that
+        describe the pane's own shape.
+        """
+        plain = self.rich_style
+        lit = self._path_style
+        first, last, exit_at = self._first, self._last, self._exit
+        if first is None or last is None:
+            return Strip.blank(self.WIDTH, plain)
+        low = first if exit_at is None else min(first, exit_at)
+        high = last if exit_at is None else max(last, exit_at)
+        if not low <= y <= high:
+            return Strip.blank(self.WIDTH, plain)
+        stub = y in self._heads or y in self._tails
+        at_exit = y == exit_at
+        focused_here = y == self._focused_row
+        path = self._path
+        on_path = path is not None and path[0] <= y <= path[1]
+        if on_path:
+            # along the path, each cell carries ONLY the path's own arms
+            up = y > path[0]
+            down = y < path[1]
+            if at_exit:
+                # ² : the run is only a PATH when focus has travelled down
+                # it. With the node itself focused there is no travel, so
+                # the junction keeps the pane's shape instead.
+                glyph = self._junction(up=up, down=down, left=True,
+                                       right=False)
+            elif focused_here:
+                glyph = self._junction(up=up, down=down, left=False,
+                                       right=True)
+            else:
+                glyph = self._junction(up=True, down=True, left=False,
+                                       right=False)
+        else:
+            glyph = self._junction(up=y > low, down=y < high,
+                                   left=at_exit, right=stub)
+        margin = "─" * self.MARGIN if at_exit else " " * self.MARGIN
+        tail = "─" * self.STUB if stub else " " * self.STUB
+        return Strip([
+            # the RUN crossing the margin — a line, never a block, and
+            # lit only when the path travels it (todo-6 ²)
+            Segment(margin, lit if (at_exit and on_path) else plain),
+            Segment(glyph, lit if on_path else plain),
+            # the stub into the FOCUSED row is the path's last step (⁶)
+            Segment(tail, lit if (focused_here and on_path) else plain),
+        ], self.WIDTH)
+
+
+class ArtSpine(Widget):
+    """The path's BRANCH: from the album-art label, down past the picture,
+    into the method buttons (Nick, todo-6 ⁴).
+
+    The label itself is not focusable — it describes the picture, and what
+    takes focus is Import and Fetch below it. So the line leaves the
+    label, runs down beside the artwork, and turns into the buttons: the
+    path says "these belong to that", which a chip on the label could not.
+    """
+
+    WIDTH = 4
+
+    def __init__(self, **kw) -> None:
+        super().__init__(**kw)
+        self.styles.width = self.WIDTH
+        self._bar_line: int | None = None
+
+    def restub(self) -> None:
+        """Find the row the method buttons sit on, in our coordinates."""
+        stack = self.parent
+        line = None
+        if stack is not None:
+            try:
+                bar = stack.query_one("#art-bar")
+            except Exception:
+                bar = None
+            if bar is not None and bar.display and bar.region.height:
+                line = bar.region.y - self.region.y
+        if line != self._bar_line:
+            self._bar_line = line
+            self.refresh()
 
     def render_line(self, y: int) -> Strip:
         style = self.rich_style
-        first = self._first
-        if first is None:
+        bar = self._bar_line
+        if bar is None or bar <= 0:
             return Strip.blank(self.WIDTH, style)
-        exit_at = self._exit
-        if y == exit_at:
-            text = "╯   " if y > first else "╮   "
-        elif y in self._heads:
-            text = "╭── " if y == first else "├── "
-        elif y in self._tails:
-            text = "│── "
-        elif y > first and (exit_at is None or y < exit_at):
-            text = "│   "
+        if y == 0:
+            text = "─╮  "          # leaving the label
+        elif y < bar:
+            text = " │  "          # down beside the picture
+        elif y == bar:
+            text = " ╰──"          # into the buttons
         else:
             return Strip.blank(self.WIDTH, style)
         return Strip([Segment(text, style)], self.WIDTH)
@@ -286,10 +474,15 @@ class FieldLabel(Label):
     the chords inside button labels.
     """
 
-    def __init__(self, text: str = "", width: int = 0, **kw) -> None:
+    def __init__(self, text: str = "", width: int = 0,
+                 focusable: bool = True, **kw) -> None:
         super().__init__(**kw)
         self._text = text
         self._width = width
+        self._focusable = focusable
+        """Whether this row's value can be EDITED. A read-only row gets no
+        chip and no stub from the Spine, so the two of them together say
+        which rows the arrow keys reach (Nick, todo-6)."""
         self._active = False
         self._paint()
 
@@ -309,16 +502,29 @@ class FieldLabel(Label):
         if not self._text:
             self.update("")
             return
-        fg = "$element-fg-focus" if self._active else "$element-fg"
-        bg = "$element-bg-focus" if self._active else "$element-bg"
-        pad = " " * max(0, self._width - len(self._text) - 1)
+        pad = " " * max(0, self._width - len(self._text) - 2)
+        if not self._focusable:
+            # a read-only row: plain label text, no block behind it, and
+            # it starts where a chip's text would (todo-6 ⁴). One cell
+            # MORE padding than a chip gets, because it has no trailing
+            # pad of its own — which is how both land in one column (⁷).
+            self.update(Content.from_markup(
+                f" [$muted]{self._text}[/]{pad} "))
+            return
+        fg = "$focused-fg" if self._active else "$focusable-fg"
+        bg = "$focused-bg" if self._active else "$focusable-bg"
+        # a cell of padding INSIDE the block, each side: the background
+        # touches the connector's stub on the left (todo-6 ⁴)
         self.update(Content.from_markup(
-            f"[{fg} on {bg}]{self._text} [/]{pad}"))
+            f"[{fg} on {bg}] {self._text} [/]{pad}"))
 
 
 def _panel_width(kind: str) -> int:
-    """The label column width for a kind's panel (PANEL_LABEL + gutter)."""
-    return len(PANEL_LABEL.get(kind, "filename")) + LABEL_GUTTER
+    """ONE label column per panel, as wide as the widest label it can
+    show — the filename row included, since its value has to line up with
+    the rest (Nick, todo-6 ⁷)."""
+    widest = max(len(PANEL_LABEL.get(kind, "")), len("filename"))
+    return widest + LABEL_GUTTER
 
 
 def human_size(n: float) -> str:
@@ -680,7 +886,7 @@ class EditForm(Vertical):
 
     def compose(self):
         for _ in range(self._pool):
-            with Horizontal(classes="frow"):
+            with Horizontal(classes="frow prow"):
                 yield FieldLabel(classes="fkey")
                 yield FieldInput(placeholder="-", compact=True, classes="fval")
                 yield Static("", classes="fmark")
@@ -696,15 +902,25 @@ class EditForm(Vertical):
     """The padded label column width of the current field set."""
 
     def set_fields(self, fields: dict[str, str],
-                   mixed: frozenset[str] = frozenset()) -> None:
+                   mixed: frozenset[str] = frozenset(),
+                   extra: int = 0) -> None:
         """``mixed`` names (bulk view: values diverge across the files)
         show empty with a "(mixed)" placeholder; typing into one means
         "apply this to every file"."""
         self._names = list(fields)[:self._pool]
         self._mixed = mixed
         labels = adapters.FIELD_LABELS
+        # the FILENAME row shares this column, so it sets the floor: a
+        # file with few tags must not leave its own name sticking out
+        # (todo-6 ⁷)
         width = max((len(labels.get(n, n)) for n in self._names),
-                    default=0) + LABEL_GUTTER
+                    default=0, ) + LABEL_GUTTER
+        width = max(width, len("filename") + LABEL_GUTTER,
+                    len("album art") + LABEL_GUTTER)
+        # ``extra``: cells the panel needs beyond its widest label — the
+        # audio panel reserves the art branch's column so the picture
+        # lines up with the other values (todo-6 ⁴)
+        width += extra
         self.label_width = width
         for i, row in enumerate(self._rows()):
             if i < len(self._names):
@@ -985,6 +1201,9 @@ class DetailsView(VerticalScroll, can_focus=True):
         self._pending: Path | None = None
         self._debounce = None
         self._probes_out: set[str] = set()   # button probes still out
+        self._spinning: set[str] = set()     # value ids showing a spinner
+        self._spin_at = 0
+        self._spin_timer = None
         self._all_chords: frozenset[str] | None = None   # lazy: needs compose
         self._question: tuple[list[str], object] | None = None
         """An open question: its answer actions, and what to call with the
@@ -1037,9 +1256,12 @@ class DetailsView(VerticalScroll, can_focus=True):
 
     def _row(self, key: str, id: str, width: int,
              row_id: str | None = None) -> Horizontal:
-        """One label+value row. ``frow`` is what the Spine looks for when
-        it decides which lines carry a stub."""
-        return Horizontal(FieldLabel(key, width, classes="fkey"),
+        """One label+value row, READ-ONLY: a name and a value the user
+        cannot edit. It carries no ``prow`` class, so the Spine draws no
+        stub to it and its label wears no chip (Nick, todo-6) — between
+        them, those two say which rows the arrow keys reach."""
+        return Horizontal(FieldLabel(key, width, focusable=False,
+                                     classes="fkey"),
                           Static("", id=id, classes="fval-static"),
                           classes="frow", id=row_id)
 
@@ -1049,7 +1271,7 @@ class DetailsView(VerticalScroll, can_focus=True):
         # keeps it aligned whether the pane scrolls or the tree does
         yield Spine(id="spine")
         yield Label("", id="dtitle", classes="dtitle")
-        with Horizontal(id="row-fname", classes="frow"):
+        with Horizontal(id="row-fname", classes="frow prow"):
             yield FieldLabel("filename", len("filename") + LABEL_GUTTER,
                              id="fname-label", classes="fkey")
             yield FieldInput(id="fname", compact=True)
@@ -1058,27 +1280,38 @@ class DetailsView(VerticalScroll, can_focus=True):
         with Vertical(id="panel-audio", classes="panel"):
             yield EditForm(24, id="form-audio")
             # album art is the last field: label column matches the form,
-            # image top-aligned with the label, left-aligned with inputs
-            with Horizontal(id="row-art"):
-                yield FieldLabel(id="art-label", classes="fkey")
-                yield Static("-", id="art-none", classes="fval-static")
-                with ArtField(id="art-field"):
-                    yield image_widget(self.images, id="cover-audio")
-                    yield Label("", id="cover-audio-dims", classes="cover-dims")
-                yield Static("", id="art-mark", classes="fmark")
-            with Horizontal(id="row-art-buttons"):
-                yield Label("", id="art-buttons-pad", classes="fkey")
-                # "im^port": ^i is reserved (tab alias), ^p stands in —
-                # logged in notes/qa/todo-2.md
-                yield ActionBar(
-                    Action("art_path", "import", "p",
-                           button_id="art-btn-path"),
-                    Action("art_fetch", "fetch", "f",
-                           button_id="art-btn-fetch"),
-                    id="art-bar")
-            with Horizontal(id="row-art-path"):
-                yield Label("", id="art-path-pad", classes="fkey")
-                yield ArtPathInput(id="art-path", compact=True)
+            # image top-aligned with the label, left-aligned with inputs,
+            # and a blank line above it (todo-6) — the artwork is its own
+            # group, not the tail of the tag list
+            yield Static("", classes="fgap")
+            # ONE block (todo-6 ⁴): the label, the path's branch, and the
+            # stack of things the branch leads to. The label describes the
+            # picture rather than taking focus, so it wears no chip — the
+            # BRANCH is what says the buttons below belong to it.
+            with Horizontal(id="art-block", classes="prow"):
+                yield FieldLabel(id="art-label", focusable=False,
+                                 classes="fkey")
+                yield ArtSpine(id="art-spine")
+                with Vertical(id="art-stack"):
+                    with Horizontal(id="row-art"):
+                        yield Static("-", id="art-none",
+                                     classes="fval-static")
+                        with ArtField(id="art-field"):
+                            yield image_widget(self.images, id="cover-audio")
+                            yield Label("", id="cover-audio-dims",
+                                        classes="cover-dims")
+                        yield Static("", id="art-mark", classes="fmark")
+                    # ^i Import (Nick, todo-6 ⁵). ctrl+i and TAB are the
+                    # same byte outside the kitty protocol — see
+                    # actions.RESERVED_KEYS for what that costs.
+                    yield ActionBar(
+                        Action("art_path", "Import", "i",
+                               button_id="art-btn-path"),
+                        Action("art_fetch", "Fetch", "f",
+                               button_id="art-btn-fetch"),
+                        id="art-bar")
+                    with Horizontal(id="row-art-path"):
+                        yield ArtPathInput(id="art-path", compact=True)
 
         with Vertical(id="panel-video", classes="panel"):
             width = _panel_width(kinds.VIDEO)
@@ -1089,13 +1322,13 @@ class DetailsView(VerticalScroll, can_focus=True):
             yield self._row("subtitles", "video-subs", width)
             yield self._row("posters", "video-posters", width)
             with Vertical(id="shift-div"):
-                with Horizontal(id="shift-row"):
+                with Horizontal(id="shift-row", classes="prow"):
                     yield FieldLabel("shift", width, classes="fkey")
                     yield ShiftControl(" 0:00.0", id="shift-control")
                     yield Static("", id="shift-mark", classes="fmark")
                 yield Static(SHIFT_HINT, id="shift-hint")
             with Vertical(id="gif-div"):    # the third wizard div
-                with Horizontal(id="gif-row"):
+                with Horizontal(id="gif-row", classes="prow"):
                     yield FieldLabel("gif", width, classes="fkey")
                     yield FieldInput(id="gif-fps", compact=True,
                                      type="integer", classes="resize-num")
@@ -1108,15 +1341,31 @@ class DetailsView(VerticalScroll, can_focus=True):
                     Action("gif_make", "save", "s",
                            button_id="gif-apply-btn"),
                     id="gif-bar")
-            # the poster, with its pixel dimensions under it — album art
-            # and the book cover's twin (Nick, 2026-08-22)
-            yield image_widget(self.images, id="cover-video")
-            yield Label("", id="cover-video-dims", classes="cover-dims")
+            # the poster is a FIELD, exactly as album art is (Nick,
+            # todo-6): its own label in the panel's column, the picture
+            # top-aligned with it, and a blank line above it separating
+            # the artwork from the metadata
+            yield Static("", classes="fgap")
+            with Horizontal(id="row-poster", classes="prow"):
+                yield FieldLabel("poster", _panel_width(kinds.VIDEO),
+                                 id="poster-label", classes="fkey")
+                yield Static("-", id="poster-none", classes="fval-static")
+                with ArtField(id="poster-field"):
+                    yield image_widget(self.images, id="cover-video")
+                    yield Label("", id="cover-video-dims",
+                                classes="cover-dims")
 
         with Vertical(id="panel-book", classes="panel"):
             yield EditForm(12, id="form-book")
-            yield image_widget(self.images, id="cover-book")
-            yield Label("", id="cover-book-dims", classes="cover-dims")
+            # the cover is a FIELD too (todo-6), label column and all
+            yield Static("", classes="fgap")
+            with Horizontal(id="row-cover", classes="prow"):
+                yield FieldLabel(id="cover-label", classes="fkey")
+                yield Static("-", id="cover-none", classes="fval-static")
+                with ArtField(id="cover-field"):
+                    yield image_widget(self.images, id="cover-book")
+                    yield Label("", id="cover-book-dims",
+                                classes="cover-dims")
             # cover method: a path input toggled by the ^f cover button
             # (mirrors audio art-path). Enter applies, esc cancels.
             with Vertical(id="book-cover-div"):
@@ -1130,7 +1379,7 @@ class DetailsView(VerticalScroll, can_focus=True):
             yield self._row("dimensions", "image-dims", width,
                             row_id="row-image-dims")
             with Vertical(id="resize-div"):     # the wizard div, shift-style
-                with Horizontal(id="resize-row"):
+                with Horizontal(id="resize-row", classes="prow"):
                     yield FieldLabel("resize", width, classes="fkey")
                     yield FieldInput(id="resize-w", compact=True,
                                      type="integer", classes="resize-num")
@@ -1147,7 +1396,7 @@ class DetailsView(VerticalScroll, can_focus=True):
             with Vertical(id="trace-div"):      # Image Trace
                 width = len("ignore white") + LABEL_GUTTER
                 for name, label in trace.CONTROLS:
-                    with Horizontal(classes="trace-row"):
+                    with Horizontal(classes="trace-row prow"):
                         yield FieldLabel(label, width, classes="fkey")
                         yield TraceControl(name, id=f"trace-{name}")
                 yield Static(TRACE_HINT, id="trace-hint")
@@ -1201,9 +1450,14 @@ class DetailsView(VerticalScroll, can_focus=True):
                 yield ActionBar(
                     *[a for a in PANE_ACTIONS if a.bar == bar_name],
                     id=bar_id)
+            # where the kind's actions WILL be, while their probes run
+            # (todo-6 ⁸): a group that resolves to nothing simply never
+            # appears, and the spinner goes with it
+            yield Static("", id="actions-loading", classes="prow")
         # parked below save while its final home is decided (audio only);
         # width matches the widest standard audio label (album artist, 12)
-        yield self._row("info", "audio-info", 12 + LABEL_GUTTER,
+        yield self._row("info", "audio-info",
+                        len("album artist") + LABEL_GUTTER,
                         row_id="row-audio-info")
 
     def on_mount(self) -> None:
@@ -1226,6 +1480,12 @@ class DetailsView(VerticalScroll, can_focus=True):
 
     _spine_dirty = False
 
+    def redraw_connector(self) -> None:
+        """Re-shape the connector: the tree calls this when its cursor or
+        its scroll moves, and the pane itself when its rows do."""
+        self._spine_dirty = True
+        self.call_after_refresh(self._redraw_spine)
+
     def _redraw_spine(self) -> None:
         if not self._spine_dirty:
             return
@@ -1234,20 +1494,45 @@ class DetailsView(VerticalScroll, can_focus=True):
             self.query_one("#spine", Spine).restub()
         except NoMatches:
             pass            # teardown, or before compose
+        try:
+            self.query_one("#art-spine", ArtSpine).restub()
+        except NoMatches:
+            pass
 
     def _sync_element_chrome(self, focused) -> None:
-        """Focus moved: light the ONE element that has it.
+        """Focus moved: light the ONE element that has it, and re-ask the
+        Contextual bar — ``ESC Exit`` prints only while focus is in here.
 
-        Backgrounds are CSS ($element-bg / $element-bg-focus), but two
+        Backgrounds are CSS ($focusable-bg / $focused-bg), but two
         things are painted with markup because they cover part of a
         widget — the chord inside a button label, and a field's label
         chip — so those are applied here, on the focus edge.
         """
+        # ⁵: inside a bar, the buttons LEFT of the focused one are what
+        # the path came through — mark them so CSS can color them
+        for bar in self.query(ActionBar):
+            row = bar.buttons()
+            # the watcher's own argument, not `has_focus`: this runs
+            # BEFORE Textual applies the new focus to the widget, so
+            # asking the widget lagged a keystroke behind (2026-10-30)
+            at = next((i for i, b in enumerate(row) if b is focused), None)
+            for i, button in enumerate(row):
+                traversed = at is not None and i < at
+                button.set_traversed(traversed)
+                link = bar._link_after(button)
+                if link is not None:
+                    link.set_class(traversed, "-traversed")
         for label in self.query(FieldLabel):
             row = label.parent
             label.set_active(
                 focused is not None and row is not None
                 and (focused is row or row in focused.ancestors))
+        self._sync_pane_bar()
+        self.redraw_connector()     # the lit stretch follows focus
+        try:                        # …and so does the tree's own run
+            self.app.query_one("LibraryTree").refresh_run()
+        except Exception:
+            pass
         # a wizard div opening or closing is a focus move, and it changes
         # which bars are on show — so the positional chords settle here
         # too (set_ordinal is a no-op when the number hasn't moved)
@@ -1256,7 +1541,57 @@ class DetailsView(VerticalScroll, can_focus=True):
     # -- value plumbing ----------------------------------------------------------
 
     def _set(self, id: str, value: str) -> None:
+        self._spinning.discard(id)      # a real value ends the wait
         self.query_one(f"#{id}", Static).update(value)
+
+    def _set_loading(self, *ids: str) -> None:
+        """Show a spinner where these values will appear (todo-6 ⁸)."""
+        self._spinning.update(ids)
+        self._spin_frame()
+
+    def _spin_frame(self) -> None:
+        """Advance every spinner on screen, and keep the timer running
+        only while there is something to spin."""
+        frame = SPINNER[self._spin_at % len(SPINNER)]
+        self._spin_at += 1
+        alive = False
+        for id in list(self._spinning):
+            try:
+                self.query_one(f"#{id}", Static).update(frame)
+                alive = True
+            except NoMatches:
+                self._spinning.discard(id)
+        if self._probing_actions():
+            marker = self.query_one("#actions-loading", Static)
+            marker.update(frame)
+            marker.display = True
+            alive = True
+        else:
+            # the wait is over — hide the marker HERE as well as in
+            # _sync_pane_bar. A probe that answers "no actions" ends the
+            # spin without changing the bars, so nothing else ran and the
+            # last frame sat there frozen (Nick, todo-6).
+            try:
+                self.query_one("#actions-loading").display = False
+            except NoMatches:
+                pass
+        if alive and self._spin_timer is None:
+            self._spin_timer = self.set_interval(SPIN_SECONDS,
+                                                 self._spin_frame)
+        elif not alive and self._spin_timer is not None:
+            self._spin_timer.stop()
+            self._spin_timer = None
+
+    def _probing_actions(self) -> bool:
+        """Whether a KIND action may still be on its way — the Actions bar
+        is empty and a button probe has yet to answer (todo-6 ⁸)."""
+        if self._question is not None or self.plan_preview_open():
+            return False
+        try:
+            bar = self.query_one("#actions-bar", ActionBar)
+        except NoMatches:
+            return False
+        return bool(self._probes_out) and not bar.buttons()
 
     def _set_cover(self, id: str, data: bytes | None) -> None:
         widget = self.query_one(f"#{id}")
@@ -1278,6 +1613,12 @@ class DetailsView(VerticalScroll, can_focus=True):
             except Exception:
                 widget.display = False
         self._set_cover_dims(f"{id}-dims", size, truncated)
+        # the slot's "-" shows when there is no picture in it (todo-6:
+        # the cover and the poster are fields, so they read like fields)
+        none_id = {"cover-book": "cover-none",
+                   "cover-video": "poster-none"}.get(id)
+        if none_id is not None:
+            self.query_one(f"#{none_id}", Static).display = size is None
 
     def _set_cover_dims(self, id: str, size: tuple[int, int] | None,
                         truncated: bool = False) -> None:
@@ -1573,6 +1914,14 @@ class DetailsView(VerticalScroll, can_focus=True):
     def question_open(self) -> bool:
         return self._question is not None
 
+    @property
+    def focus_inside(self) -> bool:
+        """Whether the thing with focus is in this pane — which is what
+        makes ``ESC Exit`` worth printing."""
+        focused = self.app.focused if self.is_attached else None
+        return focused is not None and (focused is self
+                                        or self in focused.ancestors)
+
     def _answer(self, choice: str) -> None:
         """Resolve the open question — first answer wins, as the modals'
         own guard did (a second dismiss was app death: fuzz seed 10)."""
@@ -1628,13 +1977,16 @@ class DetailsView(VerticalScroll, can_focus=True):
         # probe that fills only a VALUE (a video's header, a folder's
         # totals, an .ai's canvas) can land whenever it likes — no chord
         # moves when it does — so it stays outside this table.
-        "folderize": (folderize.probe, "_folderize_ready"),
-        "multiartist": (multiartist.probe, "_multiartist_ready"),
-        "omnibus": (omnibus.probe, "_omnibus_ready"),
-        "sort": (booksort.probe, "_sort_ready"),
-        "sort_book": (booksort.probe_book, "_sort_ready"),
-        "standardize": (standardize.probe_folder, "_standardize_ready"),
+        "folderize": (folderize, "probe", "_folderize_ready"),
+        "multiartist": (multiartist, "probe", "_multiartist_ready"),
+        "omnibus": (omnibus, "probe", "_omnibus_ready"),
+        "sort": (booksort, "probe", "_sort_ready"),
+        "sort_book": (booksort, "probe_book", "_sort_ready"),
+        "standardize": (standardize, "probe_folder", "_standardize_ready"),
     }
+    """(module, attribute, flag) — looked up by NAME at call time, not
+    bound here: a dict of function objects cannot be monkeypatched, which
+    made the probes untestable from the app's side (2026-10-30)."""
 
     def _probe(self, name: str, path: Path) -> None:
         """Launch a button-bearing probe and remember the bar is still
@@ -1652,7 +2004,8 @@ class DetailsView(VerticalScroll, can_focus=True):
                         group=f"probe-{name}", exclusive=True, thread=True)
 
     def _probe_body(self, name: str, path: Path) -> None:
-        test = self.BUTTON_PROBES[name][0]
+        module, attr, _ = self.BUTTON_PROBES[name]
+        test = getattr(module, attr)
         try:
             ready = bool(test(path))
         except Exception:
@@ -1671,7 +2024,7 @@ class DetailsView(VerticalScroll, can_focus=True):
             return
         self._probes_out.discard(name)
         if ready and not self.plan_preview_open():
-            setattr(self, self.BUTTON_PROBES[name][1], True)
+            setattr(self, self.BUTTON_PROBES[name][2], True)
             self._sync_pane_bar()
         self._settle()
 
@@ -1779,14 +2132,13 @@ class DetailsView(VerticalScroll, can_focus=True):
         self._sync_pane_bar()
         form = self._active_form()
         assert form is not None
-        form.set_fields(bulk.fields, bulk.mixed)
+        form.set_fields(bulk.fields, bulk.mixed,
+                        extra=ArtSpine.WIDTH if bulk.kind == kinds.AUDIO
+                        else 0)
         self._align_filename()
         if bulk.kind == kinds.AUDIO:
-            gutter = " " * form.label_width
             self.query_one("#art-label", FieldLabel).set_text(
-                "album art", form.label_width)
-            self.query_one("#art-buttons-pad", Label).update(gutter)
-            self.query_one("#art-path-pad", Label).update(gutter)
+                "album art", form.label_width - ArtSpine.WIDTH)
             self._set("audio-info",
                       audio_info_label(bulk.filetypes, bulk.bitrates,
                                        bulk.length_seconds, bulk.size))
@@ -1795,6 +2147,7 @@ class DetailsView(VerticalScroll, can_focus=True):
             self._art_mixed = bulk.cover_mixed
             self._show_art(bulk.cover, mixed=bulk.cover_mixed)
         else:
+            self._label_cover()
             self._set_cover("cover-book", bulk.cover)
         self._baseline = self._current_state()
         self._refresh_marks()
@@ -1827,12 +2180,9 @@ class DetailsView(VerticalScroll, can_focus=True):
 
     def _fill_audio(self, path: Path, d: adapters.AudioDetails) -> None:
         form = self.query_one("#form-audio", EditForm)
-        form.set_fields(d.fields)
-        gutter = " " * form.label_width
+        form.set_fields(d.fields, extra=ArtSpine.WIDTH)
         self.query_one("#art-label", FieldLabel).set_text(
-            "album art", form.label_width)
-        self.query_one("#art-buttons-pad", Label).update(gutter)
-        self.query_one("#art-path-pad", Label).update(gutter)
+            "album art", form.label_width - ArtSpine.WIDTH)
         self._set("audio-info",
                   audio_info_label((d.filetype,) if d.filetype else (),
                                    (d.bitrate, d.bitrate),
@@ -1854,8 +2204,7 @@ class DetailsView(VerticalScroll, can_focus=True):
         self._set("video-container", d.container or "—")
         # both fill in late: the title and the codec are header reads, and
         # a header on the NAS is not an event-loop call (rule 4)
-        self._set("video-title", "…")
-        self._set("video-codec", "…")
+        self._set_loading("video-title", "video-codec")
         self._set("video-subs", d.subtitle_name or "none")
         self._set("video-posters", d.poster_name or "none")
         self._set_cover("cover-video", d.poster_bytes)
@@ -1876,8 +2225,15 @@ class DetailsView(VerticalScroll, can_focus=True):
             self.app.call_from_thread(self._set, "video-title", title)
             self.app.call_from_thread(self._set, "video-codec", codec)
 
+    def _label_cover(self) -> None:
+        """The book cover's label column is the book form's (todo-6)."""
+        form = self.query_one("#form-book", EditForm)
+        self.query_one("#cover-label", FieldLabel).set_text(
+            "cover", form.label_width or len("cover") + LABEL_GUTTER)
+
     def _fill_book(self, path: Path, d: adapters.BookDetails) -> None:
         self.query_one("#form-book", EditForm).set_fields(d.fields)
+        self._label_cover()
         self._set_cover("cover-book", d.cover)
         self._book_cover = d.cover is not None
         self._sync_pane_bar()       # extract-cover appears with the cover
@@ -1903,8 +2259,7 @@ class DetailsView(VerticalScroll, can_focus=True):
                       kinds.BOOK, kinds.IMAGE, kinds.OTHER)
             if d.counts.get(k)) or "empty"
         self._set("folder-counts", summary)
-        self._set("folder-files", "…")
-        self._set("folder-size", "…")
+        self._set_loading("folder-files", "folder-size")
         self._probe_totals(path)
         self._probe("folderize", path)
         self._probe("multiartist", path)
@@ -1948,6 +2303,8 @@ class DetailsView(VerticalScroll, can_focus=True):
         for row in ("vector-artboard", "vector-artwork", "vector-hidden"):
             self._set(row, "—")
         if illustrator.is_illustrator(path):
+            self._set_loading("vector-artboard", "vector-artwork",
+                              "vector-hidden")
             self._probe_canvas(path)    # the canvas rows fill in late
 
     @work(thread=True, exclusive=True, group="canvas-probe")
@@ -1996,8 +2353,11 @@ class DetailsView(VerticalScroll, can_focus=True):
         form = self._active_form()
         if form is not None:
             fields.extend(form.inputs())
-        if self.kind == kinds.AUDIO:
-            fields.append(self.query_one("#art-field", ArtField))
+        # the artwork slot is a field on every kind that has one (todo-6)
+        art_slot = {kinds.AUDIO: "#art-field", kinds.BOOK: "#cover-field",
+                    kinds.VIDEO: "#poster-field"}.get(self.kind or "")
+        if art_slot is not None and self.paths is None:
+            fields.append(self.query_one(art_slot, ArtField))
         if self._resize_open:       # the div's controls join the ↑↓ walk
             fields.extend([self.query_one("#resize-w", FieldInput),
                            self.query_one("#resize-h", FieldInput),
@@ -2051,6 +2411,9 @@ class DetailsView(VerticalScroll, can_focus=True):
             return                          # split-form fields: no ✓ marks
         if ev.input.id != "art-path":       # method input: not a field
             self._refresh_marks()
+            # Save appears with the first edit and goes with the last
+            # (todo-6), so the bar follows dirtiness keystroke by keystroke
+            self._sync_pane_bar()
 
     def focus(self, scroll_visible: bool = True):
         """Focusing the pane means editing: land on the filename input
@@ -2129,8 +2492,15 @@ class DetailsView(VerticalScroll, can_focus=True):
                 names |= {"cut", "copy", "delete"}
             if self._open_target() is not None:
                 names.add("open")               # every single file, first
-            if self.can_edit():
+            if self.focus_inside:
+                names.add("exit")               # the way back up (todo-6)
+            if self.dirty:
+                # only when there is something to save (Nick, todo-6): a
+                # Save that writes nothing reads as a dead key
                 names.add("save")
+            # …and the KIND's own actions, which have nothing to do with
+            # whether there are edits pending
+            if self.can_edit():
                 if (self.kind == kinds.BOOK and self.paths is None
                         and self.path is not None):
                     suffix = self.path.suffix.lower()
@@ -2175,8 +2545,7 @@ class DetailsView(VerticalScroll, can_focus=True):
                     names.add("folderize_video")
                 if self._video_srt is not None:
                     names |= {"clean_subs", "shift_subs"}
-                if self._shift_open:            # the write manifest: ^s
-                    names.add("save")           # writes the pending shift
+                # (a pending shift is "dirty", so Save shows itself)
         try:
             bars = [self.query_one(f"#{id}", ActionBar)
                     for id in ("contextual-bar", "file-bar", "actions-bar")]
@@ -2189,6 +2558,13 @@ class DetailsView(VerticalScroll, can_focus=True):
             # every bar gets the WHOLE set and keeps what it owns: one
             # decision about what this selection offers, three rows
             bar.set_visible(names)
+        try:
+            waiting = self._probing_actions()
+            self.query_one("#actions-loading").display = waiting
+            if waiting:
+                self._spin_frame()
+        except NoMatches:
+            pass
         # the spine draws itself from where the rows ARE, so it has to be
         # told when they move — which is here: every selection change and
         # every bar change comes through this method. Coalesced, because
@@ -2416,6 +2792,10 @@ class DetailsView(VerticalScroll, can_focus=True):
             index = row.index(focused)          # focused-not-in-row: no-op
             if index < len(row) - 1:
                 row[index + 1].focus()
+
+    def action_exit(self) -> None:
+        """The ESC Exit button, and esc itself: back up the path."""
+        self.action_release()
 
     def action_release(self) -> None:
         if self._question is not None:
@@ -2744,7 +3124,7 @@ class DetailsView(VerticalScroll, can_focus=True):
         if os.environ.get(artfetch.OFFLINE_ENV):
             # the fuzz gate presses every chord; real ebook-convert spawns
             # are minutes each — too heavy for it (this guard is what let
-            # ^p/^b/^y join tests/fuzz.py KEYS)
+            # ^i/^b/^y join tests/fuzz.py KEYS)
             self.notify("convert disabled (MEDIASMITH_OFFLINE set)",
                         title="convert", severity="warning")
             return
@@ -4262,6 +4642,10 @@ class DetailsView(VerticalScroll, can_focus=True):
             srt.format_shift(self._shift_target_ms))
         self.query_one("#shift-mark", Static).update(
             "✓" if self._shift_pending else "")
+        # the first nudge makes the shift pending, which is what puts Save
+        # on the bar (todo-6: it shows only when there is something to
+        # write) — and its ^s is how the wizard commits
+        self._sync_pane_bar()
 
     def _shift_close(self) -> None:
         """esc on the control: pending goes through the save question (the

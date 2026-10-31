@@ -10,6 +10,8 @@ import contextlib
 import os
 from pathlib import Path
 
+from rich.cells import cell_len
+from rich.segment import Segment
 from rich.style import Style
 from rich.text import Text
 from textual import events, work
@@ -107,7 +109,7 @@ class PathChip(Label):
 
     def set_focused(self, value: bool) -> None:
         self.update(Content.from_markup(
-            f"[$element-key]{'ESC' if value else '^/ '}[/]"))
+            f"[$triggerable-fg]{'ESC' if value else '^/ '}[/]"))
 
 
 class PathRow(Horizontal):
@@ -295,10 +297,31 @@ class LibraryTree(DirectoryTree):
 
     COMPONENT_CLASSES = DirectoryTree.COMPONENT_CLASSES | {
         "tree--node-chip",
+        "tree--run",
+        "tree--run-traversed",
     }
-    """The grey block every row wears to say "this is a focusable thing"
-    (always-available-actions-3). Colored in app.py's CSS, like every
-    other component class."""
+    """``tree--node-chip``: the grey block every row wears to say "this is
+    a focusable thing". ``tree--run``: the connector's horizontal stroke,
+    drawn from the selected row across to the details pane. Both colored
+    in app.py's CSS, like every other component class."""
+
+    def _run_style(self) -> Style:
+        """The run's color. It is only TRAVERSED once focus has travelled
+        down it into the pane (Nick, todo-6 ¹): with the node itself
+        focused the line is just a line, so it takes ordinary text
+        colors — and never a background either way."""
+        try:
+            lit = self.app.query_one(DetailsView).focus_inside
+        except Exception:
+            lit = False
+        name = "tree--run-traversed" if lit else "tree--run"
+        return self.get_component_rich_style(name, partial=True)
+
+    def refresh_run(self) -> None:
+        """Repaint the selected row, whose run changes color when focus
+        crosses into the pane or back out."""
+        if self.cursor_line >= 0:
+            self._refresh_line(self.cursor_line)
 
     BINDINGS = [
         Binding("right", "expand", "expand", show=False),
@@ -579,17 +602,17 @@ class LibraryTree(DirectoryTree):
         # row behind it (grey-10 on the cursor came out #684a20). The
         # non-hidden cursor isn't dimmed, so a SELECTED hidden row drops
         # dim to land on the token's true color.
+        #
+        # One token each since todo-6: a row does not change color
+        # because focus is in the other pane. The lit row's own
+        # foreground is the cursor component style's (CSS).
         dim = None
         if hidden and selected:
-            token = ("node-hidden-selected-fg-focus" if self.has_focus
-                     else "node-hidden-selected-fg-idle")
+            token = "focused-fg"
             dim = False
         elif hidden:
-            token = ("node-hidden-fg-focus" if self.has_focus
-                     else "node-hidden-fg-idle")
-        elif selected and not self.has_focus:
-            token = "node-selected-fg-idle"     # focused: Textual's own
-        else:                                   # cursor foreground
+            token = "muted"
+        else:
             token = None
         if token is not None:
             color = self.app.get_css_variables().get(token)
@@ -930,6 +953,7 @@ class LibraryTree(DirectoryTree):
             node = self._get_node(at)
             if node is not None and node.parent is not None:
                 self._refresh_node(node.parent)
+        self.redraw_connector()
 
     def _render_line(self, y: int, x1: int, x2: int, base_style: Style) -> Strip:
         # Reimplemented from Textual's Tree solely to un-stick the selected
@@ -1071,11 +1095,58 @@ class LibraryTree(DirectoryTree):
 
             segments = list(guides.render(self.app.console))
             pad_width = max(self.virtual_size.width, width)
-            segments = line_pad(segments, 0, pad_width - guides.cell_len, line_style)
+            if y == self.cursor_line and not self.has_class("-editing"):
+                # THE RUN (todo-6): the selected row reaches across to the
+                # details pane's line, so the path from this file to the
+                # field being edited is one unbroken stroke. Drawn to the
+                # tree's own right edge; the Spine's first column picks it
+                # up from there.
+                run = max(0, width - guides.cell_len)
+                if run:
+                    segments.append(Segment("─" * run, self._run_style()))
+                segments = line_pad(segments, 0,
+                                    max(0, pad_width - width), line_style)
+            else:
+                segments = line_pad(segments, 0,
+                                    pad_width - guides.cell_len, line_style)
             strip = self._line_cache[cache_key] = Strip(segments)
 
+        # ³ : a row whose CONTENT runs past the edge ends in an ellipsis,
+        # so a truncated name says it was truncated (Nick, todo-6). The
+        # measure is the content, not the strip: every row is padded to
+        # the tree's virtual width, so a pre-crop length tells you only
+        # that some OTHER row is long.
+        content = cell_len(strip.text.rstrip())
         strip = strip.crop(x1, x2)
+        if content > x2 and strip.cell_length:
+            kept = strip.crop(0, strip.cell_length - 1)
+            style = next((seg.style for seg in reversed(list(strip))
+                          if seg.text), None)
+            strip = Strip([*kept, Segment("…", style)], strip.cell_length)
         return strip
+
+    def watch_scroll_y(self, old: float, new: float) -> None:
+        super().watch_scroll_y(old, new)
+        self.redraw_connector()     # the run moved with the rows
+
+    def redraw_connector(self) -> None:
+        """Ask the details pane to re-shape its half of the line."""
+        try:
+            self.app.query_one(DetailsView).redraw_connector()
+        except Exception:
+            pass        # before mount, or on the way out
+
+    def cursor_screen_y(self) -> int | None:
+        """The selected row's screen line, or None when it is scrolled out
+        of view. The connector's two halves agree on this number: the
+        Spine turns its corner here, and this row draws the run."""
+        if self.cursor_line < 0 or not self.is_attached:
+            return None
+        before = self._center_offset() or 0
+        at = self.cursor_line - self.scroll_offset.y + before
+        if not 0 <= at < self.size.height:
+            return None
+        return self.region.y + at
 
     def _refresh_line(self, line: int) -> None:
         # Tree-line index → its screen row, accounting for the center shift.

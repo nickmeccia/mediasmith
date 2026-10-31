@@ -204,11 +204,26 @@ Consequences that follow from the model (don't break them):
      "<1s delay entering details view" Nick complained of.
 
 5. **Every color lives in `mediasmith/theme.py`** (Nick's palette,
-   todo-4). CSS holds only STATE — which token applies when (idle/focus
-   pairs flip on view focus). Never hardcode a hex or named color
-   anywhere else; add a token to the Theme instead. Chord colors inside
-   button labels are markup, not CSS — `DetailsView._sync_button_chrome`
-   mirrors the pane's focus flip onto them.
+   todo-4, four states since 2026-10-30: focusable / triggerable /
+   focused / traversed). CSS holds only STATE — which token applies
+   when. Never hardcode a hex or named color anywhere else; add a token
+   instead, INCLUDING the ones Textual would derive for you: `$surface`,
+   the Input placeholder grey and the Tree's guides were each a colour
+   on screen that Nick could not reach from theme.py, and
+   `test_every_colour_on_screen_comes_from_the_theme` now fails if one
+   returns. Chord colors inside button labels are markup, not CSS.
+
+   **A Style's colors are not what the terminal paints.** `reverse`
+   (SGR 7) tells the TERMINAL to swap a cell's two colors, so a focused
+   button styled `focused-fg on focused-bg` reached Ghostty as orange
+   text on the canvas — while every headless check read
+   `fg=#1b1b1b bg=#ffa62b` and passed, because a render dump reports
+   `reverse` as a FLAG beside the colors rather than applied to them.
+   Textual's `$button-focus-text-style` defaults to `"b reverse"`;
+   theme.py overrides it. For anything that measures right and looks
+   wrong, drive the app in a real pty and read the escape codes it
+   writes (`tests/fuzz.py` has the pattern) — that is the only view
+   that includes the terminal.
 
 ## The action pattern cookbook (2026-07-11, revised 2026-10-26)
 
@@ -448,14 +463,27 @@ Test-driven, calibrated by layer — this replaces Nick-as-only-QA:
    and the `^/`→`ESC` chip inside the path box; (4) the micro-modals —
    both ModalScreens DELETED, a destructive fork is now a QUESTION on
    the Contextual bar (`DetailsView.ask`, cookbook rule 6).
-   What remains is slice 5 — the connector and the fixed-pane scroll
-   architecture — plus two deferred bits of chrome: labels beside the
-   cover/poster/art IMAGES (the image sizing inside a labelled row rides
-   a fragile `width: 1fr`), and the braille spinner moving onto the
-   loading tree node. One open question for Nick: the mockup greys EVERY
-   tree row because the connector carries the selection, so the cursor
-   keeps its accent until slice 5 lands rather than leaving a slice with
-   no selection cue at all.
+   Then slice 5's CONNECTOR, over three more rounds of Nick's notes
+   (todo-6): `Spine` draws the centre line and `LibraryTree` the run out
+   of the cursor, and together they show the PATH — the line between the
+   selected row and the focused element wears `traversed`, carries only
+   its own arms (`╮ ╯ ╰`, never a T or a +), and reverts to `path-fg`
+   when nothing in details holds focus. theme.py is now a four-state
+   model (`focusable` / `triggerable` / `focused` / `traversed`) with the
+   idle-focus PAIRS deleted; buttons are chained with `──` links
+   (`BarLink`); the artwork branches off the line (`ArtSpine`) and leads
+   down into its own method bar; and a braille spinner stands where a
+   value or a still-probing button group will appear. `Spine.restub()`
+   exists because the first version walked the DOM per rendered LINE and
+   doubled the suite's runtime — a widget that reads the layout must read
+   it once per redraw. The tree's own vertical scrollbar is OFF
+   (`scrollbar-size-vertical: 0`): its track cells are spaces with a
+   background, so they erase the run passing under them.
+   What remains of slice 5 is the fixed-pane scroll architecture, which
+   is what would give the tree its scrollbar back at the viewport edge,
+   plus one deferred bit of chrome: labels beside the cover/poster
+   IMAGES (the art has one now — the image sizing inside a labelled row
+   rides a fragile `width: 1fr`).
    ⬅ you are here
 4. **Batch operations.** Partially done ahead of schedule: shift-range
    and album-folder bulk editing shipped (2026-07-10); space-marking +
@@ -463,6 +491,22 @@ Test-driven, calibrated by layer — this replaces Nick-as-only-QA:
    set (`LibraryTree._selection_paths` / `DetailsPane.preview_bulk`).
 5. **Responsive/mobile** — narrow-width breakpoints for tmux-from-phone;
    tree-first two-step flow on narrow screens.
+
+Session 22 (2026-10-30, Opus — four rounds of notes in
+`notes/claude/todo-6.md`, logged in `notes/qa/todo-2.md`): the connector
+and the four-state theme above, plus three things that are not chrome.
+`prefs.py` keeps the switches that outlive a session (`^.` today) in
+`~/.config/mediasmith/prefs.json` — a temp-file-and-rename write, and
+defaults whenever the file is unreadable; the test suite and the fuzz
+child both get `XDG_CONFIG_HOME` pointed somewhere else, because a test
+run must not rewrite Nick's own switches. `update.py` is self-update for
+the people Nick hands this to: a copy `uv tool install` owns asks the
+remote once a day whether the commit in its `direct_url.json` has moved,
+`uv tool upgrade`s itself, and says the new version runs next launch —
+following the URL it was installed FROM, so SSH and HTTPS both work, and
+refusing to touch anything that is not a uv-installed copy, so a
+checkout is never altered. The repo being private is what stands between
+that and a one-line install for a friend; that call is Nick's.
 
 Distributable binary: `notes/claude/todo-binary.md` is the STANDING
 ANSWER — what a binary buys, the four code blockers, the four external

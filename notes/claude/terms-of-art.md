@@ -26,6 +26,36 @@ noun
 
 - **Navigate** — A command which moves the selected state along a one- or two-dimensional track of options, depending on the context of the UI.
 
+#### Element States
+
+The four states an element can be in, named by Nick in todo-6 and kept
+as the only colour vocabulary in `theme.py`. They are states of an
+ELEMENT, not of a view.
+
+- **Focusable** -- An element the user can move focus to, and therefore
+  one whose value can be changed. It is marked by a background, which is
+  what tells a focusable field apart from a read-only one -- a read-only
+  value gets no background and no line out to the Path.
+
+- **Triggerable** -- A keybinding printed on an element that works right
+  now. Only the keybinding takes the colour, never the words beside it,
+  so a glance at a bar or the Command Strip reads as "these keys fire."
+
+- **Focused** -- The ONE element the user is on. Background and
+  foreground both change, and its keybinding stops being coloured as
+  triggerable: a chord needs no marking while it IS the thing you are
+  on.
+
+- **Traversed** -- Everything the focus moved THROUGH to reach the
+  focused element: the selected tree node, the Path, and the buttons to
+  the left of a focused button, with their links. An element traversed
+  gets the focused colours; the Path gets the foreground only, because a
+  line with a background is a bar, not a line.
+
+- **Path** -- The line drawn from the selected tree node to the focused
+  element, through the centre line between the two views. It shows only
+  its own arms -- it turns toward what it reaches and stops there.
+
 
 ## Views
 
@@ -144,4 +174,6 @@ TODO:
 - 116, 118, 120 — Navigate becomes bar-granular vertically; Open is no longer "second after Save" (Save moves to Contextual); Button-Specific Commands are positional now.
 - 126 — Command Strip: it carries tree navigation only, so the "strip is the contract" doctrine needs restating.
 
-- New terms needed — Path (the connector), Button Bar plus the three kinds, Positional Keybinding, Focusable Element.
+- New terms needed — Button Bar plus the three kinds, and Positional
+  Keybinding. (Path and the four element states are defined above now,
+  from todo-6 ¹.)

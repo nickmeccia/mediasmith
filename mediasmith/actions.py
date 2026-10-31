@@ -22,22 +22,30 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
+from rich.segment import Segment
 from textual.content import Content
 from textual.geometry import NULL_OFFSET, Region, Size
 from textual.layout import ArrangeResult, Layout, WidgetPlacement
 from textual.layouts.factory import LAYOUT_MAP
 from textual.message import Message
+from textual.strip import Strip
 from textual.widget import Widget
-from textual.widgets import Button
+from textual.widgets import Button, Static
 
 # Markup styles for the chord inside a button label — theme tokens
-# (theme.py). Which one applies is the BUTTON's own focus and nothing
-# else (2026-10-26): a button does not dim because the cursor is in the
-# tree, because its chord works from there. Markup can't ride CSS
-# pseudo-classes, so the label is recolored from Python
-# (watch_has_focus).
-KEY_STYLE = "$element-key"
-SELECTED_KEY_STYLE = "$element-key-focus"
+# (theme.py). A chord that works right now is TRIGGERABLE (todo-6 ¹),
+# whichever view has focus: a button does not dim because the cursor is
+# in the tree, because its chord fires from there. On the FOCUSED button
+# the chord takes `focused-fg` like the rest of the label — triggerable
+# orange on a focused orange block would be invisible (Nick, 2026-10-30).
+# Markup can't ride CSS pseudo-classes, so the label is recolored from
+# Python (watch_has_focus).
+KEY_STYLE = "$triggerable-fg"
+SELECTED_KEY_STYLE = "$focused-fg"
+TRAVERSED_KEY_STYLE = "$traversed-element-fg"
+"""A TRAVERSED button's chord, for the same reason the focused one has
+its own: triggerable orange on a traversed orange block is invisible
+(Nick, todo-6 ⁶ — his diagnosis was exactly this)."""
 IDLE_KEY_STYLE = KEY_STYLE
 """Retired name: the idle look was "some other view has focus", which the
 path model does not have. Kept so an old import does not break."""
@@ -50,7 +58,13 @@ path model does not have. Kept so an old import does not break."""
 # d and e turned out to be only Input editing chords (delete-right,
 # end) — the same class as the already-assigned a/k/u/v/w/x, safe for
 # actions whose context has no focusable Input.
-RESERVED_KEYS = frozenset("chijmqz")
+RESERVED_KEYS = frozenset("chjmqz")
+"""``i`` left this set for Nick's ^i Import (todo-6 ⁵), with a caveat
+worth keeping: ctrl+i and TAB are the same byte (0x09) in a legacy
+terminal, and only the kitty keyboard protocol tells them apart. Ghostty
+speaks it, so ^i should arrive as `ctrl+i` there — but where it does not,
+the chord simply does not fire (tab is still tab, and never Import). The
+button stays reachable by arrow keys and ⏎ either way."""
 
 
 CONTEXTUAL, FILE, ACTIONS = "contextual", "file", "actions"
@@ -193,6 +207,10 @@ class FlowLayout(Layout):
 
     name = "flow"
 
+    ROW_GAP = 1
+    """A blank line between wrapped rows. A bar that wraps becomes two
+    bars to the eye, and two bars are always separated (Nick, todo-6)."""
+
     def arrange(self, parent: Widget, children: list[Widget],
                 size: Size, greedy: bool = True) -> ArrangeResult:
         parent.pre_layout(self)
@@ -209,7 +227,7 @@ class FlowLayout(Layout):
             span = margin.left + width + margin.right
             if x and x + span > size.width:     # wrap; a lone widget never does
                 x = 0
-                y += row_height
+                y += row_height + self.ROW_GAP
                 row_height = 0
             placements.append(WidgetPlacement(
                 Region(x + margin.left, y + margin.top, width, height),
@@ -245,8 +263,8 @@ LAYOUT_MAP.setdefault(FlowLayout.name, FlowLayout)
 class ActionButton(Button):
     """A Button carrying its Action spec; label per the button pattern.
 
-    Background/foreground come from CSS ($element-bg, and
-    $element-bg-focus when this button is the one thing with focus). The
+    Background/foreground come from CSS ($focusable-bg, and
+    $focused-bg when this button is the one thing with focus). The
     chord inside the label is markup rather than CSS, so its color is
     applied from Python on the same edge (``watch_has_focus``);
     text-style stays CSS-side.
@@ -273,7 +291,11 @@ class ActionButton(Button):
                          compact=True)
 
     def _key_style(self) -> str:
-        return SELECTED_KEY_STYLE if self.has_focus else KEY_STYLE
+        if self.has_focus:
+            return SELECTED_KEY_STYLE
+        if self.has_class("-traversed"):
+            return TRAVERSED_KEY_STYLE
+        return KEY_STYLE
 
     def _content(self, key_style: str) -> Content:
         return Content.from_markup(
@@ -305,6 +327,13 @@ class ActionButton(Button):
             self._ordinal = value
             self._apply_label(self._key_style())
 
+    def set_traversed(self, value: bool) -> None:
+        """Mark (or unmark) this button as one the path came through, and
+        recolor its chord to match (todo-6 ⁶)."""
+        if value != self.has_class("-traversed"):
+            self.set_class(value, "-traversed")
+            self._apply_label(self._key_style())
+
     def set_pane_focus(self, value: bool) -> None:
         """No-op since 2026-10-26: a button's look no longer depends on
         which VIEW has focus. Kept so the owning view can keep calling it
@@ -321,13 +350,30 @@ class ActionButton(Button):
         self._apply_label(self._key_style())
 
 
+class BarLink(Static):
+    """The box-drawing join between two buttons in a bar (todo-6 ⁵).
+
+    A widget rather than cells painted by the bar: the compositor fills a
+    child's margin area, so painted links lost cells to whichever button
+    was next (measured 2026-10-30). As a child it is simply there, and
+    its color is CSS like everything else.
+    """
+
+    DEFAULT_CSS = """
+    BarLink { width: 2; height: 1; }
+    """
+
+    def __init__(self, **kw) -> None:
+        super().__init__("──", **kw)
+
+
 class ActionBar(Widget):
     """One wrapping row of ActionButtons. Post a ``Triggered`` on press;
     the owner (DetailsView) maps action names to handlers."""
 
     DEFAULT_CSS = """
     ActionBar { width: 1fr; height: auto; }
-    ActionBar ActionButton { margin-right: 2; }
+    ActionBar ActionButton { margin-right: 0; }
     """
 
     class Triggered(Message):
@@ -341,15 +387,52 @@ class ActionBar(Widget):
         self.styles.layout = FlowLayout.name
 
     def compose(self):
+        # every button carries its own trailing LINK (todo-6 ⁵): the
+        # box-drawing join to the next one. One per button, rather than
+        # one per gap, so which links show follows from which buttons do
+        # — whatever subset the context has chosen.
         for spec in self._actions:
             yield ActionButton(spec)
+            yield BarLink()
 
     def on_mount(self) -> None:
         self._number_buttons()      # a bar that never calls set_visible
+        self.sync_links()           # …needs its links settled too
 
     def buttons(self) -> list[ActionButton]:
         """The visible buttons, left to right."""
         return [b for b in self.query(ActionButton) if b.display]
+
+    def row_offsets(self) -> list[int]:
+        """Which of this bar's own lines hold BUTTONS, as offsets from
+        its top. A wrapped bar leaves a blank line between its rows
+        (FlowLayout.ROW_GAP), and that line is not one of them — the
+        Spine reads this to know where to stub (todo-6)."""
+        top = self.region.y
+        return sorted({b.region.y - top for b in self.buttons()
+                       if b.region.height})
+
+    def _link_after(self, button: ActionButton) -> "BarLink | None":
+        """The link composed immediately after ``button``."""
+        children = list(self.children)
+        at = children.index(button)
+        following = children[at + 1] if at + 1 < len(children) else None
+        return following if isinstance(following, BarLink) else None
+
+    def sync_links(self) -> None:
+        """Show a link after every visible button but the LAST one.
+
+        Not conditioned on wrapping: whether two buttons share a line
+        depends on how wide the links make them, so suppressing a
+        dangling link would change the layout that decided it was
+        dangling. A wrapped bar can therefore end a line with ``──``.
+        """
+        row = self.buttons()
+        last = row[-1] if row else None
+        for button in self.query(ActionButton):
+            link = self._link_after(button)
+            if link is not None:
+                link.display = button.display and button is not last
 
     def number_from(self, start: int | None) -> int:
         """Hand out the positional chords: ^N left to right over the
@@ -384,6 +467,10 @@ class ActionBar(Widget):
         contract — enforced here, where every context change lands."""
         for button in self.query(ActionButton):
             button.display = names is None or button.spec.name in names
+        # a bar with nothing on it takes no space — including no MARGIN,
+        # which is what puts the blank line between the groups (todo-6)
+        self.display = bool(self.buttons())
+        self.sync_links()
         keys = [b.spec.key for b in self.buttons() if b.spec.key]
         assert len(keys) == len(set(keys)), \
             f"{self.id}: chord collision among visible buttons ({keys})"

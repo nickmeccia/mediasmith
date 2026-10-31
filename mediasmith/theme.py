@@ -1,11 +1,16 @@
 """PALETTE — the one file that holds every color in the app.
 
 Every color is a hex assigned to a name, exactly once (Nick's spec,
-todo-4 "Color Theme Stylesheet"). Focus is a STATE, not a color: the
-idle/focus PAIRS are named here, but WHEN each look applies is decided
-by CSS pseudo-classes (app.py / actions.py), which may reference ONLY
-these tokens. Do not hardcode a color value anywhere else in the app —
-add a name here instead.
+todo-4 "Color Theme Stylesheet"). WHEN each name applies is decided by
+CSS pseudo-classes (app.py / actions.py) and by the two renderers that
+paint part of a widget (the Spine, and the tree's rows), which may
+reference ONLY these names. Do not hardcode a color value anywhere else
+— add a name here instead.
+
+Revised 2026-10-29 (todo-6) for the path model: the idle/focus PAIRS are
+gone. They answered "which view owns focus", and the app does not ask
+that any more — focus is one ELEMENT, the path to it is lit, and nothing
+else changes because the cursor moved. See the focus-model block below.
 
 The "$ref" indirections from Nick's template are resolved at Python
 level (constants below) so the Theme itself is a literal name→color
@@ -27,6 +32,13 @@ GREY_80 = "#c6c6c6"
 GREY_90 = "#e2e2e2"
 WHITE = "#ffffff"
 
+CHROME = "#1e1e1e"
+"""The one value off the grey ramp: it is Textual's derived `$surface`,
+kept at its exact value so adopting the token moved nothing on screen.
+It backs the path box and the command strip — the chrome AROUND the two
+views, which sit on GREY_10. Move it onto the ramp whenever you like;
+nothing else reads it (todo-6, rule 5)."""
+
 PRIMARY = "#ffa62b"
 SUCCESS = "#4ebf71"
 WARNING = "#ffa62b"
@@ -44,23 +56,7 @@ MEDIASMITH = Theme(
     foreground=GREY_90,     # = grey-90, brightest body text
 
     variables={
-        # -- Elements (always-available-actions-3, 2026-10-26)
-        #
-        # Focus stopped being a property of a VIEW and became a property of
-        # one ELEMENT: the thing with focus wears PRIMARY, every other
-        # focusable thing wears GREY_30, and nothing dims because the
-        # cursor is somewhere else. These six replace the idle/focus PAIRS
-        # below for buttons, field labels and tree nodes — the pairs
-        # answered "which view owns focus", which is a question the model
-        # no longer asks. (The scrollbar and text pairs below still flip
-        # with the scroll container's own focus, which is still a thing.)
-        "element-bg": GREY_30,
-        "element-fg": GREY_90,
-        "element-key": PRIMARY,         # the chord printed in a label
-        "element-bg-focus": PRIMARY,
-        "element-fg-focus": GREY_90,
-        "element-key-focus": GREY_90,   # on PRIMARY, the chord goes quiet
-
+        # -- The palette, by name -------------------------------------------
         "black": BLACK,
         "grey-10": GREY_10,
         "grey-20": GREY_20,
@@ -73,58 +69,76 @@ MEDIASMITH = Theme(
         "grey-90": GREY_90,
         "white": WHITE,
 
+        # -- The four states (Nick's model, todo-6 ¹ / ⁹, 2026-10-30)
+        #
+        # An ELEMENT is a thing in the document: a node (a file or folder
+        # row), a label (one that identifies an editable input or an
+        # image), or a button. A PATH is an unbroken line of box-drawing
+        # characters connecting focusable elements — a path is NOT an
+        # element, and it never carries a background.
+        #
+        #   focusable    it could take focus
+        #   triggerable  a keybinding that works right now (foreground
+        #                only; the background is whatever it sits on)
+        #   focused      the ONE element the user is acting on
+        #   traversed    elements AND path characters the user came
+        #                through to reach the focused one
+        #
+        # `focused` and `traversed` share a foreground and differ by
+        # background on purpose: Nick tunes them apart from here.
+        "focusable-bg": GREY_20,
+        "focusable-fg": GREY_90,
 
-        # Focused View
+        "triggerable-fg": PRIMARY,
 
-        "border-fg-focus": PRIMARY,
-        "text-fg-focus": GREY_90,
+        "focused-bg": PRIMARY,
+        # a focused button's CHORD takes focused-fg too (Nick's call,
+        # 2026-10-30): triggerable orange on a focused orange block is
+        # invisible, and a chord needs no marking while it IS the thing
+        # you are on
+        "focused-fg": GREY_10,
 
-        "node-hidden-fg-focus": GREY_60,
-        "node-hidden-selected-fg-focus": GREY_10,
-        "node-selected-bg-focus": PRIMARY,
-        "scrollbar-color-focus": GREY_90,
-        "scrollbar-color-hover-focus": PRIMARY,
-        "scrollbar-color-active-focus": PRIMARY,
-        "scrollbar-track-focus": "transparent",
-        "scrollbar-corner-focus": GREY_10,
+        "traversed-path-fg": PRIMARY,
+        "traversed-element-bg": PRIMARY,
+        "traversed-element-fg": GREY_10,
 
-        "label-fg-focus": GREY_60,
-        "button-bg-focus": GREY_30,
-        "button-fg-focus": GREY_90,
-        "button-keybinding-fg-focus": PRIMARY,
-        "button-selected-bg-focus": PRIMARY,
-        "button-selected-fg-focus": GREY_90,
-        "button-selected-keybinding-fg-focus": GREY_90,
+        # an UNtraversed path character is ordinary text: canvas colors,
+        # no state of its own (todo-6 ¹, the `path` state)
+        "path-fg": GREY_90,
 
+        # -- Secondary text ------------------------------------------------
+        # the command strip, end to end: its words, its bullets, the
+        # logo. Named for what the text DOES, so it can be used wherever
+        # a note belongs (Nick, todo-6 ⁹)
+        "note": GREY_40,
+        # in-pane secondary text: a read-only field's label, a dot-file's
+        # name, a wizard's hint. Separate from `note` so strip chrome and
+        # pane chrome can diverge (Nick's call, 2026-10-30)
+        "muted": GREY_60,
+        "text-fg": GREY_90,
 
-        # Idle View
+        # the chrome around the views: the path box and the command strip
+        "chrome-bg": CHROME,
+        # the tree's own guide lines (│ ├─ ╰─). Textual derives a colour
+        # for these; this is the ramp value nearest the one it chose, so
+        # that every colour on screen comes from here (rule 5)
+        "guide-fg": GREY_30,
+        # …and the level type-ahead would search, which is marked by
+        # brightening those guides (2026-09-03). Two values, because one
+        # of them has to read as lit next to the other.
+        "guide-level-fg": GREY_50,
 
-        "border-fg-idle": GREY_30,
-        "text-fg-idle": GREY_40,
+        # Textual's own token, and the reason a focused button looked
+        # wrong in a REAL terminal while every headless check passed: it
+        # defaults to "b reverse", and SGR 7 makes the TERMINAL swap the
+        # two colours below — so `focused-fg on focused-bg` reached the
+        # screen as orange text on the canvas. A headless segment dump
+        # reports `reverse` as a flag beside the colours, not applied to
+        # them, which is exactly why it hid (Nick, todo-6 ⁶).
+        "button-focus-text-style": "bold",
 
-        "node-hidden-fg-idle": GREY_30,
-        "node-hidden-selected-fg-idle": GREY_10,
-        "node-selected-bg-idle": GREY_20,
-        "node-selected-fg-idle": GREY_10,
-        "scrollbar-color-idle": GREY_30,
-        "scrollbar-color-hover-idle": GREY_30,
-        "scrollbar-color-active-idle": GREY_30,
-        "scrollbar-track-idle": "transparent",
-        "scrollbar-corner-idle": GREY_10,
-
-        "label-fg-idle": GREY_30,
-        "button-bg-idle": GREY_20,
-        "button-fg-idle": GREY_40,
-        "button-keybinding-fg-idle": GREY_40,
-        "button-selected-bg-idle": GREY_20,
-        "button-selected-fg-idle": GREY_40,
-        "button-selected-keybinding-fg-idle": GREY_40,
-
-
-        # Command Strip
-
-        "keybinding": GREY_60,
-        "keybinding-bullet": GREY_30,
-        "logo": GREY_60,
+        "scrollbar-color": GREY_30,
+        "scrollbar-track": "transparent",
+        "scrollbar-corner": GREY_10,
     },
 )

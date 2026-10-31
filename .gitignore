@@ -13,3 +13,7 @@ __pycache__/
 .#*
 emacs/.emacs.d/backups/
 emacs/.emacs.d/auto-save-list/
+
+# Screenshots handed over for a bug report — useful to look at, 8.8 MB
+# to carry forever (2026-10-30)
+notes/claude/focused-button-colors/

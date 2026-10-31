@@ -1480,3 +1480,212 @@ decided, prompt)`.
       being visible. But doing the layout change means doing that part of
       roadmap slice 5 at the same time, so it wants your go-ahead rather
       than my guess.
+
+## Session 21 (2026-10-29, Opus) — todo-6, the corrections
+
+Sixteen items off `notes/claude/todo-6.md`, all of them places where my
+implementation of always-available-actions-3 did not match the mockup.
+
+- [ ] **Blank line between the bars**, and a bar with nothing on it now
+      hides itself so it leaves no gap.
+- [ ] **Save appears only when there is something to save**, keystroke by
+      keystroke. The shift wizard's special case is gone: a pending shift
+      is already "dirty".
+- [ ] **`ESC Exit`** is a real button on the Contextual bar whenever focus
+      is inside the pane: `ESC Exit` clean, `^s Save ── ESC Exit` dirty.
+      Esc still ASKS when dirty (your answer #5's question bar), so the
+      label says Exit rather than "Discard & Exit" — say if you want the
+      older wording and the discard-without-asking behaviour behind it.
+- [ ] **Read-only fields get no chip and no stub.** `_row()` builds them
+      without the new `prow` marker, so the two signals together say
+      which rows the arrow keys reach.
+- [ ] **Cover and poster are fields**, like album art: label in the
+      panel's column, `-` when empty, in the ↑↓ walk, with the artwork's
+      own blank line above it on audio, video and book.
+- [ ] **The connector is drawn.** The run leaves the selected row for the
+      pane; the spine turns ╭ ╰ ┼ ┤ ╯ ╮ ┬ ┴ ├ │ as its arms require (one
+      junction function, unit-checked); the stretch between the selected
+      row and the focused row is lit, stub included.
+- [ ] **Your ⁷, option 1**: a row the path runs THROUGH draws `│──`, not
+      `├──` — only the vertical is on the path there. You were right that
+      the junction character is two things pretending to be one.
+- [ ] **theme.py is rebuilt** around three states: `element-*` (focusable),
+      `focus-path-*` (en route — the lit line, and the selected node's
+      background), `focused-*` (`focused-bg` + `focused-fg`, buttons
+      included). The idle/focus PAIRS are gone, and so is every variable
+      that existed to dim one view while the other had focus. It is yours
+      to edit now — every name is used in exactly one way.
+- [ ] **One judgement call to confirm**: the run needed the gutter the
+      tree's vertical scrollbar was in (its track cells are spaces with a
+      background, so they erase anything underneath). I hid that bar —
+      which is where your "Scrollbars" consequence puts it anyway, at the
+      viewport's edge once the full-width tree lands. The alternative is
+      keeping the bar and a broken line until then.
+
+## Session 22 (2026-10-30, Opus) — todo-6 items ¹–⁹
+
+Your four-state colour model, the connector's corners, and the button
+links. Decisions you made by answering: a focused button's chord takes
+`focused-fg` (triggerable orange on a focused orange block is
+invisible), `focused-fg` is GREY_10, and `muted` stays separate from
+`note`.
+
+- [ ] **theme.py is the model now**: `focusable-*`, `triggerable-fg`,
+      `focused-*`, `traversed-path-fg` / `traversed-element-*`, plus
+      `path-fg` for untraversed line characters, `note` for the command
+      strip and `muted` for in-pane secondary text (read-only labels,
+      dot-files, wizard hints). Nothing else carries a colour.
+- [ ] **The command strip splits its keybinding from its words** (⁹), so
+      a working chord looks the same on the strip as on a button.
+- [ ] **The path shows only its own arms** (² ³ ⁸): `╯` when the focused
+      field is above the selected row, `╮` when below, `╰` at a focused
+      button's bar, and `┤` only when nothing in details is focused —
+      no T- or +-shape anywhere along it. Off the path the line keeps the
+      junctions that describe the pane's shape.
+- [ ] **Buttons are linked** (⁵): `^o Open ── ^x Cut ── ^y Copy`, with
+      the links and the buttons left of the focused one `traversed`.
+- [ ] **One label column per panel** (⁷), so every value lines up — the
+      filename row sets the floor, which is what the short panels
+      (`size` / `type`) needed.
+- [ ] **One cell of padding on buttons** (⁴), and Textual's own 5% focus
+      tint is off: it was putting a colour on screen that is not in
+      theme.py (rule 5).
+- [ ] **The artwork's focus border is gone** (⁶).
+
+Two things to weigh:
+
+- [ ] **A wrapped button bar can end a line with a dangling `──`.**
+      Whether two buttons share a line depends on how wide the links
+      make them, so suppressing the dangling one would change the layout
+      that decided it was dangling. Options if it bothers you: narrower
+      links, or let the bar reserve the link's width when measuring.
+- [ ] **Probing `/` can keep the pane unsettled for more than 20
+      seconds**, which the stricter test helper surfaced. It matters
+      beyond tests: a buffered chord waits for `settled`, so a chord
+      pressed on a huge directory waits with it. The folder probes are
+      bounded by a DIRECTORY COUNT, not by time. Adding a deadline would
+      cap the wait, at the cost of making a button's appearance
+      depend on how fast the disk answered — your call, since it is the
+      NAS that would feel it.
+
+
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+
+## Session 22, batch 3 (2026-10-30, Opus) — todo-6 items ¹–⁶ + two
+
+The run's colours, the artwork's branch, and the waiting marker.
+
+- [ ] **A selected node with nothing focused in details keeps the line
+      plain** (¹): the run from the cursor to the centre line is
+      `path-fg`, and only a focus INSIDE details turns it (and the
+      node's chip) traversed. `LibraryTree._run_style` reads
+      `DetailsView.focus_inside` for that.
+- [ ] **A blank line before the info row** (²) — by `margin-top` on the
+      row, so a kind without one leaves no stray gap.
+- [ ] **An overflowing line ends in `…`** (³). Measured on the line's
+      CONTENT, not the padded strip — measuring the strip put an
+      ellipsis on every row.
+- [ ] **The artwork is on the path, not beside it** (⁴): the label
+      branches `─╮` out of the centre line, runs down past the picture,
+      and turns `╰──` into the method buttons. The old alignment pads
+      are gone; the picture and the buttons share the value column
+      because the form reserves the branch's four cells
+      (`EditForm.set_fields(extra=…)`). The centre line no longer stubs
+      the art bar — the branch reaches it.
+- [ ] **`^i Import`** (⁵), with `i` dropped from `RESERVED_KEYS`.
+- [ ] **Focused and traversed buttons take their own colours** (⁶). Two
+      causes, both as you suspected: Textual tints a focused button's
+      background 5% (now `background-tint: transparent`, since the tint
+      was a colour not in theme.py), and the chord's own markup still
+      said `triggerable-fg` under both states — it is three-way now
+      (`actions._key_style`), so a traversed chord reads
+      `traversed-element-fg` and a focused one `focused-fg`.
+- [ ] **`^/` works from anywhere non-dirty**, including a focused field
+      or button, instead of only from the tree.
+- [ ] **A braille spinner stands where the value will appear**: the
+      folder's `files`/`size`, the video's title/codec, the vector's
+      canvas probe, and a row below the File bar while a KIND action may
+      still be on its way. A probe that finds no action takes the
+      spinner away and leaves the group empty rather than printing an
+      empty bar.
+
+
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+
+## Session 22, batch 4 (2026-10-30, Opus) — todo-6, your fourth list
+
+- [ ] **The path characters were showing GHOSTTY's background** (¹).
+      Not a token: those cells were the only ones on screen emitted with
+      no background at all, and a cell with no background is not the
+      app's canvas, it is the terminal's. They paint `$background` now,
+      and a test fails if any cell anywhere omits one.
+- [ ] **The frozen braille character** — a probe that answers "no
+      actions" ends the spin without changing any bar, so nothing was
+      left to hide the marker and the last frame sat there.
+      `_spin_frame` now owns both edges: it shows the marker and takes
+      it away.
+- [ ] **One cell between the line and the marker**: `╰── ⣽`.
+- [ ] **A wrapped bar leaves a blank line between its rows**, and the
+      Spine stubs only the lines that hold buttons. Your own mockup
+      keeps the dangling `──` at the end of a wrapped line, so the
+      question I left open last time is answered — it stays.
+- [ ] **`^.` outlives the session** — `prefs.py`, a small JSON file in
+      `~/.config/mediasmith/`, written through a temporary file so an
+      interrupted write cannot leave half of one. A damaged or
+      unreadable file opens with defaults rather than complaining. The
+      suite cannot touch your real one (a conftest fixture redirects
+      `XDG_CONFIG_HOME`).
+- [ ] **Typeahead already followed the switch** — verified both
+      directions and held there by a test. If you saw a hidden name
+      completed, the cause is probably that `^.` is INERT unless the
+      tree has focus, so toggling it from the path input did nothing
+      silently. **Your call**: should `^.` (and `^r`, `^n`) work from
+      anywhere the way `^/` now does? The strip prints them as the
+      tree's commands, and the model says what is printed works.
+- [ ] **Three more colours were Textual's, not yours**: `$surface`
+      behind the path box and the command strip, the placeholder grey on
+      an empty value, and the tree's guide lines. All three are tokens
+      now — `chrome-bg` (Textual's exact value, kept so nothing moved;
+      it is the one value off the grey ramp), `muted`, `guide-fg` and
+      `guide-level-fg`. A test now fails if any colour on screen is not
+      in theme.py.
+
+**Self-update for your friends** (`update.py`): a copy installed with
+`uv tool install git+…` asks the remote once a day whether the commit it
+was built from has moved, upgrades itself with `uv tool upgrade`, and
+toasts that the new version runs on the next launch. It follows the URL
+it was installed FROM, so SSH works as well as HTTPS; it refuses to
+touch anything that is not a uv-installed copy, so your checkout is
+never altered; and `MEDIASMITH_NO_UPDATE=1` turns it off.
+
+- [ ] **One decision is yours: the repo is private.** `uv tool install
+      git+https://github.com/nickmeccia/mediasmith` fails for anyone
+      else today. Make it public and the README line works as written.
+      Keep it private and each friend needs repo access and their own
+      credentials — the updater handles that case, but the install is no
+      longer one line they can copy.
+
+- [ ] **⁶ The focused button: REVERSE VIDEO.** Your screenshots were
+      right and my measurements were wrong, for one reason worth
+      remembering. Textual's `$button-focus-text-style` defaults to
+      `"b reverse"`, so a focused button reached the terminal as
+      `ESC[1;7;38;2;27;27;27;48;2;255;166;43m` — bold, fg GREY_10, bg
+      PRIMARY, **and SGR 7**. SGR 7 tells the TERMINAL to swap the two
+      colours, so what you saw was orange text on the canvas: the right
+      colours, applied backwards. A headless render reports `reverse` as
+      a flag BESIDE the colours rather than applied to them, which is
+      why every check I ran said `fg=#1b1b1b bg=#ffa62b` and passed.
+      theme.py now sets the token to `"bold"`; nothing else on screen
+      reaches the terminal reversed; and the regression test asserts the
+      FLAG, having been confirmed to fail with the old value.
+      What found it: driving the app in a real pty and reading the
+      escape codes it wrote (`tests/fuzz.py` has the pty pattern). For
+      anything that looks right in a dump and wrong on screen, that is
+      the tool — a Style's colours are not what the terminal paints.
+
+- [ ] **One thing I did not change, because it is yours**: a
+      shift-marked tree row is drawn by REVERSING its colours
+      (`browser.py`, `Style(reverse=True)`). Under the four-state model
+      that is a colour decision with no token behind it — it shows
+      whatever swap the row happens to produce. Worth a look now that
+      the states are named.
